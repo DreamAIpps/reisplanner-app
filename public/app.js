@@ -392,7 +392,7 @@ function ExpenseForm({ tripId, initial, onSaved, onClose }) {
 }
 
 // ---------- Day planning tab ----------
-function DayPlanningTab({ trip, days, onRefresh }) {
+function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [showActivityForm, setShowActivityForm] = useState(null); // { dayId }
   const [editingActivity, setEditingActivity] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
@@ -446,7 +446,17 @@ function DayPlanningTab({ trip, days, onRefresh }) {
       )}
 
       <div className="space-y-4">
-        {days.map((day) => (
+        {days.map((day) => {
+          const dayStr = day.date ? day.date.slice(0, 10) : null;
+          const dayTransports = transports.filter((t) => t.departure_time && new Date(t.departure_time).toISOString().slice(0, 10) === dayStr);
+          const dayAccommodations = accommodations.filter((a) => {
+            const ci = a.check_in ? a.check_in.slice(0, 10) : null;
+            const co = a.check_out ? a.check_out.slice(0, 10) : null;
+            return (ci === dayStr) || (co === dayStr);
+          });
+          const hasExtras = dayTransports.length > 0 || dayAccommodations.length > 0;
+
+          return (
           <div key={day.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
               <div>
@@ -458,6 +468,30 @@ function DayPlanningTab({ trip, days, onRefresh }) {
                 <button onClick={() => handleDeleteDay(day.id)} className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             </div>
+
+            {hasExtras && (
+              <div className="px-4 py-2 bg-sky-50 border-b border-sky-100 flex flex-wrap gap-3">
+                {dayTransports.map((t) => (
+                  <div key={t.id} className="flex items-center gap-1.5 text-xs text-sky-800">
+                    <span>{TRANSPORT_ICONS[t.type] || "🚀"}</span>
+                    <span className="font-medium">{t.from_location} → {t.to_location}</span>
+                    {t.departure_time && <span className="text-sky-600">{new Date(t.departure_time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</span>}
+                    {t.booking_ref && <span className="font-mono bg-sky-100 px-1 rounded">#{t.booking_ref}</span>}
+                  </div>
+                ))}
+                {dayAccommodations.map((a) => {
+                  const isCheckIn = a.check_in && a.check_in.slice(0, 10) === dayStr;
+                  const isCheckOut = a.check_out && a.check_out.slice(0, 10) === dayStr;
+                  return (
+                    <div key={a.id} className="flex items-center gap-1.5 text-xs text-sky-800">
+                      <span>🏨</span>
+                      <span className="font-medium">{isCheckIn && isCheckOut ? "Check-in & -out" : isCheckIn ? "Check-in" : "Check-out"}: {a.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="divide-y divide-gray-50">
               {day.activities.length === 0 ? (
                 <div className="px-4 py-3 text-sm text-gray-400 italic">Geen activiteiten</div>
@@ -485,7 +519,8 @@ function DayPlanningTab({ trip, days, onRefresh }) {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {showActivityForm && (
@@ -1002,7 +1037,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} onRefresh={load} />}
+      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} onRefresh={load} />}
