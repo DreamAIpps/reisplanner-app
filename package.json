@@ -1,0 +1,16 @@
+{
+  "name": "reisplanner-app",
+  "version": "1.0.0",
+  "description": "Reisplanner app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.21.0"
+  }
+}
