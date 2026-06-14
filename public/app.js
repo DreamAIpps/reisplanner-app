@@ -1114,7 +1114,7 @@ function App() {
             <p className="text-sky-200 text-sm mt-0.5">Jouw reizen, overzichtelijk gepland</p>
           </div>
           {view.name === "list" && (
-            <Button onClick={() => setShowTripForm(true)} className="bg-sky-500 text-white hover:bg-sky-400 border border-sky-400">
+            <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-100 font-semibold">
               + Nieuwe reis
             </Button>
           )}
