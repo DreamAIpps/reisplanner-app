@@ -721,7 +721,11 @@ function ImportModal({ tripId, onImported, onClose }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState({ transports: [], accommodations: [] });
+  const [saved, setSaved] = useState({ transports: [], accommodations: [], activities: [] });
+  const [days, setDays] = useState([]);
+  const [activityDays, setActivityDays] = useState({});
+
+  useEffect(() => { api.getDays(tripId).then(setDays); }, [tripId]);
 
   async function handleAnalyze(e) {
     e.preventDefault();
@@ -729,6 +733,15 @@ function ImportModal({ tripId, onImported, onClose }) {
     try {
       const data = await api.importEmail(tripId, text);
       setResult(data);
+      // Pre-select day based on activity date if a matching day exists
+      const defaults = {};
+      (data.activities || []).forEach((act, i) => {
+        if (act.date) {
+          const match = days.find((d) => d.date && d.date.slice(0, 10) === act.date);
+          if (match) defaults[i] = match.id;
+        }
+      });
+      setActivityDays(defaults);
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   }
@@ -751,6 +764,17 @@ function ImportModal({ tripId, onImported, onClose }) {
     finally { setSaving(false); }
   }
 
+  async function saveActivity(act, idx) {
+    const dayId = activityDays[idx];
+    if (!dayId) { alert("Selecteer eerst een dag voor deze activiteit."); return; }
+    setSaving(true);
+    try {
+      await api.addActivity(dayId, { ...act, trip_id: tripId });
+      setSaved((s) => ({ ...s, activities: [...s.activities, idx] }));
+    } catch (err) { alert(err.message); }
+    finally { setSaving(false); }
+  }
+
   async function saveAll() {
     setSaving(true);
     try {
@@ -760,19 +784,25 @@ function ImportModal({ tripId, onImported, onClose }) {
       for (let i = 0; i < (result.accommodations || []).length; i++) {
         if (!saved.accommodations.includes(i)) await api.addAccommodation(tripId, result.accommodations[i]);
       }
+      for (let i = 0; i < (result.activities || []).length; i++) {
+        if (!saved.activities.includes(i) && activityDays[i]) {
+          await api.addActivity(activityDays[i], { ...result.activities[i], trip_id: tripId });
+        }
+      }
       onImported();
       onClose();
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
   }
 
-  const totalFound = result ? (result.transports.length + result.accommodations.length) : 0;
+  const totalFound = result ? (result.transports.length + result.accommodations.length + result.activities.length) : 0;
+  const totalSaved = saved.transports.length + saved.accommodations.length + saved.activities.length;
 
   return (
     <Modal title="Bevestiging importeren" onClose={onClose} wide>
       {!result ? (
         <form onSubmit={handleAnalyze} className="space-y-4">
-          <p className="text-sm text-gray-500">Plak de tekst van je boekingsbevestiging hieronder. Claude analyseert de e-mail en extraheert vluchten en hotels automatisch.</p>
+          <p className="text-sm text-gray-500">Plak de tekst van je boekingsbevestiging hieronder. Claude analyseert de e-mail en extraheert vluchten, hotels en activiteiten automatisch.</p>
           {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
           <Field label="Tekst van de bevestiging">
             <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Plak hier de volledige tekst van je boekingsbevestiging..." required />
@@ -789,7 +819,7 @@ function ImportModal({ tripId, onImported, onClose }) {
           {totalFound === 0 ? (
             <div className="text-center py-8 text-gray-400">
               <div className="text-4xl mb-2">🤔</div>
-              <div>Geen vluchten of hotels gevonden in deze tekst.</div>
+              <div>Niets gevonden in deze tekst.</div>
               <div className="text-sm mt-1">Probeer het met een andere bevestiging.</div>
             </div>
           ) : (
@@ -805,8 +835,8 @@ function ImportModal({ tripId, onImported, onClose }) {
                         <div className="flex-1">
                           <div className="font-medium text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
                           <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
-                            {t.departure_time && <span>Vertrek: {new Date(t.departure_time).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
-                            {t.arrival_time && <span>Aankomst: {new Date(t.arrival_time).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+                            {t.departure_time && <span>Vertrek: {fmtDatetime(t.departure_time)}</span>}
+                            {t.arrival_time && <span>Aankomst: {fmtDatetime(t.arrival_time)}</span>}
                             {t.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
                             {t.cost != null && <span>{fmtMoney(t.cost)}</span>}
                           </div>
@@ -814,8 +844,7 @@ function ImportModal({ tripId, onImported, onClose }) {
                         </div>
                         {saved.transports.includes(i)
                           ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
-                          : <Button variant="secondary" onClick={() => saveTransport(t, i)} disabled={saving}>Toevoegen</Button>
-                        }
+                          : <Button variant="secondary" onClick={() => saveTransport(t, i)} disabled={saving}>Toevoegen</Button>}
                       </div>
                     ))}
                   </div>
@@ -841,8 +870,47 @@ function ImportModal({ tripId, onImported, onClose }) {
                         </div>
                         {saved.accommodations.includes(i)
                           ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
-                          : <Button variant="secondary" onClick={() => saveAccommodation(a, i)} disabled={saving}>Toevoegen</Button>
-                        }
+                          : <Button variant="secondary" onClick={() => saveAccommodation(a, i)} disabled={saving}>Toevoegen</Button>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.activities.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-gray-700 mb-2">🗓 Activiteiten ({result.activities.length})</h3>
+                  <div className="space-y-2">
+                    {result.activities.map((act, i) => (
+                      <div key={i} className={`bg-gray-50 rounded-xl p-4 ${saved.activities.includes(i) ? "opacity-50" : ""}`}>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-800">{act.title}</div>
+                            <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
+                              {act.date && <span>📅 {fmt(act.date)}</span>}
+                              {act.time && <span>🕐 {act.time}</span>}
+                              {act.location && <span>📍 {act.location}</span>}
+                              {act.cost != null && <span>{fmtMoney(act.cost)}</span>}
+                            </div>
+                            {act.notes && <div className="text-xs text-gray-500 mt-1">{act.notes}</div>}
+                          </div>
+                          {saved.activities.includes(i)
+                            ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                            : <Button variant="secondary" onClick={() => saveActivity(act, i)} disabled={saving || !activityDays[i]}>Toevoegen</Button>}
+                        </div>
+                        {!saved.activities.includes(i) && (
+                          <div className="mt-3">
+                            <Select
+                              value={activityDays[i] || ""}
+                              onChange={(e) => setActivityDays((d) => ({ ...d, [i]: e.target.value }))}
+                            >
+                              <option value="">— Kies een dag —</option>
+                              {days.map((d) => (
+                                <option key={d.id} value={d.id}>{fmt(d.date)}{d.title ? ` — ${d.title}` : ""}</option>
+                              ))}
+                            </Select>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -853,7 +921,7 @@ function ImportModal({ tripId, onImported, onClose }) {
 
           <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
             <Button variant="secondary" onClick={onClose}>Sluiten</Button>
-            {totalFound > 0 && saved.transports.length + saved.accommodations.length < totalFound && (
+            {totalFound > 0 && totalSaved < totalFound && (
               <Button onClick={saveAll} disabled={saving}>{saving ? "Opslaan..." : "Alles toevoegen"}</Button>
             )}
           </div>

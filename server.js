@@ -254,9 +254,10 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
       content: `Parse this travel confirmation email and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
 {
   "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
-  "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}]
+  "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}],
+  "activities": [{"date": "YYYY-MM-DD or null", "time": "HH:MM or null", "title": "", "location": "", "category": "Bezienswaardigheid|Restaurant|Museum|Natuur|Sport|Shopping|Anders", "cost": null, "notes": ""}]
 }
-Only include items actually present in the email. Use null for missing values. Return empty arrays if nothing found.
+Only include items actually present in the email. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.
 
 Email text:
 ${text}`
@@ -266,7 +267,7 @@ ${text}`
   const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   try {
     const parsed = JSON.parse(raw);
-    sendJson(res, 200, { transports: parsed.transports || [], accommodations: parsed.accommodations || [] });
+    sendJson(res, 200, { transports: parsed.transports || [], accommodations: parsed.accommodations || [], activities: parsed.activities || [] });
   } catch {
     sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
   }
