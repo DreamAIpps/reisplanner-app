@@ -51,6 +51,7 @@ const api = {
   addExpense: (tripId, d) => apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
   updateExpense: (id, d) => apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
+  importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
 };
 
 // ---------- Helpers ----------
@@ -713,6 +714,155 @@ function BudgetTab({ trip, expenses, onRefresh }) {
   );
 }
 
+// ---------- Import modal ----------
+function ImportModal({ tripId, onImported, onClose }) {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState({ transports: [], accommodations: [] });
+
+  async function handleAnalyze(e) {
+    e.preventDefault();
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const data = await api.importEmail(tripId, text);
+      setResult(data);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  }
+
+  async function saveTransport(t, idx) {
+    setSaving(true);
+    try {
+      await api.addTransport(tripId, t);
+      setSaved((s) => ({ ...s, transports: [...s.transports, idx] }));
+    } catch (err) { alert(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveAccommodation(a, idx) {
+    setSaving(true);
+    try {
+      await api.addAccommodation(tripId, a);
+      setSaved((s) => ({ ...s, accommodations: [...s.accommodations, idx] }));
+    } catch (err) { alert(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveAll() {
+    setSaving(true);
+    try {
+      for (let i = 0; i < (result.transports || []).length; i++) {
+        if (!saved.transports.includes(i)) await api.addTransport(tripId, result.transports[i]);
+      }
+      for (let i = 0; i < (result.accommodations || []).length; i++) {
+        if (!saved.accommodations.includes(i)) await api.addAccommodation(tripId, result.accommodations[i]);
+      }
+      onImported();
+      onClose();
+    } catch (err) { alert(err.message); }
+    finally { setSaving(false); }
+  }
+
+  const totalFound = result ? (result.transports.length + result.accommodations.length) : 0;
+
+  return (
+    <Modal title="Bevestiging importeren" onClose={onClose} wide>
+      {!result ? (
+        <form onSubmit={handleAnalyze} className="space-y-4">
+          <p className="text-sm text-gray-500">Plak de tekst van je boekingsbevestiging hieronder. Claude analyseert de e-mail en extraheert vluchten en hotels automatisch.</p>
+          {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
+          <Field label="Tekst van de bevestiging">
+            <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Plak hier de volledige tekst van je boekingsbevestiging..." required />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+            <Button type="submit" disabled={loading || !text.trim()}>
+              {loading ? "Analyseren..." : "✨ Analyseren"}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="space-y-5">
+          {totalFound === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <div className="text-4xl mb-2">🤔</div>
+              <div>Geen vluchten of hotels gevonden in deze tekst.</div>
+              <div className="text-sm mt-1">Probeer het met een andere bevestiging.</div>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500">{totalFound} item{totalFound !== 1 ? "s" : ""} gevonden. Voeg toe aan je reis:</p>
+
+              {result.transports.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-gray-700 mb-2">✈️ Vervoer ({result.transports.length})</h3>
+                  <div className="space-y-2">
+                    {result.transports.map((t, i) => (
+                      <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.transports.includes(i) ? "opacity-50" : ""}`}>
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
+                          <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
+                            {t.departure_time && <span>Vertrek: {new Date(t.departure_time).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+                            {t.arrival_time && <span>Aankomst: {new Date(t.arrival_time).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+                            {t.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
+                            {t.cost != null && <span>{fmtMoney(t.cost)}</span>}
+                          </div>
+                          {t.notes && <div className="text-xs text-gray-500 mt-1">{t.notes}</div>}
+                        </div>
+                        {saved.transports.includes(i)
+                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                          : <Button variant="secondary" onClick={() => saveTransport(t, i)} disabled={saving}>Toevoegen</Button>
+                        }
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.accommodations.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-gray-700 mb-2">🏨 Verblijf ({result.accommodations.length})</h3>
+                  <div className="space-y-2">
+                    {result.accommodations.map((a, i) => (
+                      <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.accommodations.includes(i) ? "opacity-50" : ""}`}>
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-800">{a.name}</div>
+                          <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
+                            {a.check_in && <span>Check-in: {fmt(a.check_in)}</span>}
+                            {a.check_out && <span>Check-out: {fmt(a.check_out)}</span>}
+                            {a.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{a.booking_ref}</span>}
+                            {a.cost != null && <span>{fmtMoney(a.cost)}</span>}
+                          </div>
+                          {a.address && <div className="text-xs text-gray-500 mt-1">📍 {a.address}</div>}
+                          {a.notes && <div className="text-xs text-gray-500 mt-1">{a.notes}</div>}
+                        </div>
+                        {saved.accommodations.includes(i)
+                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                          : <Button variant="secondary" onClick={() => saveAccommodation(a, i)} disabled={saving}>Toevoegen</Button>
+                        }
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+            <Button variant="secondary" onClick={onClose}>Sluiten</Button>
+            {totalFound > 0 && saved.transports.length + saved.accommodations.length < totalFound && (
+              <Button onClick={saveAll} disabled={saving}>{saving ? "Opslaan..." : "Alles toevoegen"}</Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ---------- Trip detail ----------
 function TripDetail({ tripId, onBack, onChanged }) {
   const [trip, setTrip] = useState(null);
@@ -722,6 +872,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const [expenses, setExpenses] = useState([]);
   const [tab, setTab] = useState("days");
   const [editing, setEditing] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
     const [t, d, a, tr, ex] = await Promise.all([
@@ -772,7 +923,8 @@ function TripDetail({ tripId, onBack, onChanged }) {
               </div>
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
-            <div className="flex gap-2 shrink-0">
+            <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+              <Button variant="secondary" onClick={() => setImporting(true)}>📧 Bevestiging importeren</Button>
               <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>
               <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>
             </div>
@@ -788,6 +940,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} onRefresh={load} />}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
+      {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
     </div>
   );
 }

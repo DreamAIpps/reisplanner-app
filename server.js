@@ -3,6 +3,7 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const { query, initDb } = require("./db");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const PORT = process.env.PORT || 3002;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -236,6 +237,39 @@ route("PUT", "/api/transports/:id", async (req, res, params, body) => {
 route("DELETE", "/api/transports/:id", async (req, res, params) => {
   await query("DELETE FROM transports WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
+});
+
+// ---------- Import (email parsing via Claude) ----------
+route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
+  const { text } = body;
+  if (!text || !text.trim()) return sendError(res, 400, "Geen tekst opgegeven");
+  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+
+  const client = new Anthropic();
+  const message = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 1024,
+    messages: [{
+      role: "user",
+      content: `Parse this travel confirmation email and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
+{
+  "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
+  "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}]
+}
+Only include items actually present in the email. Use null for missing values. Return empty arrays if nothing found.
+
+Email text:
+${text}`
+    }]
+  });
+
+  const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  try {
+    const parsed = JSON.parse(raw);
+    sendJson(res, 200, { transports: parsed.transports || [], accommodations: parsed.accommodations || [] });
+  } catch {
+    sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
+  }
 });
 
 // ---------- Expenses ----------
