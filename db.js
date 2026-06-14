@@ -30,8 +30,10 @@ async function initDb() {
       status TEXT DEFAULT 'planning',
       notes TEXT,
       cover_color TEXT DEFAULT '#7c3aed',
+      cover_image TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image TEXT;
 
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,

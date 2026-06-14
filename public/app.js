@@ -52,6 +52,7 @@ const api = {
   updateExpense: (id, d) => apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
+  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
 };
 
 // ---------- Helpers ----------
@@ -143,13 +144,26 @@ function Tabs({ tabs, active, onChange }) {
 }
 
 // ---------- Trip form ----------
-const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", status: "planning", notes: "", cover_color: "#0369a1" };
+const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", status: "planning", notes: "", cover_color: "#0369a1", cover_image: "" };
 
 function TripForm({ initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "" } : { ...EMPTY_TRIP });
+  const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "" } : { ...EMPTY_TRIP });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [photoAuthor, setPhotoAuthor] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function handleSuggestPhoto() {
+    if (!form.destination) return;
+    setPhotoLoading(true); setPhotoAuthor(null);
+    try {
+      const data = await api.suggestPhoto(form.destination);
+      setForm((f) => ({ ...f, cover_image: data.url }));
+      setPhotoAuthor({ name: data.author, link: data.author_link });
+    } catch (err) { alert("Kon geen foto vinden: " + err.message); }
+    finally { setPhotoLoading(false); }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -199,6 +213,28 @@ function TripForm({ initial, onSaved, onClose }) {
             ))}
           </div>
         </Field>
+        <Field label="Omslagfoto">
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <Input value={form.cover_image} onChange={set("cover_image")} placeholder="Foto-URL, of zoek automatisch →" />
+              <Button type="button" variant="secondary" onClick={handleSuggestPhoto} disabled={photoLoading || !form.destination} className="shrink-0">
+                {photoLoading ? "..." : "🔍 Zoeken"}
+              </Button>
+            </div>
+            {form.cover_image && (
+              <div className="relative rounded-lg overflow-hidden h-32">
+                <img src={form.cover_image} alt="preview" className="w-full h-full object-cover" />
+                <button type="button" onClick={() => { setForm((f) => ({ ...f, cover_image: "" })); setPhotoAuthor(null); }}
+                  className="absolute top-1 right-1 bg-black/50 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-black/70">×</button>
+                {photoAuthor && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-white text-xs px-2 py-1">
+                    Foto door <a href={photoAuthor.link + "?utm_source=reisplanner&utm_medium=referral"} target="_blank" rel="noreferrer" className="underline">{photoAuthor.name}</a> via Unsplash
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Field>
         <Field label="Notities"><Textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Bijzonderheden, wensen..." /></Field>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
@@ -214,7 +250,9 @@ function TripCard({ trip, onClick }) {
   const dur = tripDuration(trip.start_date, trip.end_date);
   return (
     <div onClick={onClick} className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden border border-gray-100 group">
-      <div className="h-3 w-full" style={{ background: trip.cover_color || "#0369a1" }} />
+      {trip.cover_image
+        ? <div className="h-36 w-full bg-gray-100 overflow-hidden"><img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" /></div>
+        : <div className="h-3 w-full" style={{ background: trip.cover_color || "#0369a1" }} />}
       <div className="p-5">
         <div className="flex items-start justify-between gap-2 mb-2">
           <h3 className="font-bold text-gray-900 text-base group-hover:text-sky-700 transition-colors leading-tight">{trip.name}</h3>
@@ -1013,7 +1051,9 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
       {/* Header */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-        <div className="h-2 w-full" style={{ background: trip.cover_color || "#0369a1" }} />
+        {trip.cover_image
+          ? <div className="h-48 w-full overflow-hidden"><img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" /></div>
+          : <div className="h-2 w-full" style={{ background: trip.cover_color || "#0369a1" }} />}
         <div className="p-6">
           <div className="flex items-start justify-between gap-4">
             <div>

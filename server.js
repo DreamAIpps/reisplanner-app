@@ -95,12 +95,12 @@ route("GET", "/api/trips/:id", async (req, res, params) => {
 });
 
 route("POST", "/api/trips", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color } = body;
+  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
   if (!name) return sendError(res, 400, "Name is required");
   const { rows } = await query(
-    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed"]
+    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null]
   );
   // Auto-create day entries if dates are set
   if (start_date && end_date) {
@@ -115,11 +115,11 @@ route("POST", "/api/trips", async (req, res, params, body) => {
 });
 
 route("PUT", "/api/trips/:id", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color } = body;
+  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
   const { rows } = await query(
-    `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9
-     WHERE id=$10 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", params.id]
+    `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
+     WHERE id=$11 RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, params.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
@@ -237,6 +237,37 @@ route("PUT", "/api/transports/:id", async (req, res, params, body) => {
 route("DELETE", "/api/transports/:id", async (req, res, params) => {
   await query("DELETE FROM transports WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
+});
+
+// ---------- App icon (SVG, used as PWA icon) ----------
+route("GET", "/icon-192.png", async (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#0369a1"/><text x="96" y="130" font-size="100" text-anchor="middle">✈️</text></svg>`;
+  res.writeHead(200, { "Content-Type": "image/svg+xml" });
+  res.end(svg);
+});
+route("GET", "/icon-512.png", async (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="#0369a1"/><text x="256" y="340" font-size="260" text-anchor="middle">✈️</text></svg>`;
+  res.writeHead(200, { "Content-Type": "image/svg+xml" });
+  res.end(svg);
+});
+
+// ---------- Photo suggestion via Unsplash ----------
+route("GET", "/api/photo-suggest", async (req, res, params, body) => {
+  const url = new URL(req.url, "http://localhost");
+  const destination = url.searchParams.get("destination") || "";
+  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
+  if (!process.env.UNSPLASH_ACCESS_KEY) return sendError(res, 503, "UNSPLASH_ACCESS_KEY niet geconfigureerd");
+
+  const apiUrl = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(destination + " travel landscape")}&orientation=landscape&content_filter=high&client_id=${process.env.UNSPLASH_ACCESS_KEY}`;
+  const resp = await fetch(apiUrl);
+  if (!resp.ok) return sendError(res, 502, "Unsplash API fout");
+  const data = await resp.json();
+  sendJson(res, 200, {
+    url: data.urls.regular,
+    thumb: data.urls.small,
+    author: data.user.name,
+    author_link: data.user.links.html,
+  });
 });
 
 // ---------- Import (email parsing via Claude) ----------
