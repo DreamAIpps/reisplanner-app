@@ -486,7 +486,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       <div className="space-y-4">
         {days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
-          const dayTransports = transports.filter((t) => t.departure_time && new Date(t.departure_time).toISOString().slice(0, 10) === dayStr);
+          const isoDate = (dt) => dt ? dt.slice(0, 10) : null;
+          const dayTransports = transports.filter((t) =>
+            (t.departure_time && isoDate(t.departure_time) === dayStr) ||
+            (t.arrival_time && isoDate(t.arrival_time) === dayStr)
+          );
           const dayAccommodations = accommodations.filter((a) => {
             const ci = a.check_in ? a.check_in.slice(0, 10) : null;
             const co = a.check_out ? a.check_out.slice(0, 10) : null;
@@ -509,14 +513,19 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 
             {hasExtras && (
               <div className="px-4 py-2 bg-sky-50 border-b border-sky-100 flex flex-wrap gap-3">
-                {dayTransports.map((t) => (
-                  <div key={t.id} className="flex items-center gap-1.5 text-xs text-sky-800">
-                    <span>{TRANSPORT_ICONS[t.type] || "🚀"}</span>
-                    <span className="font-medium">{t.from_location} → {t.to_location}</span>
-                    {t.departure_time && <span className="text-sky-600">{new Date(t.departure_time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</span>}
-                    {t.booking_ref && <span className="font-mono bg-sky-100 px-1 rounded">#{t.booking_ref}</span>}
-                  </div>
-                ))}
+                {dayTransports.map((t) => {
+                  const isArrival = t.arrival_time && isoDate(t.arrival_time) === dayStr && !(t.departure_time && isoDate(t.departure_time) === dayStr);
+                  const time = isArrival ? t.arrival_time : t.departure_time;
+                  return (
+                    <div key={t.id + (isArrival ? "-arr" : "")} className="flex items-center gap-1.5 text-xs text-sky-800">
+                      <span>{TRANSPORT_ICONS[t.type] || "🚀"}</span>
+                      <span className="text-sky-500">{isArrival ? "Aankomst" : "Vertrek"}</span>
+                      <span className="font-medium">{t.from_location} → {t.to_location}</span>
+                      {time && <span className="text-sky-600">{new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</span>}
+                      {t.booking_ref && <span className="font-mono bg-sky-100 px-1 rounded">#{t.booking_ref}</span>}
+                    </div>
+                  );
+                })}
                 {dayAccommodations.map((a) => {
                   const isCheckIn = a.check_in && a.check_in.slice(0, 10) === dayStr;
                   const isCheckOut = a.check_out && a.check_out.slice(0, 10) === dayStr;
