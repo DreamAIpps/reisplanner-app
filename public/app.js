@@ -1097,17 +1097,25 @@ function ShareModal({ tripId, onClose }) {
         {loading ? (
           <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
         ) : (
-          <div className="flex gap-2">
-            <input
-              readOnly
-              value={link}
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-gray-50 focus:outline-none"
-              onClick={(e) => e.target.select()}
-            />
-            <Button onClick={handleCopy} variant={copied ? "secondary" : "primary"}>
-              {copied ? "✓ Gekopieerd" : "Kopiëren"}
-            </Button>
-          </div>
+          <>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={link}
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-gray-50 focus:outline-none"
+                onClick={(e) => e.target.select()}
+              />
+              <Button onClick={handleCopy} variant={copied ? "secondary" : "primary"}>
+                {copied ? "✓ Gekopieerd" : "Kopiëren"}
+              </Button>
+            </div>
+            <a
+              href={`mailto:?subject=${encodeURIComponent("Uitnodiging: bekijk onze reis")}&body=${encodeURIComponent(`Hoi!\n\nIk wil deze reis met je delen via Reisplanner.\n\nKlik op de link hieronder om toegang te krijgen:\n${link}\n\nTot snel!`)}`}
+              className="flex items-center justify-center gap-2 w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              ✉️ Verstuur via Mail
+            </a>
+          </>
         )}
         <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
         <div className="flex justify-end pt-2">
