@@ -4,15 +4,6 @@ const { useState, useEffect, useCallback, useRef } = React;
 const TRANSPORT_TYPES = ["Vliegtuig", "Trein", "Bus", "Huurauto", "Taxi", "Boot", "Anders"];
 const EXPENSE_CATEGORIES = ["Vluchten", "Accommodatie", "Vervoer", "Eten & Drinken", "Activiteiten", "Winkelen", "Overig"];
 const ACTIVITY_CATEGORIES = ["Bezienswaardigheid", "Restaurant", "Museum", "Natuur", "Sport", "Shopping", "Anders"];
-const TRIP_STATUSES = ["planning", "geboekt", "onderweg", "afgerond"];
-const STATUS_LABELS = { planning: "Planning", geboekt: "Geboekt", onderweg: "Onderweg", afgerond: "Afgerond" };
-const STATUS_COLORS = {
-  planning: "bg-yellow-100 text-yellow-800",
-  geboekt: "bg-blue-100 text-blue-800",
-  onderweg: "bg-green-100 text-green-800",
-  afgerond: "bg-gray-100 text-gray-700",
-};
-const STATUS_ICONS = { planning: "📋", geboekt: "🎫", onderweg: "✈️", afgerond: "✅" };
 const COVER_COLORS = ["#0369a1","#7c3aed","#b45309","#065f46","#9f1239","#1e40af","#92400e","#134e4a"];
 
 // ---------- API ----------
@@ -162,7 +153,7 @@ function Tabs({ tabs, active, onChange, accentColor }) {
 }
 
 // ---------- Trip form ----------
-const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", status: "planning", notes: "", cover_color: "#0369a1", cover_image: "" };
+const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#0369a1", cover_image: "" };
 
 function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "" } : { ...EMPTY_TRIP });
@@ -217,11 +208,6 @@ function TripForm({ initial, onSaved, onClose }) {
             </Select>
           </Field>
         </div>
-        <Field label="Status">
-          <Select value={form.status} onChange={set("status")}>
-            {TRIP_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-          </Select>
-        </Field>
         <Field label="Kleur">
           <div className="flex gap-2 flex-wrap mt-1">
             {COVER_COLORS.map((c) => (
@@ -277,9 +263,6 @@ function TripCard({ trip, onClick }) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
           <div className="absolute top-2 right-2 flex gap-1">
             {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-500/80 text-white backdrop-blur-sm">Gedeeld</span>}
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-black/40 text-white backdrop-blur-sm">
-              {STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}
-            </span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 p-3">
             <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
@@ -293,9 +276,6 @@ function TripCard({ trip, onClick }) {
             <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
             <div className="flex gap-1 shrink-0">
               {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/20 text-white">Gedeeld</span>}
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/20 text-white">
-                {STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}
-              </span>
             </div>
           </div>
         </div>
@@ -310,17 +290,17 @@ function TripCard({ trip, onClick }) {
             {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
           </div>
         </div>
-        {until !== null && until > 0 && trip.status !== "afgerond" && (
+        {until !== null && until > 0 && (
           <div className="mt-2 text-xs font-semibold rounded-lg px-2 py-1.5 text-center" style={{ background: accent + "18", color: accent }}>
             Nog {until} dag{until === 1 ? "" : "en"} tot vertrek ✈️
           </div>
         )}
-        {until === 0 && trip.status !== "afgerond" && (
+        {until === 0 && (
           <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 rounded-lg px-2 py-1.5 text-center">
             Vandaag vertrek! 🎉
           </div>
         )}
-        {until !== null && until < 0 && trip.status === "onderweg" && (
+        {until !== null && until < 0 && trip.end_date && new Date(trip.end_date) >= new Date() && (
           <div className="mt-2 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5 text-center">
             Onderweg — dag {Math.abs(until) + 1} 🌍
           </div>
@@ -1618,7 +1598,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-5">
               <div className="flex items-start gap-2 mb-1">
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white backdrop-blur-sm`}>{STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}</span>
                 {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
               </div>
               <h2 className="text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
@@ -1636,7 +1615,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
               <div className="relative flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white">{STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}</span>
                   {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">Gedeeld</span>}
                 </div>
                 <h2 className="text-2xl font-bold text-white drop-shadow">{trip.name}</h2>
@@ -1846,10 +1824,7 @@ function App() {
     return null;
   }
 
-  const tripStats = (() => {
-    const counts = trips.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
-    return Object.entries(counts).map(([s, n]) => `${STATUS_ICONS[s]} ${n} ${STATUS_LABELS[s].toLowerCase()}`).join("  ·  ");
-  })();
+  const tripStats = trips.length > 0 ? `${trips.length} rei${trips.length === 1 ? "s" : "zen"}` : null;
 
   return (
     <div className="min-h-screen bg-gray-50">
