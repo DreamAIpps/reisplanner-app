@@ -641,22 +641,11 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   const client = new Anthropic();
   const message = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 2000,
+    max_tokens: 900,
     messages: [{
       role: "user",
-      content: `Je bent een ervaren reisadviseur. Geef praktische en persoonlijke reisTips voor "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown:
-{
-  "tips": [
-    { "category": "Lokaal vervoer", "icon": "🚇", "items": ["tip1", "tip2", "tip3"] },
-    { "category": "Taxi & ride-apps", "icon": "🚕", "items": ["tip1", "tip2", "tip3"] },
-    { "category": "Restaurants", "icon": "🍽", "items": ["tip1", "tip2", "tip3"] },
-    { "category": "Activiteiten", "icon": "🎯", "items": ["tip1", "tip2", "tip3"] },
-    { "category": "Met kinderen", "icon": "👨‍👩‍👧", "items": ["tip1", "tip2", "tip3"] },
-    { "category": "Hotels & verblijf", "icon": "🏨", "items": ["tip1", "tip2", "tip3"] }
-  ],
-  "best_time": "Korte omschrijving beste reistijd voor ${destination}",
-  "did_you_know": "Een verrassend en weinig bekend feitje over ${destination}"
-}`,
+      content: `Geef korte reisTips voor "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown:
+{"tips":[{"category":"Lokaal vervoer","icon":"🚇","items":["tip1","tip2"]},{"category":"Taxi & apps","icon":"🚕","items":["tip1","tip2"]},{"category":"Restaurants","icon":"🍽","items":["tip1","tip2"]},{"category":"Activiteiten","icon":"🎯","items":["tip1","tip2"]},{"category":"Met kinderen","icon":"👨‍👩‍👧","items":["tip1","tip2"]},{"category":"Hotels","icon":"🏨","items":["tip1","tip2"]}],"did_you_know":"feitje"}`,
     }],
   });
 
