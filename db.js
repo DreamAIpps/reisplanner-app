@@ -55,6 +55,19 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS trip_members (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (trip_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS trip_invites (
+      token TEXT PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,

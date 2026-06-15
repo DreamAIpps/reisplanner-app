@@ -52,6 +52,7 @@ const api = {
   updateExpense: (id, d) => apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
+  createInvite: (tripId) => apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
   getAdminTrips: () => apiFetch("/api/admin/trips"),
   getAdminUsers: () => apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -259,9 +260,12 @@ function TripCard({ trip, onClick }) {
       <div className="p-5">
         <div className="flex items-start justify-between gap-2 mb-2">
           <h3 className="font-bold text-gray-900 text-base group-hover:text-sky-700 transition-colors leading-tight">{trip.name}</h3>
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${STATUS_COLORS[trip.status] || "bg-gray-100 text-gray-600"}`}>
-            {STATUS_LABELS[trip.status] || trip.status}
-          </span>
+          <div className="flex gap-1 shrink-0">
+            {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">Gedeeld</span>}
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[trip.status] || "bg-gray-100 text-gray-600"}`}>
+              {STATUS_LABELS[trip.status] || trip.status}
+            </span>
+          </div>
         </div>
         {trip.destination && <div className="text-sm text-gray-500 mb-3">📍 {trip.destination}</div>}
         <div className="flex items-center justify-between text-xs text-gray-400 mt-auto">
@@ -1015,6 +1019,54 @@ function ImportModal({ tripId, onImported, onClose }) {
   );
 }
 
+// ---------- Share modal ----------
+function ShareModal({ tripId, onClose }) {
+  const [link, setLink] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api.createInvite(tripId)
+      .then((d) => setLink(d.link))
+      .finally(() => setLoading(false));
+  }, [tripId]);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <Modal title="Reis delen" onClose={onClose} wide>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-500">
+          Deel de link hieronder. De ontvanger kan inloggen via Google of Apple en krijgt direct toegang tot deze reis.
+        </p>
+        {loading ? (
+          <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={link}
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-gray-50 focus:outline-none"
+              onClick={(e) => e.target.select()}
+            />
+            <Button onClick={handleCopy} variant={copied ? "secondary" : "primary"}>
+              {copied ? "✓ Gekopieerd" : "Kopiëren"}
+            </Button>
+          </div>
+        )}
+        <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
+        <div className="flex justify-end pt-2">
+          <Button variant="secondary" onClick={onClose}>Sluiten</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------- Trip detail ----------
 function TripDetail({ tripId, onBack, onChanged }) {
   const [trip, setTrip] = useState(null);
@@ -1025,6 +1077,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const [tab, setTab] = useState("days");
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const load = useCallback(async () => {
     const [t, d, a, tr, ex] = await Promise.all([
@@ -1079,8 +1132,9 @@ function TripDetail({ tripId, onBack, onChanged }) {
             </div>
             <div className="flex gap-2 shrink-0 flex-wrap justify-end">
               <Button variant="secondary" onClick={() => setImporting(true)}>📧 Bevestiging importeren</Button>
-              <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>
-              <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>
+              {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)}>🔗 Delen</Button>}
+              {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>}
+              {trip.is_owner && <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>}
             </div>
           </div>
         </div>
@@ -1095,6 +1149,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
+      {sharing && <ShareModal tripId={tripId} onClose={() => setSharing(false)} />}
     </div>
   );
 }
@@ -1199,7 +1254,16 @@ function App() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { if (user) loadTrips(); }, [user, loadTrips]);
+  useEffect(() => {
+    if (!user) return;
+    loadTrips();
+    const params = new URLSearchParams(location.search);
+    const tripId = params.get("trip");
+    if (tripId) {
+      setView({ name: "detail", id: parseInt(tripId) });
+      window.history.replaceState({}, "", "/");
+    }
+  }, [user, loadTrips]);
 
   async function handleLogout() {
     await fetch("/auth/logout", { method: "POST" });

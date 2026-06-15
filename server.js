@@ -102,6 +102,26 @@ function setSessionCookie(res, token) {
   res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`);
 }
 
+async function handlePostLogin(req, res, user) {
+  const sessionToken = await createSession(user.id);
+  const cookies = [`session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`];
+  let redirect = "/";
+
+  const { invite } = parseCookies(req);
+  if (invite) {
+    const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [invite]);
+    if (rows.length) {
+      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
+      redirect = `/?trip=${rows[0].trip_id}`;
+    }
+    cookies.push("invite=; HttpOnly; Path=/; Max-Age=0");
+  }
+
+  res.setHeader("Set-Cookie", cookies);
+  res.writeHead(302, { Location: redirect });
+  res.end();
+}
+
 function appUrl(req) {
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   const proto = req.headers["x-forwarded-proto"] || "https";
@@ -165,6 +185,32 @@ function serveStatic(res, filePath) {
   });
 }
 
+// ---------- Invite routes ----------
+route("GET", "/invite/:token", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [params.token]);
+  if (!rows.length) { res.writeHead(302, { Location: "/?error=invalid-invite" }); res.end(); return; }
+
+  const user = await getSession(req);
+  if (!user) {
+    res.setHeader("Set-Cookie", `invite=${params.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`);
+    res.writeHead(302, { Location: "/login" });
+    res.end();
+    return;
+  }
+
+  await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
+  res.writeHead(302, { Location: `/?trip=${rows[0].trip_id}` });
+  res.end();
+});
+
+route("POST", "/api/trips/:id/invite", async (req, res, params) => {
+  const { rows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!rows.length) return sendError(res, 403, "Alleen de eigenaar kan uitnodigen");
+  const token = crypto.randomBytes(16).toString("hex");
+  await query("INSERT INTO trip_invites (token, trip_id, created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [token, params.id, req.user.id]);
+  sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}` });
+});
+
 // ---------- Admin routes ----------
 route("GET", "/api/admin/users", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
@@ -199,13 +245,13 @@ route("GET", "/api/admin/trips", async (req, res) => {
 // ---------- Trip routes ----------
 route("GET", "/api/trips", async (req, res) => {
   const { rows } = await query(`
-    SELECT t.*,
+    SELECT t.*, (t.user_id = $1) as is_owner,
       COALESCE(SUM(e.amount), 0) as total_spent,
       COUNT(DISTINCT a.id) as activity_count
     FROM trips t
     LEFT JOIN expenses e ON e.trip_id = t.id
     LEFT JOIN activities a ON a.trip_id = t.id
-    WHERE t.user_id = $1
+    WHERE t.user_id = $1 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = t.id AND user_id = $1)
     GROUP BY t.id
     ORDER BY t.start_date DESC NULLS LAST, t.created_at DESC
   `, [req.user.id]);
@@ -213,7 +259,10 @@ route("GET", "/api/trips", async (req, res) => {
 });
 
 route("GET", "/api/trips/:id", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  const { rows } = await query(
+    "SELECT *, (user_id = $2) as is_owner FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))",
+    [params.id, req.user.id]
+  );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
 });
@@ -409,12 +458,8 @@ route("GET", "/auth/google/callback", async (req, res) => {
     headers: { Authorization: `Bearer ${access_token}` },
   });
   const u = await userResp.json();
-
   const user = await findOrCreateUser({ google_id: u.sub, email: u.email, name: u.name, avatar: u.picture });
-  const token = await createSession(user.id);
-  setSessionCookie(res, token);
-  res.writeHead(302, { Location: "/" });
-  res.end();
+  await handlePostLogin(req, res, user);
 });
 
 route("GET", "/auth/apple", async (req, res) => {
@@ -439,10 +484,7 @@ route("POST", "/auth/apple/callback", async (req, res) => {
   try { const u = JSON.parse(body.get("user") || "{}"); name = [u.name?.firstName, u.name?.lastName].filter(Boolean).join(" ") || null; } catch {}
 
   const user = await findOrCreateUser({ apple_id: payload.sub, email: payload.email || null, name });
-  const token = await createSession(user.id);
-  setSessionCookie(res, token);
-  res.writeHead(302, { Location: "/" });
-  res.end();
+  await handlePostLogin(req, res, user);
 });
 
 // ---------- App icon (SVG, used as PWA icon) ----------
@@ -547,7 +589,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  if (pathname.startsWith("/auth/")) {
+  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")) {
     const match = matchRoute(req.method, pathname);
     if (!match) { res.writeHead(404); res.end(); return; }
     try { await match.handler(req, res, match.params, {}); }
