@@ -701,7 +701,7 @@ Only include items actually present. Use null for missing values. Return empty a
     : [{ type: "text", text: `${prompt}\n\nEmail text:\n${text}` }];
 
   const message = await client.messages.create({
-    model: "claude-opus-4-8",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
     messages: [{ role: "user", content }],
   });
