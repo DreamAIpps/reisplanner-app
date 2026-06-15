@@ -373,9 +373,9 @@ route("DELETE", "/api/activities/:id", async (req, res, params) => {
 // ---------- Date validation helper ----------
 function checkDateInRange(dateStr, tripStart, tripEnd) {
   if (!dateStr || !tripStart || !tripEnd) return null;
-  const date = dateStr.slice(0, 10);
-  const start = tripStart.slice(0, 10);
-  const end = tripEnd.slice(0, 10);
+  const date = String(dateStr).slice(0, 10);
+  const start = String(tripStart).slice(0, 10);
+  const end = String(tripEnd).slice(0, 10);
   if (date < start || date > end) {
     return `Deze datum (${new Date(date).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}) valt buiten de reisperiode (${new Date(start).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })} – ${new Date(end).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}).`;
   }
