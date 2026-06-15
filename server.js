@@ -685,7 +685,8 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   const tripRow2 = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
   const tripStartStr = tripRow2.rows[0]?.start_date ? String(tripRow2.rows[0].start_date).slice(0, 10) : null;
   const tripEndStr = tripRow2.rows[0]?.end_date ? String(tripRow2.rows[0].end_date).slice(0, 10) : null;
-  const tripYearHint = tripStartStr ? ` The trip runs from ${tripStartStr} to ${tripEndStr}. If a date in the confirmation has no year, assume it falls within this trip range and use the correct year.` : "";
+  const tripYear = tripStartStr ? tripStartStr.slice(0, 4) : null;
+  const tripYearHint = tripYear ? `\nIMPORTANT: This trip takes place from ${tripStartStr} to ${tripEndStr} (year: ${tripYear}). Any date without a year MUST use year ${tripYear}. Never use any other year.` : "";
 
   const client = new Anthropic();
   const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
@@ -710,7 +711,32 @@ Only include items actually present. Use null for missing values. Return empty a
   try {
     const parsed = JSON.parse(raw);
 
-    sendJson(res, 200, { transports: parsed.transports || [], accommodations: parsed.accommodations || [], activities: parsed.activities || [] });
+    // Force correct year on all dates if trip year is known
+    const forceYear = (dateStr) => {
+      if (!dateStr || !tripYear) return dateStr;
+      return tripYear + "-" + String(dateStr).slice(5, 10);
+    };
+    const forceDtYear = (dtStr) => {
+      if (!dtStr || !tripYear) return dtStr;
+      return tripYear + "-" + String(dtStr).slice(5);
+    };
+
+    const transports = (parsed.transports || []).map((t) => ({
+      ...t,
+      departure_time: t.departure_time ? forceDtYear(t.departure_time) : null,
+      arrival_time: t.arrival_time ? forceDtYear(t.arrival_time) : null,
+    }));
+    const accommodations = (parsed.accommodations || []).map((a) => ({
+      ...a,
+      check_in: a.check_in ? forceYear(a.check_in) : null,
+      check_out: a.check_out ? forceYear(a.check_out) : null,
+    }));
+    const activities = (parsed.activities || []).map((a) => ({
+      ...a,
+      date: a.date ? forceYear(a.date) : null,
+    }));
+
+    sendJson(res, 200, { transports, accommodations, activities });
   } catch {
     sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
   }
