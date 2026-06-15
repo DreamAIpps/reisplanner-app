@@ -536,6 +536,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Static files
+  if (pathname === "/login") { serveStatic(res, path.join(PUBLIC_DIR, "login.html")); return; }
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end(); return; }
   if (!fs.existsSync(filePath)) filePath = path.join(PUBLIC_DIR, "index.html");
