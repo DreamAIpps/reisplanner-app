@@ -1600,7 +1600,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
               <Button variant="secondary" onClick={() => setImporting(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">📧 Importeren</Button>
               {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">🔗 Delen</Button>}
               {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-              {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="!bg-red-500 !text-white shadow-sm text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+              {trip.is_owner && <button onClick={handleDelete} className="inline-flex items-center gap-1.5 bg-white/90 text-red-600 backdrop-blur-sm shadow-sm text-xs px-3 py-1.5 rounded-lg font-medium hover:bg-white transition-colors">🗑 Verwijderen</button>}
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-5">
               <div className="flex items-start gap-2 mb-1">
