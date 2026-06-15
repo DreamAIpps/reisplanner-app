@@ -2,6 +2,8 @@ require("dotenv").config();
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 
@@ -43,6 +45,91 @@ function readBody(req) {
   });
 }
 
+// ---------- Auth helpers ----------
+function parseCookies(req) {
+  return Object.fromEntries(
+    (req.headers.cookie || "").split(";").map((c) => {
+      const [k, ...v] = c.trim().split("=");
+      return [k, v.join("=")];
+    }).filter(([k]) => k)
+  );
+}
+
+async function getSession(req) {
+  const { session } = parseCookies(req);
+  if (!session) return null;
+  const { rows } = await query(
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
+    [session]
+  );
+  return rows[0] || null;
+}
+
+async function findOrCreateUser({ google_id, apple_id, email, name, avatar }) {
+  if (google_id) {
+    const { rows } = await query("SELECT * FROM users WHERE google_id = $1", [google_id]);
+    if (rows[0]) {
+      await query("UPDATE users SET email=$1, name=$2, avatar=$3 WHERE id=$4", [email, name, avatar, rows[0].id]);
+      return rows[0];
+    }
+  }
+  if (apple_id) {
+    const { rows } = await query("SELECT * FROM users WHERE apple_id = $1", [apple_id]);
+    if (rows[0]) return rows[0];
+  }
+  if (email) {
+    const { rows } = await query("SELECT * FROM users WHERE email = $1", [email]);
+    if (rows[0]) {
+      if (google_id) await query("UPDATE users SET google_id=$1, avatar=$2 WHERE id=$3", [google_id, avatar, rows[0].id]);
+      if (apple_id) await query("UPDATE users SET apple_id=$1 WHERE id=$2", [apple_id, rows[0].id]);
+      return rows[0];
+    }
+  }
+  const { rows } = await query(
+    "INSERT INTO users (email, name, avatar, google_id, apple_id) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+    [email || null, name || null, avatar || null, google_id || null, apple_id || null]
+  );
+  return rows[0];
+}
+
+async function createSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await query("INSERT INTO sessions (token, user_id) VALUES ($1, $2)", [token, userId]);
+  return token;
+}
+
+function setSessionCookie(res, token) {
+  const secure = process.env.APP_URL?.startsWith("https") ? "Secure; " : "";
+  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; ${secure}SameSite=Lax; Path=/; Max-Age=2592000`);
+}
+
+async function readFormBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(new URLSearchParams(Buffer.concat(chunks).toString())));
+    req.on("error", reject);
+  });
+}
+
+async function generateAppleClientSecret() {
+  const key = (process.env.APPLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  return jwt.sign(
+    { iss: process.env.APPLE_TEAM_ID, aud: "https://appleid.apple.com", sub: process.env.APPLE_CLIENT_ID },
+    key,
+    { algorithm: "ES256", header: { alg: "ES256", kid: process.env.APPLE_KEY_ID }, expiresIn: "1h" }
+  );
+}
+
+async function verifyAppleIdToken(idToken) {
+  const { keys } = await (await fetch("https://appleid.apple.com/auth/keys")).json();
+  const header = JSON.parse(Buffer.from(idToken.split(".")[0], "base64").toString());
+  const jwk = keys.find((k) => k.kid === header.kid);
+  if (!jwk) throw new Error("Apple key not found");
+  const pubKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
+  return jwt.verify(idToken, pubKey, { algorithms: ["RS256"] });
+}
+
 // ---------- Router ----------
 const routes = [];
 function route(method, pattern, handler) {
@@ -82,14 +169,15 @@ route("GET", "/api/trips", async (req, res) => {
     FROM trips t
     LEFT JOIN expenses e ON e.trip_id = t.id
     LEFT JOIN activities a ON a.trip_id = t.id
+    WHERE t.user_id = $1
     GROUP BY t.id
     ORDER BY t.start_date DESC NULLS LAST, t.created_at DESC
-  `);
+  `, [req.user.id]);
   sendJson(res, 200, rows);
 });
 
 route("GET", "/api/trips/:id", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM trips WHERE id = $1", [params.id]);
+  const { rows } = await query("SELECT * FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
 });
@@ -98,9 +186,9 @@ route("POST", "/api/trips", async (req, res, params, body) => {
   const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
   if (!name) return sendError(res, 400, "Name is required");
   const { rows } = await query(
-    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null]
+    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, req.user.id]
   );
   // Auto-create day entries if dates are set
   if (start_date && end_date) {
@@ -118,15 +206,15 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
   const { rows } = await query(
     `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
-     WHERE id=$11 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, params.id]
+     WHERE id=$11 AND user_id=$12 RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
 });
 
 route("DELETE", "/api/trips/:id", async (req, res, params) => {
-  await query("DELETE FROM trips WHERE id = $1", [params.id]);
+  await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
 });
 
@@ -239,6 +327,88 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Auth routes ----------
+route("GET", "/auth/me", async (req, res) => {
+  const user = await getSession(req);
+  if (!user) return sendError(res, 401, "Niet ingelogd");
+  sendJson(res, 200, { id: user.id, name: user.name, email: user.email, avatar: user.avatar });
+});
+
+route("POST", "/auth/logout", async (req, res) => {
+  const { session } = parseCookies(req);
+  if (session) await query("DELETE FROM sessions WHERE token = $1", [session]);
+  res.setHeader("Set-Cookie", "session=; HttpOnly; Path=/; Max-Age=0");
+  sendJson(res, 200, { ok: true });
+});
+
+route("GET", "/auth/google", async (req, res) => {
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: `${process.env.APP_URL}/auth/google/callback`,
+    response_type: "code",
+    scope: "openid email profile",
+  });
+  res.writeHead(302, { Location: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
+  res.end();
+});
+
+route("GET", "/auth/google/callback", async (req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  const code = url.searchParams.get("code");
+  if (!code) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
+
+  const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code, grant_type: "authorization_code",
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: `${process.env.APP_URL}/auth/google/callback`,
+    }),
+  });
+  const { access_token } = await tokenResp.json();
+
+  const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${access_token}` },
+  });
+  const u = await userResp.json();
+
+  const user = await findOrCreateUser({ google_id: u.sub, email: u.email, name: u.name, avatar: u.picture });
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
+  res.writeHead(302, { Location: "/" });
+  res.end();
+});
+
+route("GET", "/auth/apple", async (req, res) => {
+  const params = new URLSearchParams({
+    client_id: process.env.APPLE_CLIENT_ID,
+    redirect_uri: `${process.env.APP_URL}/auth/apple/callback`,
+    response_type: "code id_token",
+    scope: "name email",
+    response_mode: "form_post",
+  });
+  res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
+  res.end();
+});
+
+route("POST", "/auth/apple/callback", async (req, res) => {
+  const body = await readFormBody(req);
+  const idToken = body.get("id_token");
+  if (!idToken) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
+
+  const payload = await verifyAppleIdToken(idToken);
+  let name = null;
+  try { const u = JSON.parse(body.get("user") || "{}"); name = [u.name?.firstName, u.name?.lastName].filter(Boolean).join(" ") || null; } catch {}
+
+  const user = await findOrCreateUser({ apple_id: payload.sub, email: payload.email || null, name });
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
+  res.writeHead(302, { Location: "/" });
+  res.end();
+});
+
 // ---------- App icon (SVG, used as PWA icon) ----------
 route("GET", "/icon-192.png", async (req, res) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#0369a1"/><text x="96" y="130" font-size="100" text-anchor="middle">✈️</text></svg>`;
@@ -341,11 +511,22 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
+  if (pathname.startsWith("/auth/")) {
+    const match = matchRoute(req.method, pathname);
+    if (!match) { res.writeHead(404); res.end(); return; }
+    try { await match.handler(req, res, match.params, {}); }
+    catch (err) { console.error(err); res.writeHead(302, { Location: "/login?error=1" }); res.end(); }
+    return;
+  }
+
   if (pathname.startsWith("/api/")) {
+    const user = await getSession(req);
+    if (!user) { sendError(res, 401, "Niet ingelogd"); return; }
     const match = matchRoute(req.method, pathname);
     if (!match) { sendError(res, 404, "Not found"); return; }
     try {
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
+      req.user = user;
       await match.handler(req, res, match.params, body);
     } catch (err) {
       console.error(err);

@@ -31,9 +31,27 @@ async function initDb() {
       notes TEXT,
       cover_color TEXT DEFAULT '#7c3aed',
       cover_image TEXT,
+      user_id INTEGER,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image TEXT;
+    ALTER TABLE trips ADD COLUMN IF NOT EXISTS user_id INTEGER;
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE,
+      name TEXT,
+      avatar TEXT,
+      google_id TEXT UNIQUE,
+      apple_id TEXT UNIQUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
 
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,

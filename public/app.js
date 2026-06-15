@@ -1098,10 +1098,18 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
 // ---------- App ----------
 function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState({ name: "list" });
   const [showTripForm, setShowTripForm] = useState(false);
+
+  useEffect(() => {
+    fetch("/auth/me")
+      .then((r) => r.ok ? r.json() : null)
+      .then((u) => { setUser(u); setAuthLoading(false); });
+  }, []);
 
   const loadTrips = useCallback(async () => {
     setLoading(true);
@@ -1109,7 +1117,21 @@ function App() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadTrips(); }, [loadTrips]);
+  useEffect(() => { if (user) loadTrips(); }, [user, loadTrips]);
+
+  async function handleLogout() {
+    await fetch("/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
+  if (authLoading) return (
+    <div className="min-h-screen flex items-center justify-center text-gray-400">Laden...</div>
+  );
+
+  if (!user) {
+    window.location.href = "/login";
+    return null;
+  }
 
   return (
     <div className="min-h-screen">
@@ -1121,11 +1143,18 @@ function App() {
             </h1>
             <p className="text-sky-200 text-sm mt-0.5">Jouw reizen, overzichtelijk gepland</p>
           </div>
-          {view.name === "list" && (
-            <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-100 font-semibold">
-              + Nieuwe reis
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            {view.name === "list" && (
+              <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-100 font-semibold">
+                + Nieuwe reis
+              </Button>
+            )}
+            <div className="flex items-center gap-2 border-l border-sky-700 pl-3">
+              {user.avatar && <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />}
+              <span className="text-sm text-sky-200 hidden sm:block">{user.name || user.email}</span>
+              <button onClick={handleLogout} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-700 transition-colors">Uitloggen</button>
+            </div>
+          </div>
         </div>
       </header>
 

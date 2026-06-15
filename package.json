@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.54.0",
+    "jsonwebtoken": "^9.0.2",
     "dotenv": "^17.4.2",
     "pg": "^8.21.0"
   }
