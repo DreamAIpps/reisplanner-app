@@ -349,6 +349,14 @@ route("DELETE", "/api/days/:id", async (req, res, params) => {
 
 route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
   const { trip_id, time, title, location, notes, category, cost } = body;
+  const { rows: dayRows } = await query(
+    "SELECT d.date, t.start_date, t.end_date FROM days d JOIN trips t ON t.id = d.trip_id WHERE d.id = $1",
+    [params.id]
+  );
+  if (dayRows[0]) {
+    const err = checkDateInRange(dayRows[0].date, dayRows[0].start_date, dayRows[0].end_date);
+    if (err) return sendError(res, 400, err);
+  }
   const { rows } = await query(
     "INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
     [params.id, trip_id, time||null, title, location||null, notes||null, category||"activity", cost||null]
@@ -370,6 +378,18 @@ route("DELETE", "/api/activities/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Date validation helper ----------
+function checkDateInRange(dateStr, tripStart, tripEnd) {
+  if (!dateStr || !tripStart || !tripEnd) return null;
+  const date = dateStr.slice(0, 10);
+  const start = tripStart.slice(0, 10);
+  const end = tripEnd.slice(0, 10);
+  if (date < start || date > end) {
+    return `Deze datum (${new Date(date).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}) valt buiten de reisperiode (${new Date(start).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })} – ${new Date(end).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}).`;
+  }
+  return null;
+}
+
 // ---------- Accommodation ----------
 route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM accommodations WHERE trip_id = $1 ORDER BY check_in ASC NULLS LAST", [params.id]);
@@ -378,6 +398,10 @@ route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
 
 route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
   const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
+  const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
+  const trip = tripRows[0];
+  const err = checkDateInRange(check_in, trip?.start_date, trip?.end_date) || checkDateInRange(check_out, trip?.start_date, trip?.end_date);
+  if (err) return sendError(res, 400, err);
   const { rows } = await query(
     "INSERT INTO accommodations (trip_id, name, check_in, check_out, address, booking_ref, cost, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
     [params.id, name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null]
@@ -407,6 +431,10 @@ route("GET", "/api/trips/:id/transports", async (req, res, params) => {
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
   const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes } = body;
+  const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
+  const trip = tripRows[0];
+  const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
+  if (err) return sendError(res, 400, err);
   const { rows } = await query(
     "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
     [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null]
