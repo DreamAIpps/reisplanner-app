@@ -230,7 +230,7 @@ route("POST", "/api/trips/:id/invite", async (req, res, params) => {
 // ---------- Admin routes ----------
 route("GET", "/api/admin/users", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { rows } = await query("SELECT id, name, email, avatar FROM users ORDER BY name ASC");
+  const { rows } = await query("SELECT id, name, given_name, family_name, email, avatar, is_admin, last_login_at, created_at, google_id, apple_id, password_hash IS NOT NULL as has_password FROM users ORDER BY created_at DESC");
   sendJson(res, 200, rows);
 });
 

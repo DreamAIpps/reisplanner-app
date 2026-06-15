@@ -1653,6 +1653,7 @@ function AdminView({ onBack }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("trips");
 
   const reload = () => {
     Promise.all([api.getAdminTrips(), api.getAdminUsers()])
@@ -1674,17 +1675,38 @@ function AdminView({ onBack }) {
     return acc;
   }, {});
 
-  // Unassigned trips first, then by user
   const groups = [
     ...(byUser["unassigned"] ? [{ key: "unassigned", name: "Niet gekoppeld", email: null, avatar: null, trips: byUser["unassigned"].trips }] : []),
     ...Object.entries(byUser).filter(([k]) => k !== "unassigned").map(([, v]) => v),
   ];
 
+  const LOGIN_METHOD = (u) => {
+    const methods = [];
+    if (u.google_id) methods.push("Google");
+    if (u.apple_id) methods.push("Apple");
+    if (u.has_password) methods.push("E-mail");
+    return methods.join(" · ") || "—";
+  };
+
   return (
     <div>
       <button onClick={onBack} className="text-sky-600 hover:text-sky-800 mb-4 inline-flex items-center gap-1 text-sm">← Mijn reizen</button>
-      <h2 className="text-xl font-bold text-gray-800 mb-6">Alle reizen</h2>
-      {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : (
+
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-bold text-gray-800">Beheer</h2>
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+          <button onClick={() => setTab("trips")}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "trips" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
+            ✈️ Reizen ({trips.length})
+          </button>
+          <button onClick={() => setTab("users")}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "users" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
+            👥 Gebruikers ({users.length})
+          </button>
+        </div>
+      </div>
+
+      {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : tab === "trips" ? (
         <div className="space-y-8">
           {groups.map((group) => (
             <div key={group.email || "unassigned"}>
@@ -1705,15 +1727,9 @@ function AdminView({ onBack }) {
                       {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
                     </div>
                     <div className="shrink-0">
-                      <Select
-                        value={t.user_id || ""}
-                        onChange={(e) => handleAssign(t.id, e.target.value || null)}
-                        className="text-xs"
-                      >
+                      <Select value={t.user_id || ""} onChange={(e) => handleAssign(t.id, e.target.value || null)} className="text-xs">
                         <option value="">— Niet gekoppeld —</option>
-                        {users.map((u) => (
-                          <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                        ))}
+                        {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
                       </Select>
                     </div>
                   </div>
@@ -1721,6 +1737,34 @@ function AdminView({ onBack }) {
               </div>
             </div>
           ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {users.map((u) => (
+            <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
+              {u.avatar
+                ? <img src={u.avatar} className="w-10 h-10 rounded-full shrink-0" />
+                : <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm shrink-0">
+                    {(u.name || u.email || "?")[0].toUpperCase()}
+                  </div>}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-gray-800">{u.name || "—"}</span>
+                  {u.is_admin && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Admin</span>}
+                </div>
+                <div className="text-sm text-gray-500">{u.email}</div>
+                <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
+                  <span>🔑 {LOGIN_METHOD(u)}</span>
+                  {u.last_login_at && <span>Laatst ingelogd: {fmt(u.last_login_at)}</span>}
+                  <span>Lid sinds: {fmt(u.created_at)}</span>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400 shrink-0 text-right">
+                {(byUser[u.id]?.trips.length || 0)} rei{(byUser[u.id]?.trips.length || 0) !== 1 ? "zen" : "s"}
+              </div>
+            </div>
+          ))}
+          {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}
         </div>
       )}
     </div>
