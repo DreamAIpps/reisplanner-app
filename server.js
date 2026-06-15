@@ -682,6 +682,11 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   if (!text?.trim() && !image) return sendError(res, 400, "Geen tekst of afbeelding opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
 
+  const tripRow2 = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
+  const tripStartStr = tripRow2.rows[0]?.start_date ? String(tripRow2.rows[0].start_date).slice(0, 10) : null;
+  const tripEndStr = tripRow2.rows[0]?.end_date ? String(tripRow2.rows[0].end_date).slice(0, 10) : null;
+  const tripYearHint = tripStartStr ? ` The trip runs from ${tripStartStr} to ${tripEndStr}. If a date in the confirmation has no year, assume it falls within this trip range and use the correct year.` : "";
+
   const client = new Anthropic();
   const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
 {
@@ -689,7 +694,7 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}],
   "activities": [{"date": "YYYY-MM-DD or null", "time": "HH:MM or null", "title": "", "location": "", "category": "Bezienswaardigheid|Restaurant|Museum|Natuur|Sport|Shopping|Anders", "cost": null, "notes": ""}]
 }
-Only include items actually present. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.`;
+Only include items actually present. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.${tripYearHint}`;
 
   const content = image
     ? [{ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }, { type: "text", text: prompt }]
@@ -704,6 +709,7 @@ Only include items actually present. Use null for missing values. Return empty a
   const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   try {
     const parsed = JSON.parse(raw);
+
     sendJson(res, 200, { transports: parsed.transports || [], accommodations: parsed.accommodations || [], activities: parsed.activities || [] });
   } catch {
     sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
