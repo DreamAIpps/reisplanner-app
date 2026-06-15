@@ -12,6 +12,7 @@ const STATUS_COLORS = {
   onderweg: "bg-green-100 text-green-800",
   afgerond: "bg-gray-100 text-gray-700",
 };
+const STATUS_ICONS = { planning: "📋", geboekt: "🎫", onderweg: "✈️", afgerond: "✅" };
 const COVER_COLORS = ["#0369a1","#7c3aed","#b45309","#065f46","#9f1239","#1e40af","#92400e","#134e4a"];
 
 // ---------- API ----------
@@ -77,6 +78,18 @@ function tripDuration(start, end) {
   const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
   return `${days} dag${days === 1 ? "" : "en"}`;
 }
+function daysUntilDeparture(startDate) {
+  if (!startDate) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+  return Math.round((start - today) / 86400000);
+}
+function greeting(name) {
+  const h = new Date().getHours();
+  const first = name ? name.split(" ")[0] : "";
+  const prefix = h < 12 ? "Goedemorgen" : h < 18 ? "Goedemiddag" : "Goedenavond";
+  return first ? `${prefix}, ${first} 👋` : prefix;
+}
 
 // ---------- UI Components ----------
 function Modal({ title, onClose, children, wide }) {
@@ -131,14 +144,15 @@ function Button({ variant = "primary", className = "", children, ...props }) {
   return <button className={`${base} ${styles[variant]} ${className}`} {...props}>{children}</button>;
 }
 
-function Tabs({ tabs, active, onChange }) {
+function Tabs({ tabs, active, onChange, accentColor }) {
   return (
     <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6">
       {tabs.map((t) => (
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${active === t.key ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+          style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
         >
           {t.icon} {t.label}
         </button>
@@ -252,29 +266,65 @@ function TripForm({ initial, onSaved, onClose }) {
 // ---------- Trip card ----------
 function TripCard({ trip, onClick }) {
   const dur = tripDuration(trip.start_date, trip.end_date);
+  const until = daysUntilDeparture(trip.start_date);
+  const accent = trip.cover_color || "#0369a1";
+
   return (
-    <div onClick={onClick} className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden border border-gray-100 group">
-      {trip.cover_image
-        ? <div className="h-36 w-full bg-gray-100 overflow-hidden"><img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" /></div>
-        : <div className="h-3 w-full" style={{ background: trip.cover_color || "#0369a1" }} />}
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <h3 className="font-bold text-gray-900 text-base group-hover:text-sky-700 transition-colors leading-tight">{trip.name}</h3>
-          <div className="flex gap-1 shrink-0">
-            {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">Gedeeld</span>}
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[trip.status] || "bg-gray-100 text-gray-600"}`}>
-              {STATUS_LABELS[trip.status] || trip.status}
+    <div onClick={onClick} className="bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden border border-gray-100 group">
+      {trip.cover_image ? (
+        <div className="h-44 w-full bg-gray-100 overflow-hidden relative">
+          <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+          <div className="absolute top-2 right-2 flex gap-1">
+            {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-500/80 text-white backdrop-blur-sm">Gedeeld</span>}
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-black/40 text-white backdrop-blur-sm">
+              {STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}
             </span>
           </div>
+          <div className="absolute bottom-0 left-0 right-0 p-3">
+            <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
+            {trip.destination && <div className="text-xs text-white/80 mt-0.5">📍 {trip.destination}</div>}
+          </div>
         </div>
-        {trip.destination && <div className="text-sm text-gray-500 mb-3">📍 {trip.destination}</div>}
-        <div className="flex items-center justify-between text-xs text-gray-400 mt-auto">
+      ) : (
+        <div className="h-20 w-full relative flex items-end px-4 pb-3" style={{ background: accent }}>
+          <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/20" />
+          <div className="relative flex items-start justify-between w-full gap-2">
+            <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
+            <div className="flex gap-1 shrink-0">
+              {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/20 text-white">Gedeeld</span>}
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/20 text-white">
+                {STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="p-4">
+        {!trip.cover_image && trip.destination && <div className="text-sm text-gray-500 mb-2">📍 {trip.destination}</div>}
+        <div className="flex items-center justify-between text-xs text-gray-400">
           <div>{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</div>
-          <div className="flex gap-3">
+          <div className="flex gap-2 items-center">
             {trip.activity_count > 0 && <span>🗓 {trip.activity_count}</span>}
             {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
           </div>
         </div>
+        {until !== null && until > 0 && trip.status !== "afgerond" && (
+          <div className="mt-2 text-xs font-semibold rounded-lg px-2 py-1.5 text-center" style={{ background: accent + "18", color: accent }}>
+            Nog {until} dag{until === 1 ? "" : "en"} tot vertrek ✈️
+          </div>
+        )}
+        {until === 0 && trip.status !== "afgerond" && (
+          <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 rounded-lg px-2 py-1.5 text-center">
+            Vandaag vertrek! 🎉
+          </div>
+        )}
+        {until !== null && until < 0 && trip.status === "onderweg" && (
+          <div className="mt-2 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5 text-center">
+            Onderweg — dag {Math.abs(until) + 1} 🌍
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1220,6 +1270,8 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
   if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
+  const accent = trip.cover_color || "#0369a1";
+
   const tabs = [
     { key: "days", label: "Dagen", icon: "🗓" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
@@ -1229,38 +1281,69 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
   return (
     <div>
-      <button onClick={onBack} className="text-sky-600 hover:text-sky-800 mb-4 inline-flex items-center gap-1 text-sm">
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
         ← Alle reizen
       </button>
 
       {/* Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-        {trip.cover_image
-          ? <div className="h-48 w-full overflow-hidden"><img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" /></div>
-          : <div className="h-2 w-full" style={{ background: trip.cover_color || "#0369a1" }} />}
-        <div className="p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">{trip.name}</h2>
-              {trip.destination && <div className="text-gray-500 mt-0.5">📍 {trip.destination}</div>}
-              <div className="flex gap-4 mt-2 text-sm text-gray-500 flex-wrap">
-                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)} {tripDuration(trip.start_date, trip.end_date) ? `(${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && <span>💰 Budget: {fmtMoney(trip.budget, trip.currency)}</span>}
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[trip.status]}`}>{STATUS_LABELS[trip.status]}</span>
+      <div className="rounded-2xl shadow-md overflow-hidden mb-6" style={{ border: `1px solid ${accent}22` }}>
+        {trip.cover_image ? (
+          <div className="relative h-64 w-full overflow-hidden">
+            <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
+            <div className="absolute top-3 right-3 flex gap-2 flex-wrap justify-end">
+              <Button variant="secondary" onClick={() => setImporting(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">📧 Importeren</Button>
+              {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">🔗 Delen</Button>}
+              {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
+              {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="!bg-red-500/80 !text-white backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">🗑</Button>}
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 p-5">
+              <div className="flex items-start gap-2 mb-1">
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white backdrop-blur-sm`}>{STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}</span>
+                {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
+              </div>
+              <h2 className="text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
+              {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
+              <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
+                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+              </div>
+              {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="relative h-28 w-full flex items-end px-6 pb-4" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
+              <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
+              <div className="relative flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white">{STATUS_ICONS[trip.status]} {STATUS_LABELS[trip.status]}</span>
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">Gedeeld</span>}
+                </div>
+                <h2 className="text-2xl font-bold text-white drop-shadow">{trip.name}</h2>
+                {trip.destination && <div className="text-white/80 text-sm mt-0.5">📍 {trip.destination}</div>}
+              </div>
+            </div>
+            <div className="bg-white px-6 py-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="text-sm text-gray-500 flex gap-4 flex-wrap">
+                  {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="secondary" onClick={() => setImporting(true)}>📧 Importeren</Button>
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)}>🔗 Delen</Button>}
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>}
+                  {trip.is_owner && <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>}
+                </div>
               </div>
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
-            <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-              <Button variant="secondary" onClick={() => setImporting(true)}>📧 Bevestiging importeren</Button>
-              {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)}>🔗 Delen</Button>}
-              {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>}
-              {trip.is_owner && <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>}
-            </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
 
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
 
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
@@ -1399,31 +1482,45 @@ function App() {
     return null;
   }
 
+  const tripStats = (() => {
+    const counts = trips.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
+    return Object.entries(counts).map(([s, n]) => `${STATUS_ICONS[s]} ${n} ${STATUS_LABELS[s].toLowerCase()}`).join("  ·  ");
+  })();
+
   return (
-    <div className="min-h-screen">
-      <header className="bg-sky-800 text-white py-6 px-4 sm:px-8 mb-6 shadow-md">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2 cursor-pointer" onClick={() => setView({ name: "list" })}>
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-gradient-to-r from-sky-900 to-sky-700 text-white py-5 px-4 sm:px-8 mb-6 shadow-lg">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold flex items-center gap-2 cursor-pointer leading-none" onClick={() => setView({ name: "list" })}>
               ✈️ Reisplanner
             </h1>
-            <p className="text-sky-200 text-sm mt-0.5">Jouw reizen, overzichtelijk gepland</p>
+            <p className="text-sky-100 text-sm font-medium mt-1">{greeting(user.given_name || user.name)}</p>
+            {view.name === "list" && tripStats && (
+              <p className="text-sky-300 text-xs mt-0.5 hidden sm:block">{tripStats}</p>
+            )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             {view.name === "list" && (
-              <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-100 font-semibold">
+              <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-50 font-semibold shadow-sm">
                 + Nieuwe reis
               </Button>
             )}
             {user.is_admin && view.name !== "admin" && (
-              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-700 transition-colors">
+              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-800 transition-colors">
                 👁 Alle reizen
               </button>
             )}
-            <div className="flex items-center gap-2 border-l border-sky-700 pl-3">
-              {user.avatar && <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />}
-              <span className="text-sm text-sky-200 hidden sm:block">{user.name || user.email}</span>
-              <button onClick={handleLogout} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-700 transition-colors">Uitloggen</button>
+            <div className="flex items-center gap-2 border-l border-sky-600 pl-3">
+              {user.avatar
+                ? <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full ring-2 ring-sky-400 ring-offset-1 ring-offset-sky-800 shrink-0" />
+                : <div className="w-10 h-10 rounded-full bg-sky-600 flex items-center justify-center text-white font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+              }
+              <div className="hidden sm:block">
+                <div className="text-sm font-medium text-white leading-none">{user.given_name || user.name?.split(" ")[0] || user.email}</div>
+                <button onClick={handleLogout} className="text-sky-300 hover:text-white text-xs transition-colors">Uitloggen</button>
+              </div>
+              <button onClick={handleLogout} className="sm:hidden text-sky-300 hover:text-white text-xs px-1 py-0.5 rounded">↩</button>
             </div>
           </div>
         </div>

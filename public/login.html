@@ -12,33 +12,163 @@
   <style>* { box-sizing: border-box; } body { background: #f0f9ff; font-family: system-ui, sans-serif; margin: 0; }</style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm text-center">
-    <div class="text-5xl mb-3">✈️</div>
-    <h1 class="text-2xl font-bold text-gray-900 mb-1">Reisplanner</h1>
-    <p class="text-gray-500 text-sm mb-8">Log in om je reizen te bekijken</p>
-
-    <div id="error" class="hidden bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">
-      Er ging iets mis. Probeer het opnieuw.
+  <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+    <div class="text-center mb-6">
+      <div class="text-5xl mb-3">✈️</div>
+      <h1 class="text-2xl font-bold text-gray-900">Reisplanner</h1>
+      <p class="text-gray-500 text-sm mt-1">Log in om je reizen te bekijken</p>
     </div>
 
-    <div class="space-y-3">
+    <div id="error" class="hidden bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4"></div>
+    <div id="success" class="hidden bg-green-50 text-green-700 text-sm px-3 py-2 rounded-lg mb-4"></div>
+
+    <!-- Tab switcher -->
+    <div class="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5">
+      <button onclick="setTab('social')" id="tab-social"
+        class="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors bg-white shadow text-sky-700">
+        Inloggen
+      </button>
+      <button onclick="setTab('register')" id="tab-register"
+        class="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors text-gray-500 hover:text-gray-700">
+        Registreren
+      </button>
+    </div>
+
+    <!-- Social login (default) -->
+    <div id="panel-social">
       <a href="/auth/google"
-        class="flex items-center justify-center gap-3 w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+        class="flex items-center justify-center gap-3 w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors mb-3">
         <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
         Doorgaan met Google
       </a>
 
-      <a href="/auth/apple"
-        class="flex items-center justify-center gap-3 w-full bg-black text-white rounded-xl px-4 py-3 text-sm font-medium hover:bg-gray-900 transition-colors">
-        <svg width="16" height="18" viewBox="0 0 814 1000" fill="white"><path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.6-155.5-127.4C46 790.7 0 663 0 541.8c0-207.3 135.4-316.6 269.2-316.6 70.4 0 128.9 46.4 173.1 46.4 42.8 0 109.9-49.1 192.5-49.1zm-25.8-200.8c39.5-46.4 67.4-110.8 67.4-175.2 0-9-1.3-18.1-2.6-27.1-63.6 2.6-139.3 42.2-185.1 95.4-36.2 41.5-68.7 105.9-68.7 171.3 0 9.7 1.9 19.3 2.6 22.5 4.5.6 11.6 1.9 18.7 1.9 57.4 0 127.4-38.2 167.7-88.8z"/></svg>
-        Doorgaan met Apple
-      </a>
+      <div class="relative my-4">
+        <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-200"></div></div>
+        <div class="relative text-center"><span class="bg-white px-3 text-xs text-gray-400">of</span></div>
+      </div>
+
+      <form onsubmit="handleLogin(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">E-mailadres</label>
+          <input id="login-email" type="email" required autocomplete="email"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            placeholder="naam@voorbeeld.nl" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Wachtwoord</label>
+          <input id="login-password" type="password" required autocomplete="current-password"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            placeholder="••••••••" />
+        </div>
+        <button type="submit" id="login-btn"
+          class="w-full bg-sky-600 text-white rounded-xl px-4 py-3 text-sm font-medium hover:bg-sky-700 transition-colors disabled:opacity-50">
+          Inloggen
+        </button>
+      </form>
+      <p class="text-center text-xs text-gray-400 mt-4">
+        Nog geen account? <button onclick="setTab('register')" class="text-sky-600 hover:underline">Registreren</button>
+      </p>
+    </div>
+
+    <!-- Register panel -->
+    <div id="panel-register" class="hidden">
+      <form onsubmit="handleRegister(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Naam</label>
+          <input id="reg-name" type="text" autocomplete="name"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            placeholder="Jouw naam" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">E-mailadres</label>
+          <input id="reg-email" type="email" required autocomplete="email"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            placeholder="naam@voorbeeld.nl" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Wachtwoord <span class="font-normal normal-case text-gray-400">(minimaal 8 tekens)</span></label>
+          <input id="reg-password" type="password" required autocomplete="new-password" minlength="8"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            placeholder="••••••••" />
+        </div>
+        <button type="submit" id="reg-btn"
+          class="w-full bg-sky-600 text-white rounded-xl px-4 py-3 text-sm font-medium hover:bg-sky-700 transition-colors disabled:opacity-50">
+          Account aanmaken
+        </button>
+      </form>
+      <p class="text-center text-xs text-gray-400 mt-4">
+        Al een account? <button onclick="setTab('social')" class="text-sky-600 hover:underline">Inloggen</button>
+      </p>
     </div>
   </div>
 
   <script>
     if (new URLSearchParams(location.search).get('error')) {
-      document.getElementById('error').classList.remove('hidden');
+      showError('Er ging iets mis. Probeer het opnieuw.');
+    }
+
+    function setTab(tab) {
+      const isSocial = tab === 'social';
+      document.getElementById('panel-social').classList.toggle('hidden', !isSocial);
+      document.getElementById('panel-register').classList.toggle('hidden', isSocial);
+      document.getElementById('tab-social').className = `flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${isSocial ? 'bg-white shadow text-sky-700' : 'text-gray-500 hover:text-gray-700'}`;
+      document.getElementById('tab-register').className = `flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${!isSocial ? 'bg-white shadow text-sky-700' : 'text-gray-500 hover:text-gray-700'}`;
+      hideMessages();
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      document.getElementById('success').classList.add('hidden');
+    }
+
+    function hideMessages() {
+      document.getElementById('error').classList.add('hidden');
+      document.getElementById('success').classList.add('hidden');
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      hideMessages();
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true; btn.textContent = 'Bezig...';
+      try {
+        const res = await fetch('/auth/login/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('login-email').value,
+            password: document.getElementById('login-password').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) { window.location.href = '/'; }
+        else { showError(data.error || 'Inloggen mislukt'); }
+      } catch { showError('Er ging iets mis. Probeer het opnieuw.'); }
+      finally { btn.disabled = false; btn.textContent = 'Inloggen'; }
+    }
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      hideMessages();
+      const btn = document.getElementById('reg-btn');
+      btn.disabled = true; btn.textContent = 'Bezig...';
+      try {
+        const res = await fetch('/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('reg-name').value,
+            email: document.getElementById('reg-email').value,
+            password: document.getElementById('reg-password').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) { window.location.href = '/'; }
+        else { showError(data.error || 'Registratie mislukt'); }
+      } catch { showError('Er ging iets mis. Probeer het opnieuw.'); }
+      finally { btn.disabled = false; btn.textContent = 'Account aanmaken'; }
     }
   </script>
 </body>

@@ -457,6 +457,76 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
 });
 
 // ---------- Auth routes ----------
+// ---------- Password helpers ----------
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString("hex");
+    crypto.scrypt(password, salt, 64, (err, hash) => {
+      if (err) reject(err);
+      else resolve(`${salt}:${hash.toString("hex")}`);
+    });
+  });
+}
+function verifyPassword(password, stored) {
+  return new Promise((resolve, reject) => {
+    const [salt, hash] = stored.split(":");
+    crypto.scrypt(password, salt, 64, (err, derived) => {
+      if (err) reject(err);
+      else resolve(derived.toString("hex") === hash);
+    });
+  });
+}
+
+route("POST", "/auth/register", async (req, res, params, body) => {
+  const { email, password, name } = body;
+  if (!email || !password) return sendJson(res, 400, { error: "E-mail en wachtwoord zijn verplicht" });
+  if (password.length < 8) return sendJson(res, 400, { error: "Wachtwoord moet minimaal 8 tekens zijn" });
+  const existing = await query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
+  if (existing.rows.length > 0) return sendJson(res, 409, { error: "Er bestaat al een account met dit e-mailadres" });
+  const hash = await hashPassword(password);
+  const displayName = name?.trim() || email.split("@")[0];
+  const result = await query(
+    "INSERT INTO users (email, name, password_hash, email_verified, last_login_at) VALUES ($1, $2, $3, false, NOW()) RETURNING id",
+    [email.toLowerCase(), displayName, hash]
+  );
+  const userId = result.rows[0].id;
+  const token = await createSession(userId);
+  setSessionCookie(res, token);
+  const cookies = parseCookies(req);
+  const inviteToken = cookies["invite_token"];
+  if (inviteToken) {
+    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
+    if (inv.rows.length > 0) {
+      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, userId]);
+    }
+    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
+  }
+  sendJson(res, 200, { ok: true });
+});
+
+route("POST", "/auth/login/password", async (req, res, params, body) => {
+  const { email, password } = body;
+  if (!email || !password) return sendJson(res, 400, { error: "E-mail en wachtwoord zijn verplicht" });
+  const result = await query("SELECT * FROM users WHERE email = $1", [email.toLowerCase()]);
+  const user = result.rows[0];
+  if (!user || !user.password_hash) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
+  const valid = await verifyPassword(password, user.password_hash);
+  if (!valid) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
+  await query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
+  const cookies = parseCookies(req);
+  const inviteToken = cookies["invite_token"];
+  if (inviteToken) {
+    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
+    if (inv.rows.length > 0) {
+      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, user.id]);
+    }
+    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
+  }
+  sendJson(res, 200, { ok: true });
+});
+
 route("GET", "/auth/me", async (req, res) => {
   const user = await getSession(req);
   if (!user) return sendError(res, 401, "Niet ingelogd");
