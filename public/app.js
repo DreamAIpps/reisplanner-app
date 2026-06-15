@@ -53,6 +53,8 @@ const api = {
   deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   getAdminTrips: () => apiFetch("/api/admin/trips"),
+  getAdminUsers: () => apiFetch("/api/admin/users"),
+  assignTrip: (tripId, userId) => apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
 };
 
@@ -1100,18 +1102,34 @@ function TripDetail({ tripId, onBack, onChanged }) {
 // ---------- Admin view ----------
 function AdminView({ onBack }) {
   const [trips, setTrips] = useState([]);
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api.getAdminTrips().then(setTrips).finally(() => setLoading(false));
-  }, []);
+  const reload = () => {
+    Promise.all([api.getAdminTrips(), api.getAdminUsers()])
+      .then(([t, u]) => { setTrips(t); setUsers(u); })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  async function handleAssign(tripId, userId) {
+    await api.assignTrip(tripId, userId || null);
+    reload();
+  }
 
   const byUser = trips.reduce((acc, t) => {
-    const key = t.user_email || t.user_name || "Onbekend";
+    const key = t.user_id || "unassigned";
     if (!acc[key]) acc[key] = { name: t.user_name, email: t.user_email, avatar: t.user_avatar, trips: [] };
     acc[key].trips.push(t);
     return acc;
   }, {});
+
+  // Unassigned trips first, then by user
+  const groups = [
+    ...(byUser["unassigned"] ? [{ key: "unassigned", name: "Niet gekoppeld", email: null, avatar: null, trips: byUser["unassigned"].trips }] : []),
+    ...Object.entries(byUser).filter(([k]) => k !== "unassigned").map(([, v]) => v),
+  ];
 
   return (
     <div>
@@ -1119,15 +1137,38 @@ function AdminView({ onBack }) {
       <h2 className="text-xl font-bold text-gray-800 mb-6">Alle reizen</h2>
       {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : (
         <div className="space-y-8">
-          {Object.values(byUser).map((u) => (
-            <div key={u.email}>
+          {groups.map((group) => (
+            <div key={group.email || "unassigned"}>
               <div className="flex items-center gap-2 mb-3">
-                {u.avatar && <img src={u.avatar} className="w-7 h-7 rounded-full" />}
-                <span className="font-semibold text-gray-700">{u.name || u.email}</span>
-                <span className="text-xs text-gray-400">{u.trips.length} rei{u.trips.length !== 1 ? "zen" : "s"}</span>
+                {group.avatar && <img src={group.avatar} className="w-7 h-7 rounded-full" />}
+                <span className="font-semibold text-gray-700">{group.name || group.email || "Niet gekoppeld"}</span>
+                <span className="text-xs text-gray-400">{group.trips.length} rei{group.trips.length !== 1 ? "zen" : "s"}</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {u.trips.map((t) => <TripCard key={t.id} trip={t} onClick={() => {}} />)}
+              <div className="space-y-2">
+                {group.trips.map((t) => (
+                  <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
+                    {t.cover_image
+                      ? <img src={t.cover_image} className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                      : <div className="w-14 h-14 rounded-lg shrink-0" style={{ background: t.cover_color || "#0369a1" }} />}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-gray-800">{t.name}</div>
+                      {t.destination && <div className="text-sm text-gray-500">📍 {t.destination}</div>}
+                      {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
+                    </div>
+                    <div className="shrink-0">
+                      <Select
+                        value={t.user_id || ""}
+                        onChange={(e) => handleAssign(t.id, e.target.value || null)}
+                        className="text-xs"
+                      >
+                        <option value="">— Niet gekoppeld —</option>
+                        {users.map((u) => (
+                          <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}

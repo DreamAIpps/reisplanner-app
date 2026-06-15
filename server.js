@@ -166,6 +166,20 @@ function serveStatic(res, filePath) {
 }
 
 // ---------- Admin routes ----------
+route("GET", "/api/admin/users", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query("SELECT id, name, email, avatar FROM users ORDER BY name ASC");
+  sendJson(res, 200, rows);
+});
+
+route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { user_id } = body;
+  const { rows } = await query("UPDATE trips SET user_id = $1 WHERE id = $2 RETURNING *", [user_id, params.id]);
+  if (!rows.length) return sendError(res, 404, "Trip not found");
+  sendJson(res, 200, rows[0]);
+});
+
 route("GET", "/api/admin/trips", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { rows } = await query(`
