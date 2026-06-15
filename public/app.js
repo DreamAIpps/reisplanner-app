@@ -353,7 +353,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose }) {
 
 // ---------- Accommodation form ----------
 function AccommodationForm({ tripId, initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in?.slice(0,10)||"", check_out: initial.check_out?.slice(0,10)||"" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
+  const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -392,6 +392,9 @@ function TransportForm({ tripId, initial, onSaved, onClose }) {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
     arrival_time: initial.arrival_time ? new Date(initial.arrival_time).toISOString().slice(0,16) : "",
+    cost: initial.cost ?? "",
+    booking_ref: initial.booking_ref ?? "",
+    notes: initial.notes ?? "",
   } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -515,7 +518,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
     await api.deleteDay(id); onRefresh();
   }
 
-  const isoDate = (dt) => dt ? dt.slice(0, 10) : null;
+  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
 
   return (
     <div>
