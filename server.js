@@ -249,7 +249,7 @@ route("GET", "/api/admin/trips", async (req, res) => {
       COALESCE(SUM(e.amount), 0) as total_spent,
       COUNT(DISTINCT a.id) as activity_count
     FROM trips t
-    JOIN users u ON u.id = t.user_id
+    LEFT JOIN users u ON u.id = t.user_id
     LEFT JOIN expenses e ON e.trip_id = t.id
     LEFT JOIN activities a ON a.trip_id = t.id
     GROUP BY t.id, u.name, u.email, u.avatar
