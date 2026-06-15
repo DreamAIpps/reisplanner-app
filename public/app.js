@@ -487,43 +487,59 @@ function ExpenseForm({ tripId, initial, onSaved, onClose }) {
 }
 
 // ---------- Day planning tab ----------
+const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
+const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
+const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
+const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+
 function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
-  const [showActivityForm, setShowActivityForm] = useState(null); // { dayId }
+  const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
+  const [photos, setPhotos] = useState({});
+  const fetchedRef = useRef(new Set());
+  const accent = trip.cover_color || "#0369a1";
+
+  useEffect(() => {
+    const locs = new Set();
+    days.forEach((day) => (day.activities || []).forEach((a) => { if (a.location) locs.add(a.location); }));
+    [...locs].slice(0, 10).forEach(async (loc) => {
+      if (fetchedRef.current.has(loc)) return;
+      fetchedRef.current.add(loc);
+      try {
+        const d = await api.suggestPhoto(loc);
+        setPhotos((p) => ({ ...p, [loc]: d.thumb }));
+      } catch {}
+    });
+  }, [days]);
 
   async function handleDeleteActivity(id) {
     if (!confirm("Activiteit verwijderen?")) return;
-    await api.deleteActivity(id);
-    onRefresh();
+    await api.deleteActivity(id); onRefresh();
   }
-
   async function handleAddDay(e) {
     e.preventDefault();
     if (!newDayDate) return;
     await api.addDay(trip.id, { date: newDayDate });
-    setAddingDay(false); setNewDayDate("");
-    onRefresh();
+    setAddingDay(false); setNewDayDate(""); onRefresh();
   }
-
   async function handleDeleteDay(id) {
     if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
-    await api.deleteDay(id);
-    onRefresh();
+    await api.deleteDay(id); onRefresh();
   }
 
-  const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
+  const isoDate = (dt) => dt ? dt.slice(0, 10) : null;
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-6">
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
         <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
       </div>
 
       {addingDay && (
-        <form onSubmit={handleAddDay} className="bg-sky-50 border border-sky-200 rounded-xl p-4 mb-4 flex gap-3 items-end">
+        <form onSubmit={handleAddDay} className="rounded-xl p-4 mb-6 flex gap-3 items-end border" style={{ background: accent + "10", borderColor: accent + "33" }}>
           <Field label="Datum">
             <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} required />
           </Field>
@@ -533,115 +549,179 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       )}
 
       {days.length === 0 && (
-        <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">🗓</div>
-          <div>Nog geen dagen gepland</div>
-          <div className="text-sm">Voeg een dag toe om te beginnen</div>
+        <div className="text-center py-16 text-gray-400">
+          <div className="text-5xl mb-3">🗓</div>
+          <div className="font-medium">Nog geen dagen gepland</div>
+          <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
         </div>
       )}
 
-      <div className="space-y-4">
-        {days.map((day) => {
-          const dayStr = day.date ? day.date.slice(0, 10) : null;
-          const isoDate = (dt) => dt ? dt.slice(0, 10) : null;
-          const dayTransports = transports.filter((t) =>
-            isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr
-          );
-          const dayAccommodations = accommodations.filter((a) => {
-            const ci = a.check_in ? a.check_in.slice(0, 10) : null;
-            const co = a.check_out ? a.check_out.slice(0, 10) : null;
-            return (ci === dayStr) || (co === dayStr);
-          });
-          const hasExtras = dayTransports.length > 0 || dayAccommodations.length > 0;
+      {/* Timeline */}
+      <div className="relative">
+        {days.length > 1 && (
+          <div className="absolute top-6 bottom-6 w-0.5 rounded-full" style={{ left: "2.6rem", background: `linear-gradient(to bottom, ${accent}, ${accent}33)` }} />
+        )}
 
-          return (
-          <div key={day.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
-              <div>
-                <span className="font-semibold text-gray-800">{fmt(day.date)}</span>
-                {day.title && <span className="ml-2 text-gray-500 text-sm">— {day.title}</span>}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => setShowActivityForm({ dayId: day.id })}>+ Activiteit</Button>
-                <button onClick={() => handleDeleteDay(day.id)} className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
-              </div>
-            </div>
+        <div className="space-y-2">
+          {days.map((day, dayIndex) => {
+            const dayStr = day.date ? day.date.slice(0, 10) : null;
+            const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
+            const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
 
-            {hasExtras && (
-              <div className="px-4 py-2 bg-sky-50 border-b border-sky-100 flex flex-wrap gap-3">
-                {dayTransports.map((t) => {
-                  const isArrival = t.arrival_time && isoDate(t.arrival_time) === dayStr && !(t.departure_time && isoDate(t.departure_time) === dayStr);
-                  const time = isArrival ? t.arrival_time : t.departure_time;
-                  return (
-                    <div key={t.id + (isArrival ? "-arr" : "")} className="flex items-center gap-1.5 text-xs text-sky-800">
-                      <span>{TRANSPORT_ICONS[t.type] || "🚀"}</span>
-                      <span className="text-sky-500">{isArrival ? "Aankomst" : "Vertrek"}</span>
-                      <span className="font-medium">{t.from_location} → {t.to_location}</span>
-                      {time && <span className="text-sky-600">{new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</span>}
-                      {t.booking_ref && <span className="font-mono bg-sky-100 px-1 rounded">#{t.booking_ref}</span>}
-                    </div>
-                  );
-                })}
-                {dayAccommodations.map((a) => {
-                  const isCheckIn = a.check_in && a.check_in.slice(0, 10) === dayStr;
-                  const isCheckOut = a.check_out && a.check_out.slice(0, 10) === dayStr;
-                  return (
-                    <div key={a.id} className="flex items-center gap-1.5 text-xs text-sky-800">
-                      <span>🏨</span>
-                      <span className="font-medium">{isCheckIn && isCheckOut ? "Check-in & -out" : isCheckIn ? "Check-in" : "Check-out"}: {a.name}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            const d = day.date ? new Date(day.date) : null;
+            const dayNum = d ? d.getDate() : "?";
+            const dayName = d ? DAY_NAMES[d.getDay()] : "";
+            const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
+            const totalItems = dayTransports.length + dayAccommodations.length + day.activities.length;
 
-            <div className="divide-y divide-gray-50">
-              {day.activities.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-gray-400 italic">Geen activiteiten</div>
-              ) : (
-                day.activities.map((act) => (
-                  <div key={act.id} className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 group">
-                    <div className="text-lg mt-0.5">{CATEGORY_ICONS[act.category] || "📌"}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        {act.time && <span className="text-xs font-mono text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">{act.time}</span>}
-                        <span className="font-medium text-gray-800 text-sm">{act.title}</span>
-                      </div>
-                      {act.location && <div className="text-xs text-gray-400 mt-0.5">📍 {act.location}</div>}
-                      {act.notes && <div className="text-xs text-gray-500 mt-0.5">{act.notes}</div>}
+            return (
+              <div key={day.id} className="relative flex gap-4 pb-6">
+                {/* Day node */}
+                <div className="flex flex-col items-center shrink-0 z-10" style={{ width: "5.2rem" }}>
+                  <div className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white shadow-md font-bold"
+                    style={{ background: accent }}>
+                    <span className="text-[10px] leading-none opacity-75 uppercase tracking-wide">{dayName}</span>
+                    <span className="text-lg leading-none font-extrabold">{dayNum}</span>
+                    <span className="text-[10px] leading-none opacity-75">{monthName}</span>
+                  </div>
+                  {dayIndex === 0 && days.length > 1 && (
+                    <span className="text-[10px] text-gray-400 mt-1 font-medium">Dag 1</span>
+                  )}
+                </div>
+
+                {/* Day content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-2 pt-1.5">
+                    <div className="flex items-center gap-2">
+                      {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
+                      {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {act.cost && <span className="text-xs text-gray-400">{fmtMoney(act.cost)}</span>}
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                        <button onClick={() => setEditingActivity(act)} className="text-gray-400 hover:text-sky-600 text-xs">✏️</button>
-                        <button onClick={() => handleDeleteActivity(act.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑</button>
-                      </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setShowActivityForm({ dayId: day.id })}
+                        className="text-xs font-medium px-2.5 py-1 rounded-lg hover:opacity-80 transition-opacity text-white"
+                        style={{ background: accent }}>
+                        + Activiteit
+                      </button>
+                      <button onClick={() => handleDeleteDay(day.id)} className="text-gray-300 hover:text-red-400 px-1 ml-1">🗑</button>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-          );
-        })}
+
+                  <div className="space-y-2">
+                    {/* Transport cards */}
+                    {dayTransports.map((t) => {
+                      const isArrival = isoDate(t.arrival_time) === dayStr && isoDate(t.departure_time) !== dayStr;
+                      const time = isArrival ? t.arrival_time : t.departure_time;
+                      return (
+                        <div key={t.id + (isArrival ? "-a" : "-d")}
+                          className="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                          style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}>
+                          <div className="text-2xl">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#1d4ed8" }}>
+                                {isArrival ? "Aankomst" : "Vertrek"}
+                              </span>
+                              {time && <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>
+                                {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
+                              </span>}
+                            </div>
+                            <div className="font-semibold text-gray-800 text-sm">{t.from_location} → {t.to_location}</div>
+                            <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
+                              {t.booking_ref && <span className="font-mono bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
+                              {t.cost && <span className="font-medium text-blue-700">{fmtMoney(t.cost, trip.currency)}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Accommodation cards */}
+                    {dayAccommodations.map((a) => {
+                      const isCheckIn = isoDate(a.check_in) === dayStr;
+                      const isCheckOut = isoDate(a.check_out) === dayStr;
+                      return (
+                        <div key={a.id}
+                          className="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                          style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
+                          <div className="text-2xl">🏨</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "#b45309" }}>
+                              {isCheckIn && isCheckOut ? "Check-in & Check-out" : isCheckIn ? "Check-in" : "Check-out"}
+                            </div>
+                            <div className="font-semibold text-gray-800 text-sm">{a.name}</div>
+                            {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
+                            {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Activity cards */}
+                    {day.activities.map((act) => {
+                      const photo = act.location ? photos[act.location] : null;
+                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
+                      return (
+                        <div key={act.id}
+                          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+                          {photo && (
+                            <div className="h-32 overflow-hidden relative">
+                              <img src={photo} alt={act.location} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                              {act.location && (
+                                <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex items-start gap-3 px-4 py-3">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0 mt-0.5"
+                              style={{ background: catColor + "18" }}>
+                              {CATEGORY_ICONS[act.category] || "📌"}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {act.time && (
+                                  <span className="text-xs font-mono font-semibold text-white px-2 py-0.5 rounded-md" style={{ background: catColor }}>
+                                    {act.time}
+                                  </span>
+                                )}
+                                <span className="font-semibold text-gray-800 text-sm">{act.title}</span>
+                              </div>
+                              {!photo && act.location && <div className="text-xs text-gray-400 mt-0.5">📍 {act.location}</div>}
+                              {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
+                              {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
+                            </div>
+                            <div className="opacity-0 group-hover:opacity-100 flex gap-1 shrink-0 transition-opacity">
+                              <button onClick={() => setEditingActivity(act)} className="text-gray-300 hover:text-sky-500 text-sm">✏️</button>
+                              <button onClick={() => handleDeleteActivity(act.id)} className="text-gray-300 hover:text-red-400 text-sm">🗑</button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {totalItems === 0 && (
+                      <button onClick={() => setShowActivityForm({ dayId: day.id })}
+                        className="w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
+                        + Activiteit toevoegen
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {showActivityForm && (
-        <ActivityForm
-          dayId={showActivityForm.dayId}
-          tripId={trip.id}
+        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
-          onClose={() => setShowActivityForm(null)}
-        />
+          onClose={() => setShowActivityForm(null)} />
       )}
       {editingActivity && (
-        <ActivityForm
-          dayId={editingActivity.day_id}
-          tripId={trip.id}
-          initial={editingActivity}
+        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
-          onClose={() => setEditingActivity(null)}
-        />
+          onClose={() => setEditingActivity(null)} />
       )}
     </div>
   );
@@ -909,6 +989,116 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
 
       {showForm && <ExpenseForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} />}
       {editing && <ExpenseForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
+    </div>
+  );
+}
+
+// ---------- Tips tab ----------
+function TipsTab({ trip }) {
+  const [tips, setTips] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const accent = trip.cover_color || "#0369a1";
+  const cacheKey = `tips_${trip.id}_${trip.destination}`;
+
+  function fetchTips() {
+    setLoading(true); setError(null);
+    apiFetch(`/api/trips/${trip.id}/tips`)
+      .then((data) => {
+        setTips(data);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    if (!trip.destination) return;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { data, ts } = JSON.parse(cached);
+        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); return; }
+      }
+    } catch {}
+    fetchTips();
+  }, [trip.id, trip.destination]);
+
+  if (!trip.destination) return (
+    <div className="text-center py-16 text-gray-400">
+      <div className="text-4xl mb-3">💡</div>
+      <div className="font-medium">Geen bestemming ingesteld</div>
+      <div className="text-sm mt-1">Voeg een bestemming toe aan je reis voor AI-tips</div>
+    </div>
+  );
+
+  if (loading) return (
+    <div className="text-center py-16 text-gray-400">
+      <div className="text-4xl mb-3">✨</div>
+      <div className="font-medium text-gray-600">Tips ophalen voor {trip.destination}...</div>
+      <div className="text-sm mt-1">Claude denkt na, even geduld</div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="text-center py-16 text-gray-400">
+      <div className="text-4xl mb-3">😕</div>
+      <div className="text-sm">{error}</div>
+      <button onClick={fetchTips} className="mt-3 text-sm underline" style={{ color: accent }}>Opnieuw proberen</button>
+    </div>
+  );
+
+  if (!tips) return null;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="font-semibold text-gray-700">Tips voor {trip.destination}</h3>
+        <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
+      </div>
+
+      {tips.did_you_know && (
+        <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
+          <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: accent }}>Wist je dat?</div>
+          <div className="text-sm text-gray-700 leading-relaxed">{tips.did_you_know}</div>
+        </div>
+      )}
+
+      {tips.best_time && (
+        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-4 flex gap-3 items-start">
+          <span className="text-xl">📅</span>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-0.5">Beste reistijd</div>
+            <div className="text-sm text-gray-700 leading-relaxed">{tips.best_time}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {(tips.tips || []).map((section, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 flex items-center gap-2 border-b border-gray-50" style={{ background: accent + "08" }}>
+              <span className="text-lg">{section.icon}</span>
+              <span className="font-semibold text-gray-800 text-sm">{section.category}</span>
+            </div>
+            <ul className="divide-y divide-gray-50">
+              {(section.items || []).map((tip, j) => (
+                <li key={j} className="flex items-start gap-3 px-4 py-3">
+                  <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accent }} />
+                  <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 text-center">
+        <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); fetchTips(); }}
+          className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors">
+          Nieuwe tips genereren
+        </button>
+      </div>
     </div>
   );
 }
@@ -1277,6 +1467,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "budget", label: "Budget", icon: "💰" },
+    { key: "tips", label: "Tips", icon: "💡" },
   ];
 
   return (
@@ -1349,6 +1540,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
+      {tab === "tips" && <TipsTab trip={trip} />}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}

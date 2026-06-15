@@ -637,6 +637,44 @@ route("GET", "/icon-512.png", async (req, res) => {
   res.end(svg);
 });
 
+// ---------- AI destination tips ----------
+route("GET", "/api/trips/:id/tips", async (req, res, params) => {
+  const tripResult = await query("SELECT destination FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
+  if (!tripResult.rows.length) return sendError(res, 404, "Reis niet gevonden");
+  const { destination } = tripResult.rows[0];
+  if (!destination) return sendError(res, 400, "Geen bestemming ingesteld voor deze reis");
+  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+
+  const client = new Anthropic();
+  const message = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 2000,
+    messages: [{
+      role: "user",
+      content: `Je bent een ervaren reisadviseur. Geef praktische en persoonlijke reisTips voor "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown:
+{
+  "tips": [
+    { "category": "Lokaal vervoer", "icon": "🚇", "items": ["tip1", "tip2", "tip3"] },
+    { "category": "Taxi & ride-apps", "icon": "🚕", "items": ["tip1", "tip2", "tip3"] },
+    { "category": "Restaurants", "icon": "🍽", "items": ["tip1", "tip2", "tip3"] },
+    { "category": "Activiteiten", "icon": "🎯", "items": ["tip1", "tip2", "tip3"] },
+    { "category": "Met kinderen", "icon": "👨‍👩‍👧", "items": ["tip1", "tip2", "tip3"] },
+    { "category": "Hotels & verblijf", "icon": "🏨", "items": ["tip1", "tip2", "tip3"] }
+  ],
+  "best_time": "Korte omschrijving beste reistijd voor ${destination}",
+  "did_you_know": "Een verrassend en weinig bekend feitje over ${destination}"
+}`,
+    }],
+  });
+
+  const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  try {
+    sendJson(res, 200, JSON.parse(raw));
+  } catch {
+    sendError(res, 500, "Kon tips niet verwerken");
+  }
+});
+
 // ---------- Photo suggestion via Unsplash ----------
 route("GET", "/api/photo-suggest", async (req, res, params, body) => {
   const url = new URL(req.url, "http://localhost");
