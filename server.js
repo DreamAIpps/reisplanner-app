@@ -641,6 +641,7 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   const { start_date, end_date } = tripResult.rows[0];
   const MONTHS_NL = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
   let periodHint = "";
+  let dateRange = "";
   if (start_date) {
     const s = new Date(start_date);
     const e = end_date ? new Date(end_date) : s;
@@ -649,16 +650,17 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
     periodHint = startMonth === endMonth
       ? ` De reis is in ${startMonth}.`
       : ` De reis is van ${startMonth} tot ${endMonth}.`;
+    dateRange = ` van ${s.getUTCDate()} ${startMonth} tot ${e.getUTCDate()} ${endMonth} ${e.getUTCFullYear()}`;
   }
 
   const client = new Anthropic();
   const message = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 900,
+    max_tokens: 1100,
     messages: [{
       role: "user",
-      content: `Geef korte reisTips voor "${destination}" in het Nederlands.${periodHint} Houd rekening met het seizoen en de drukte in die periode. Return ONLY valid JSON, no markdown:
-{"tips":[{"category":"Lokaal vervoer","icon":"🚇","items":["tip1","tip2"]},{"category":"Taxi & apps","icon":"🚕","items":["tip1","tip2"]},{"category":"Restaurants","icon":"🍽","items":["tip1","tip2"]},{"category":"Activiteiten","icon":"🎯","items":["tip1","tip2"]},{"category":"Met kinderen","icon":"👨‍👩‍👧","items":["tip1","tip2"]},{"category":"Hotels","icon":"🏨","items":["tip1","tip2"]}],"did_you_know":"feitje"}`,
+      content: `Geef korte reisTips voor "${destination}" in het Nederlands.${periodHint} Houd rekening met het seizoen en de drukte in die periode. Geef bij "Evenementen & agenda" specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen die plaatsvinden${dateRange ? dateRange : " in die periode"}. Return ONLY valid JSON, no markdown:
+{"tips":[{"category":"Lokaal vervoer","icon":"🚇","items":["tip1","tip2"]},{"category":"Taxi & apps","icon":"🚕","items":["tip1","tip2"]},{"category":"Restaurants","icon":"🍽","items":["tip1","tip2"]},{"category":"Activiteiten","icon":"🎯","items":["tip1","tip2"]},{"category":"Met kinderen","icon":"👨‍👩‍👧","items":["tip1","tip2"]},{"category":"Hotels","icon":"🏨","items":["tip1","tip2"]},{"category":"Evenementen & agenda","icon":"🎉","items":["tip1","tip2","tip3"]}],"did_you_know":"feitje"}`,
     }],
   });
 
