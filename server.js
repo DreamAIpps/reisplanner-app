@@ -65,29 +65,45 @@ async function getSession(req) {
   return rows[0] || null;
 }
 
-async function findOrCreateUser({ google_id, apple_id, email, name, avatar }) {
+async function findOrCreateUser({ google_id, apple_id, email, name, given_name, family_name, avatar, locale, email_verified }) {
+  let existing = null;
+
   if (google_id) {
     const { rows } = await query("SELECT * FROM users WHERE google_id = $1", [google_id]);
-    if (rows[0]) {
-      await query("UPDATE users SET email=$1, name=$2, avatar=$3 WHERE id=$4", [email, name, avatar, rows[0].id]);
-      return rows[0];
-    }
+    existing = rows[0] || null;
   }
-  if (apple_id) {
+  if (!existing && apple_id) {
     const { rows } = await query("SELECT * FROM users WHERE apple_id = $1", [apple_id]);
-    if (rows[0]) return rows[0];
+    existing = rows[0] || null;
   }
-  if (email) {
+  if (!existing && email) {
     const { rows } = await query("SELECT * FROM users WHERE email = $1", [email]);
-    if (rows[0]) {
-      if (google_id) await query("UPDATE users SET google_id=$1, avatar=$2 WHERE id=$3", [google_id, avatar, rows[0].id]);
-      if (apple_id) await query("UPDATE users SET apple_id=$1 WHERE id=$2", [apple_id, rows[0].id]);
-      return rows[0];
-    }
+    existing = rows[0] || null;
   }
+
+  if (existing) {
+    const { rows } = await query(
+      `UPDATE users SET
+        email = COALESCE($1, email),
+        name = COALESCE($2, name),
+        given_name = COALESCE($3, given_name),
+        family_name = COALESCE($4, family_name),
+        avatar = COALESCE($5, avatar),
+        locale = COALESCE($6, locale),
+        email_verified = COALESCE($7, email_verified),
+        google_id = COALESCE($8, google_id),
+        apple_id = COALESCE($9, apple_id),
+        last_login_at = NOW()
+       WHERE id = $10 RETURNING *`,
+      [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null, email_verified||null, google_id||null, apple_id||null, existing.id]
+    );
+    return rows[0];
+  }
+
   const { rows } = await query(
-    "INSERT INTO users (email, name, avatar, google_id, apple_id) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-    [email || null, name || null, avatar || null, google_id || null, apple_id || null]
+    `INSERT INTO users (email, name, given_name, family_name, avatar, locale, email_verified, google_id, apple_id, last_login_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING *`,
+    [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null, email_verified||false, google_id||null, apple_id||null]
   );
   return rows[0];
 }
@@ -458,7 +474,16 @@ route("GET", "/auth/google/callback", async (req, res) => {
     headers: { Authorization: `Bearer ${access_token}` },
   });
   const u = await userResp.json();
-  const user = await findOrCreateUser({ google_id: u.sub, email: u.email, name: u.name, avatar: u.picture });
+  const user = await findOrCreateUser({
+    google_id: u.sub,
+    email: u.email,
+    name: u.name,
+    given_name: u.given_name,
+    family_name: u.family_name,
+    avatar: u.picture,
+    locale: u.locale,
+    email_verified: u.email_verified,
+  });
   await handlePostLogin(req, res, user);
 });
 
@@ -480,10 +505,22 @@ route("POST", "/auth/apple/callback", async (req, res) => {
   if (!idToken) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
 
   const payload = await verifyAppleIdToken(idToken);
-  let name = null;
-  try { const u = JSON.parse(body.get("user") || "{}"); name = [u.name?.firstName, u.name?.lastName].filter(Boolean).join(" ") || null; } catch {}
+  let given_name = null, family_name = null;
+  try {
+    const u = JSON.parse(body.get("user") || "{}");
+    given_name = u.name?.firstName || null;
+    family_name = u.name?.lastName || null;
+  } catch {}
+  const name = [given_name, family_name].filter(Boolean).join(" ") || null;
 
-  const user = await findOrCreateUser({ apple_id: payload.sub, email: payload.email || null, name });
+  const user = await findOrCreateUser({
+    apple_id: payload.sub,
+    email: payload.email || null,
+    email_verified: payload.email_verified === "true" || payload.email_verified === true,
+    name,
+    given_name,
+    family_name,
+  });
   await handlePostLogin(req, res, user);
 });
 

@@ -41,13 +41,23 @@ async function initDb() {
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE,
       name TEXT,
+      given_name TEXT,
+      family_name TEXT,
       avatar TEXT,
+      locale TEXT,
+      email_verified BOOLEAN DEFAULT FALSE,
       google_id TEXT UNIQUE,
       apple_id TEXT UNIQUE,
       is_admin BOOLEAN DEFAULT FALSE,
+      last_login_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS given_name TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS family_name TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS locale TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
