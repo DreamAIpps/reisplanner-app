@@ -487,12 +487,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         {days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
           const isoDate = (dt) => dt ? dt.slice(0, 10) : null;
-          const dayTransports = transports.filter((t) => {
-            const dep = isoDate(t.departure_time);
-            const arr = isoDate(t.arrival_time);
-            if (dep) console.log(`Transport "${t.from_location}→${t.to_location}": dep=${dep}, arr=${arr}, day=${dayStr}, match=${dep===dayStr||arr===dayStr}`);
-            return dep === dayStr || arr === dayStr;
-          });
+          const dayTransports = transports.filter((t) =>
+            isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr
+          );
           const dayAccommodations = accommodations.filter((a) => {
             const ci = a.check_in ? a.check_in.slice(0, 10) : null;
             const co = a.check_out ? a.check_out.slice(0, 10) : null;
