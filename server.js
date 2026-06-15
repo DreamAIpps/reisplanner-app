@@ -469,14 +469,12 @@ route("GET", "/auth/google/callback", async (req, res) => {
     }),
   });
   const tokenData = await tokenResp.json();
-  console.log("Google token response:", JSON.stringify(tokenData));
   if (!tokenData.access_token) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
 
   const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
     headers: { Authorization: `Bearer ${tokenData.access_token}` },
   });
   const u = await userResp.json();
-  console.log("Google userinfo:", JSON.stringify(u));
   if (!u.sub) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
 
   const user = await findOrCreateUser({
