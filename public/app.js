@@ -498,6 +498,8 @@ const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "se
 function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
+  const [editingTransport, setEditingTransport] = useState(null);
+  const [editingAccommodation, setEditingAccommodation] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
   const [photos, setPhotos] = useState({});
@@ -617,7 +619,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                       const time = isArrival ? t.arrival_time : t.departure_time;
                       return (
                         <div key={t.id + (isArrival ? "-a" : "-d")}
-                          className="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                          onClick={() => setEditingTransport(t)}
+                          className="flex items-center gap-3 rounded-xl px-4 py-3 border cursor-pointer hover:shadow-md transition-shadow"
                           style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}>
                           <div className="text-2xl">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
                           <div className="flex-1 min-w-0">
@@ -636,7 +639,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                             </div>
                           </div>
                           {t.to_location && (
-                            <button onClick={() => setTipsLocation(t.to_location)}
+                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
                               className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors shrink-0 whitespace-nowrap">
                               💡 Tips
                             </button>
@@ -651,7 +654,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                       const isCheckOut = isoDate(a.check_out) === dayStr;
                       return (
                         <div key={a.id}
-                          className="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                          onClick={() => setEditingAccommodation(a)}
+                          className="flex items-center gap-3 rounded-xl px-4 py-3 border cursor-pointer hover:shadow-md transition-shadow"
                           style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
                           <div className="text-2xl">🏨</div>
                           <div className="flex-1 min-w-0">
@@ -662,7 +666,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                             {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
                             {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
                           </div>
-                          <button onClick={() => setTipsLocation(a.address || a.name)}
+                          <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
                             className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors shrink-0 whitespace-nowrap">
                             💡 Tips
                           </button>
@@ -676,7 +680,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                       const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={act.id}
-                          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+                          onClick={() => setEditingActivity(act)}
+                          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow cursor-pointer">
                           {photo && (
                             <div className="h-32 overflow-hidden relative">
                               <img src={photo} alt={act.location} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
@@ -705,8 +710,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
                             </div>
                             <div className="opacity-0 group-hover:opacity-100 flex gap-1 shrink-0 transition-opacity">
-                              <button onClick={() => setEditingActivity(act)} className="text-gray-300 hover:text-sky-500 text-sm">✏️</button>
-                              <button onClick={() => handleDeleteActivity(act.id)} className="text-gray-300 hover:text-red-400 text-sm">🗑</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 text-sm">🗑</button>
                             </div>
                           </div>
                         </div>
@@ -736,6 +740,16 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)} />
+      )}
+      {editingTransport && (
+        <TransportForm tripId={trip.id} initial={editingTransport}
+          onSaved={() => { setEditingTransport(null); onRefresh(); }}
+          onClose={() => setEditingTransport(null)} />
+      )}
+      {editingAccommodation && (
+        <AccommodationForm tripId={trip.id} initial={editingAccommodation}
+          onSaved={() => { setEditingAccommodation(null); onRefresh(); }}
+          onClose={() => setEditingAccommodation(null)} />
       )}
       {tipsLocation && (
         <TipsModal tripId={trip.id} location={tipsLocation} onClose={() => setTipsLocation(null)} />
