@@ -976,12 +976,24 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
             <span className="font-semibold text-gray-800 text-sm">{fmtMoney(accommodationTotal, trip.currency)}</span>
           </div>
           <div className="divide-y divide-gray-50">
-            {accommodations.filter((a) => a.cost).map((a) => (
-              <div key={a.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex-1 text-sm text-gray-800">{a.name}</div>
-                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
-              </div>
-            ))}
+            {accommodations.filter((a) => a.cost).map((a) => {
+              const nights = (a.check_in && a.check_out)
+                ? Math.round((new Date(a.check_out) - new Date(a.check_in)) / 86400000)
+                : null;
+              const perNight = nights > 0 ? Number(a.cost) / nights : null;
+              return (
+                <div key={a.id} className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 text-sm text-gray-800">
+                    {a.name}
+                    {nights > 0 && <span className="ml-2 text-xs text-gray-400">{nights} nacht{nights !== 1 ? "en" : ""}</span>}
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
+                    {perNight && <div className="text-xs text-gray-400">{fmtMoney(perNight, trip.currency)} / nacht</div>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
