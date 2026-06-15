@@ -683,8 +683,9 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
 
   const tripRow2 = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
-  const tripStartStr = tripRow2.rows[0]?.start_date ? String(tripRow2.rows[0].start_date).slice(0, 10) : null;
-  const tripEndStr = tripRow2.rows[0]?.end_date ? String(tripRow2.rows[0].end_date).slice(0, 10) : null;
+  const toIso = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
+  const tripStartStr = toIso(tripRow2.rows[0]?.start_date);
+  const tripEndStr = toIso(tripRow2.rows[0]?.end_date);
   const tripYear = tripStartStr ? tripStartStr.slice(0, 4) : null;
   const tripYearHint = tripYear ? `\nIMPORTANT: This trip takes place from ${tripStartStr} to ${tripEndStr} (year: ${tripYear}). Any date without a year MUST use year ${tripYear}. Never use any other year.` : "";
 
