@@ -1021,6 +1021,33 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
   );
 }
 
+// ---------- Tips accordion ----------
+function TipAccordion({ section, accentColor }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors"
+      >
+        <span className="text-lg">{section.icon}</span>
+        <span className="font-semibold text-gray-800 text-sm flex-1">{section.category}</span>
+        <span className="text-gray-400 text-xs transition-transform duration-200" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+      </button>
+      {open && (
+        <ul className="divide-y divide-gray-50 border-t border-gray-100">
+          {(section.items || []).map((tip, j) => (
+            <li key={j} className="flex items-start gap-3 px-4 py-2.5">
+              <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
+              <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ---------- Tips modal (per locatie) ----------
 function TipsModal({ tripId, trip, location, onClose }) {
   const [tips, setTips] = useState(null);
@@ -1082,20 +1109,7 @@ function TipsModal({ tripId, trip, location, onClose }) {
             </div>
           )}
           {(tips.tips || []).map((section, i) => (
-            <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="px-4 py-2.5 flex items-center gap-2 bg-gray-50 border-b border-gray-100">
-                <span>{section.icon}</span>
-                <span className="font-semibold text-gray-800 text-sm">{section.category}</span>
-              </div>
-              <ul className="divide-y divide-gray-50">
-                {(section.items || []).map((tip, j) => (
-                  <li key={j} className="flex items-start gap-3 px-4 py-2.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 mt-2 shrink-0" />
-                    <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <TipAccordion key={i} section={section} accentColor="#0369a1" />
           ))}
           <div className="text-center pt-1">
             <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); fetchTips(); }}
@@ -1189,22 +1203,9 @@ function TipsTab({ trip }) {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {(tips.tips || []).map((section, i) => (
-          <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 flex items-center gap-2 border-b border-gray-50" style={{ background: accent + "08" }}>
-              <span className="text-lg">{section.icon}</span>
-              <span className="font-semibold text-gray-800 text-sm">{section.category}</span>
-            </div>
-            <ul className="divide-y divide-gray-50">
-              {(section.items || []).map((tip, j) => (
-                <li key={j} className="flex items-start gap-3 px-4 py-3">
-                  <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accent }} />
-                  <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <TipAccordion key={i} section={section} accentColor={accent} />
         ))}
       </div>
 
