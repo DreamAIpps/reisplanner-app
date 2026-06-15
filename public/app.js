@@ -67,7 +67,7 @@ function fmt(date) {
 }
 function fmtDatetime(dt) {
   if (!dt) return "—";
-  return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
 function fmtMoney(n, currency = "EUR") {
   if (n == null || n === "") return "—";
@@ -623,7 +623,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                                 {isArrival ? "Aankomst" : "Vertrek"}
                               </span>
                               {time && <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>
-                                {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
+                                {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
                               </span>}
                             </div>
                             <div className="font-semibold text-gray-800 text-sm">{t.from_location} → {t.to_location}</div>
