@@ -334,19 +334,22 @@ function TripCard({ trip, onClick }) {
 function ActivityForm({ dayId, tripId, initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
-    e.preventDefault(); setSaving(true);
+    e.preventDefault(); setSaving(true); setError(null);
     try {
       const saved = initial?.id
         ? await api.updateActivity(initial.id, form)
         : await api.addActivity(dayId, { ...form, trip_id: tripId });
       onSaved(saved);
-    } finally { setSaving(false); }
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
   }
   return (
     <Modal title={initial?.id ? "Activiteit bewerken" : "Activiteit toevoegen"} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
+        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Tijd"><Input type="time" value={form.time} onChange={set("time")} /></Field>
           <Field label="Categorie">

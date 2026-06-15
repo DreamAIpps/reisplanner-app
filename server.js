@@ -349,14 +349,6 @@ route("DELETE", "/api/days/:id", async (req, res, params) => {
 
 route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
   const { trip_id, time, title, location, notes, category, cost } = body;
-  const { rows: dayRows } = await query(
-    "SELECT d.date, t.start_date, t.end_date FROM days d JOIN trips t ON t.id = d.trip_id WHERE d.id = $1",
-    [params.id]
-  );
-  if (dayRows[0]) {
-    const err = checkDateInRange(dayRows[0].date, dayRows[0].start_date, dayRows[0].end_date);
-    if (err) return sendError(res, 400, err);
-  }
   const { rows } = await query(
     "INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
     [params.id, trip_id, time||null, title, location||null, notes||null, category||"activity", cost||null]
