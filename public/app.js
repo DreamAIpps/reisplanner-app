@@ -737,7 +737,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
           onClose={() => setEditingAccommodation(null)} />
       )}
       {tipsLocation && (
-        <TipsModal tripId={trip.id} location={tipsLocation} onClose={() => setTipsLocation(null)} />
+        <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
     </div>
   );
@@ -1022,11 +1022,12 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
 }
 
 // ---------- Tips modal (per locatie) ----------
-function TipsModal({ tripId, location, onClose }) {
+function TipsModal({ tripId, trip, location, onClose }) {
   const [tips, setTips] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const cacheKey = `tips_loc_${location}`;
+  const tripMonth = trip?.start_date ? String(trip.start_date).slice(0, 7) : "";
+  const cacheKey = `tips_loc_${location}_${tripMonth}`;
 
   function fetchTips() {
     setLoading(true); setError(null);
@@ -1112,7 +1113,8 @@ function TipsTab({ trip }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const accent = trip.cover_color || "#0369a1";
-  const cacheKey = `tips_${trip.id}_${trip.destination}`;
+  const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
+  const cacheKey = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
 
   function fetchTips() {
     setLoading(true); setError(null);

@@ -631,12 +631,25 @@ route("GET", "/icon-512.png", async (req, res) => {
 
 // ---------- AI destination tips ----------
 route("GET", "/api/trips/:id/tips", async (req, res, params) => {
-  const tripResult = await query("SELECT destination FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
+  const tripResult = await query("SELECT destination, start_date, end_date FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
   if (!tripResult.rows.length) return sendError(res, 404, "Reis niet gevonden");
   const urlObj = new URL(req.url, "http://localhost");
   const destination = urlObj.searchParams.get("location") || tripResult.rows[0]?.destination;
   if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+
+  const { start_date, end_date } = tripResult.rows[0];
+  const MONTHS_NL = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
+  let periodHint = "";
+  if (start_date) {
+    const s = new Date(start_date);
+    const e = end_date ? new Date(end_date) : s;
+    const startMonth = MONTHS_NL[s.getUTCMonth()];
+    const endMonth = MONTHS_NL[e.getUTCMonth()];
+    periodHint = startMonth === endMonth
+      ? ` De reis is in ${startMonth}.`
+      : ` De reis is van ${startMonth} tot ${endMonth}.`;
+  }
 
   const client = new Anthropic();
   const message = await client.messages.create({
@@ -644,7 +657,7 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
     max_tokens: 900,
     messages: [{
       role: "user",
-      content: `Geef korte reisTips voor "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown:
+      content: `Geef korte reisTips voor "${destination}" in het Nederlands.${periodHint} Houd rekening met het seizoen en de drukte in die periode. Return ONLY valid JSON, no markdown:
 {"tips":[{"category":"Lokaal vervoer","icon":"🚇","items":["tip1","tip2"]},{"category":"Taxi & apps","icon":"🚕","items":["tip1","tip2"]},{"category":"Restaurants","icon":"🍽","items":["tip1","tip2"]},{"category":"Activiteiten","icon":"🎯","items":["tip1","tip2"]},{"category":"Met kinderen","icon":"👨‍👩‍👧","items":["tip1","tip2"]},{"category":"Hotels","icon":"🏨","items":["tip1","tip2"]}],"did_you_know":"feitje"}`,
     }],
   });
