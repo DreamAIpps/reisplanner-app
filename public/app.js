@@ -54,7 +54,9 @@ const api = {
 // ---------- Helpers ----------
 function fmt(date) {
   if (!date) return "—";
-  return new Date(date).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
+  const d = new Date(String(date).slice(0, 10) + "T12:00:00Z");
+  if (isNaN(d)) return "—";
+  return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 function fmtDatetime(dt) {
   if (!dt) return "—";
