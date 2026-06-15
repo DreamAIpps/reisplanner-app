@@ -52,6 +52,7 @@ const api = {
   updateExpense: (id, d) => apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
+  getAdminTrips: () => apiFetch("/api/admin/trips"),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
 };
 
@@ -1096,6 +1097,46 @@ function TripDetail({ tripId, onBack, onChanged }) {
   );
 }
 
+// ---------- Admin view ----------
+function AdminView({ onBack }) {
+  const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getAdminTrips().then(setTrips).finally(() => setLoading(false));
+  }, []);
+
+  const byUser = trips.reduce((acc, t) => {
+    const key = t.user_email || t.user_name || "Onbekend";
+    if (!acc[key]) acc[key] = { name: t.user_name, email: t.user_email, avatar: t.user_avatar, trips: [] };
+    acc[key].trips.push(t);
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      <button onClick={onBack} className="text-sky-600 hover:text-sky-800 mb-4 inline-flex items-center gap-1 text-sm">← Mijn reizen</button>
+      <h2 className="text-xl font-bold text-gray-800 mb-6">Alle reizen</h2>
+      {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : (
+        <div className="space-y-8">
+          {Object.values(byUser).map((u) => (
+            <div key={u.email}>
+              <div className="flex items-center gap-2 mb-3">
+                {u.avatar && <img src={u.avatar} className="w-7 h-7 rounded-full" />}
+                <span className="font-semibold text-gray-700">{u.name || u.email}</span>
+                <span className="text-xs text-gray-400">{u.trips.length} rei{u.trips.length !== 1 ? "zen" : "s"}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {u.trips.map((t) => <TripCard key={t.id} trip={t} onClick={() => {}} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- App ----------
 function App() {
   const [user, setUser] = useState(null);
@@ -1149,6 +1190,11 @@ function App() {
                 + Nieuwe reis
               </Button>
             )}
+            {user.is_admin && view.name !== "admin" && (
+              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-700 transition-colors">
+                👁 Alle reizen
+              </button>
+            )}
             <div className="flex items-center gap-2 border-l border-sky-700 pl-3">
               {user.avatar && <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />}
               <span className="text-sm text-sky-200 hidden sm:block">{user.name || user.email}</span>
@@ -1176,6 +1222,8 @@ function App() {
               ))}
             </div>
           )
+        ) : view.name === "admin" ? (
+          <AdminView onBack={() => setView({ name: "list" })} />
         ) : (
           <TripDetail tripId={view.id} onBack={() => setView({ name: "list" })} onChanged={loadTrips} />
         )}

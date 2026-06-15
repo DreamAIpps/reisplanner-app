@@ -99,8 +99,13 @@ async function createSession(userId) {
 }
 
 function setSessionCookie(res, token) {
-  const secure = process.env.APP_URL?.startsWith("https") ? "Secure; " : "";
-  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; ${secure}SameSite=Lax; Path=/; Max-Age=2592000`);
+  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`);
+}
+
+function appUrl(req) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  return `${proto}://${host}`;
 }
 
 async function readFormBody(req) {
@@ -159,6 +164,23 @@ function serveStatic(res, filePath) {
     res.end(data);
   });
 }
+
+// ---------- Admin routes ----------
+route("GET", "/api/admin/trips", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query(`
+    SELECT t.*, u.name as user_name, u.email as user_email, u.avatar as user_avatar,
+      COALESCE(SUM(e.amount), 0) as total_spent,
+      COUNT(DISTINCT a.id) as activity_count
+    FROM trips t
+    JOIN users u ON u.id = t.user_id
+    LEFT JOIN expenses e ON e.trip_id = t.id
+    LEFT JOIN activities a ON a.trip_id = t.id
+    GROUP BY t.id, u.name, u.email, u.avatar
+    ORDER BY u.name ASC, t.start_date DESC NULLS LAST
+  `);
+  sendJson(res, 200, rows);
+});
 
 // ---------- Trip routes ----------
 route("GET", "/api/trips", async (req, res) => {
@@ -331,7 +353,7 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
 route("GET", "/auth/me", async (req, res) => {
   const user = await getSession(req);
   if (!user) return sendError(res, 401, "Niet ingelogd");
-  sendJson(res, 200, { id: user.id, name: user.name, email: user.email, avatar: user.avatar });
+  sendJson(res, 200, { id: user.id, name: user.name, email: user.email, avatar: user.avatar, is_admin: user.is_admin });
 });
 
 route("POST", "/auth/logout", async (req, res) => {
@@ -344,7 +366,7 @@ route("POST", "/auth/logout", async (req, res) => {
 route("GET", "/auth/google", async (req, res) => {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
-    redirect_uri: `${process.env.APP_URL}/auth/google/callback`,
+    redirect_uri: `${appUrl(req)}/auth/google/callback`,
     response_type: "code",
     scope: "openid email profile",
   });
@@ -364,7 +386,7 @@ route("GET", "/auth/google/callback", async (req, res) => {
       code, grant_type: "authorization_code",
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: `${process.env.APP_URL}/auth/google/callback`,
+      redirect_uri: `${appUrl(req)}/auth/google/callback`,
     }),
   });
   const { access_token } = await tokenResp.json();
@@ -384,7 +406,7 @@ route("GET", "/auth/google/callback", async (req, res) => {
 route("GET", "/auth/apple", async (req, res) => {
   const params = new URLSearchParams({
     client_id: process.env.APPLE_CLIENT_ID,
-    redirect_uri: `${process.env.APP_URL}/auth/apple/callback`,
+    redirect_uri: `${appUrl(req)}/auth/apple/callback`,
     response_type: "code id_token",
     scope: "name email",
     response_mode: "form_post",

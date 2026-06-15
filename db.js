@@ -44,8 +44,10 @@ async function initDb() {
       avatar TEXT,
       google_id TEXT UNIQUE,
       apple_id TEXT UNIQUE,
+      is_admin BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
