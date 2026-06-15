@@ -588,27 +588,28 @@ route("GET", "/api/photo-suggest", async (req, res, params, body) => {
 
 // ---------- Import (email parsing via Claude) ----------
 route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
-  const { text } = body;
-  if (!text || !text.trim()) return sendError(res, 400, "Geen tekst opgegeven");
+  const { text, image } = body;
+  if (!text?.trim() && !image) return sendError(res, 400, "Geen tekst of afbeelding opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
 
   const client = new Anthropic();
-  const message = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 1024,
-    messages: [{
-      role: "user",
-      content: `Parse this travel confirmation email and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
+  const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
 {
   "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
   "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}],
   "activities": [{"date": "YYYY-MM-DD or null", "time": "HH:MM or null", "title": "", "location": "", "category": "Bezienswaardigheid|Restaurant|Museum|Natuur|Sport|Shopping|Anders", "cost": null, "notes": ""}]
 }
-Only include items actually present in the email. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.
+Only include items actually present. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.`;
 
-Email text:
-${text}`
-    }]
+  const { image } = body;
+  const content = image
+    ? [{ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }, { type: "text", text: prompt }]
+    : [{ type: "text", text: `${prompt}\n\nEmail text:\n${text}` }];
+
+  const message = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 1024,
+    messages: [{ role: "user", content }],
   });
 
   const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();

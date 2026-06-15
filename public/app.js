@@ -804,7 +804,10 @@ function BudgetTab({ trip, expenses, onRefresh }) {
 
 // ---------- Import modal ----------
 function ImportModal({ tripId, onImported, onClose }) {
+  const [mode, setMode] = useState("text"); // "text" | "image"
   const [text, setText] = useState("");
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imageData, setImageData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -812,16 +815,32 @@ function ImportModal({ tripId, onImported, onClose }) {
   const [saved, setSaved] = useState({ transports: [], accommodations: [], activities: [] });
   const [days, setDays] = useState([]);
   const [activityDays, setActivityDays] = useState({});
+  const fileRef = useRef(null);
 
   useEffect(() => { api.getDays(tripId).then(setDays); }, [tripId]);
+
+  function handleImageSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError("Afbeelding is te groot (max 10 MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      setImagePreview(dataUrl);
+      const base64 = dataUrl.split(",")[1];
+      setImageData({ data: base64, mediaType: file.type });
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+  }
 
   async function handleAnalyze(e) {
     e.preventDefault();
     setLoading(true); setError(null); setResult(null);
     try {
-      const data = await api.importEmail(tripId, text);
+      const body = mode === "image" ? { image: imageData } : { text };
+      const data = await apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify(body) });
       setResult(data);
-      // Pre-select day based on activity date if a matching day exists
       const defaults = {};
       (data.activities || []).forEach((act, i) => {
         if (act.date) {
@@ -890,14 +909,46 @@ function ImportModal({ tripId, onImported, onClose }) {
     <Modal title="Bevestiging importeren" onClose={onClose} wide>
       {!result ? (
         <form onSubmit={handleAnalyze} className="space-y-4">
-          <p className="text-sm text-gray-500">Plak de tekst van je boekingsbevestiging hieronder. Claude analyseert de e-mail en extraheert vluchten, hotels en activiteiten automatisch.</p>
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+            <button type="button" onClick={() => setMode("text")}
+              className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "text" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
+              📋 Tekst plakken
+            </button>
+            <button type="button" onClick={() => setMode("image")}
+              className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "image" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
+              📷 Foto uploaden
+            </button>
+          </div>
+
           {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
-          <Field label="Tekst van de bevestiging">
-            <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Plak hier de volledige tekst van je boekingsbevestiging..." required />
-          </Field>
+
+          {mode === "text" ? (
+            <Field label="Tekst van de bevestiging">
+              <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Plak hier de volledige tekst van je boekingsbevestiging..." />
+            </Field>
+          ) : (
+            <div>
+              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageSelect} />
+              {imagePreview ? (
+                <div className="relative rounded-xl overflow-hidden">
+                  <img src={imagePreview} alt="preview" className="w-full max-h-72 object-contain bg-gray-50" />
+                  <button type="button" onClick={() => { setImagePreview(null); setImageData(null); }}
+                    className="absolute top-2 right-2 bg-black/50 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-black/70">×</button>
+                </div>
+              ) : (
+                <div onClick={() => fileRef.current.click()}
+                  className="border-2 border-dashed border-gray-200 rounded-xl p-10 text-center cursor-pointer hover:border-sky-400 hover:bg-sky-50 transition-colors">
+                  <div className="text-4xl mb-2">📷</div>
+                  <div className="text-sm font-medium text-gray-600">Klik om een foto of screenshot te kiezen</div>
+                  <div className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP — max 10 MB</div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={loading || !text.trim()}>
+            <Button type="submit" disabled={loading || (mode === "text" ? !text.trim() : !imageData)}>
               {loading ? "Analyseren..." : "✨ Analyseren"}
             </Button>
           </div>
