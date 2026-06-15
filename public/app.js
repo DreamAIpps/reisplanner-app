@@ -709,7 +709,7 @@ function TransportTab({ trip, transports, onRefresh }) {
 }
 
 // ---------- Budget tab ----------
-function BudgetTab({ trip, expenses, onRefresh }) {
+function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
 
@@ -719,7 +719,14 @@ function BudgetTab({ trip, expenses, onRefresh }) {
     onRefresh();
   }
 
-  const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const activities = days.flatMap((d) => d.activities || []);
+
+  const transportTotal = transports.filter((t) => t.cost).reduce((s, t) => s + Number(t.cost), 0);
+  const accommodationTotal = accommodations.filter((a) => a.cost).reduce((s, a) => s + Number(a.cost), 0);
+  const activityTotal = activities.filter((a) => a.cost).reduce((s, a) => s + Number(a.cost), 0);
+  const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const total = expenseTotal + transportTotal + accommodationTotal + activityTotal;
+
   const budget = Number(trip.budget) || 0;
   const pct = budget > 0 ? Math.min(100, (total / budget) * 100) : null;
 
@@ -790,6 +797,60 @@ function BudgetTab({ trip, expenses, onRefresh }) {
                   <button onClick={() => setEditing(exp)} className="text-gray-400 hover:text-sky-600 text-xs">✏️</button>
                   <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑</button>
                 </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transports with cost */}
+      {transports.some((t) => t.cost) && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+            <span className="font-semibold text-gray-700 text-sm">✈️ Vervoer</span>
+            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(transportTotal, trip.currency)}</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {transports.filter((t) => t.cost).map((t) => (
+              <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex-1 text-sm text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
+                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(t.cost, trip.currency)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Accommodations with cost */}
+      {accommodations.some((a) => a.cost) && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+            <span className="font-semibold text-gray-700 text-sm">🏨 Verblijf</span>
+            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(accommodationTotal, trip.currency)}</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {accommodations.filter((a) => a.cost).map((a) => (
+              <div key={a.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex-1 text-sm text-gray-800">{a.name}</div>
+                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Activities with cost */}
+      {activities.some((a) => a.cost) && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+            <span className="font-semibold text-gray-700 text-sm">🗓 Activiteiten</span>
+            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(activityTotal, trip.currency)}</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {activities.filter((a) => a.cost).map((a) => (
+              <div key={a.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex-1 text-sm text-gray-800">{a.title}</div>
+                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
               </div>
             ))}
           </div>
@@ -1204,7 +1265,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
-      {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} onRefresh={load} />}
+      {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
