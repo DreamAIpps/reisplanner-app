@@ -601,7 +601,6 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
 }
 Only include items actually present. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.`;
 
-  const { image } = body;
   const content = image
     ? [{ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }, { type: "text", text: prompt }]
     : [{ type: "text", text: `${prompt}\n\nEmail text:\n${text}` }];
