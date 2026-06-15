@@ -641,8 +641,9 @@ route("GET", "/icon-512.png", async (req, res) => {
 route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   const tripResult = await query("SELECT destination FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
   if (!tripResult.rows.length) return sendError(res, 404, "Reis niet gevonden");
-  const { destination } = tripResult.rows[0];
-  if (!destination) return sendError(res, 400, "Geen bestemming ingesteld voor deze reis");
+  const urlObj = new URL(req.url, "http://localhost");
+  const destination = urlObj.searchParams.get("location") || tripResult.rows[0]?.destination;
+  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
 
   const client = new Anthropic();

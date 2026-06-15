@@ -498,6 +498,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
   const [photos, setPhotos] = useState({});
+  const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#0369a1";
 
@@ -631,6 +632,12 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               {t.cost && <span className="font-medium text-blue-700">{fmtMoney(t.cost, trip.currency)}</span>}
                             </div>
                           </div>
+                          {t.to_location && (
+                            <button onClick={() => setTipsLocation(t.to_location)}
+                              className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors shrink-0 whitespace-nowrap">
+                              💡 Tips
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -652,6 +659,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                             {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
                             {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
                           </div>
+                          <button onClick={() => setTipsLocation(a.address || a.name)}
+                            className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors shrink-0 whitespace-nowrap">
+                            💡 Tips
+                          </button>
                         </div>
                       );
                     })}
@@ -722,6 +733,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)} />
+      )}
+      {tipsLocation && (
+        <TipsModal tripId={trip.id} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
     </div>
   );
@@ -990,6 +1004,91 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
       {showForm && <ExpenseForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} />}
       {editing && <ExpenseForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
     </div>
+  );
+}
+
+// ---------- Tips modal (per locatie) ----------
+function TipsModal({ tripId, location, onClose }) {
+  const [tips, setTips] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const cacheKey = `tips_loc_${location}`;
+
+  function fetchTips() {
+    setLoading(true); setError(null);
+    apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
+      .then((data) => {
+        setTips(data);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { data, ts } = JSON.parse(cached);
+        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); setLoading(false); return; }
+      }
+    } catch {}
+    fetchTips();
+  }, [location]);
+
+  return (
+    <Modal title={`Tips voor ${location}`} onClose={onClose} wide>
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">
+          <div className="text-3xl mb-3">✨</div>
+          <div className="font-medium text-gray-600">Tips ophalen voor {location}...</div>
+          <div className="text-sm mt-1">Even geduld</div>
+        </div>
+      ) : error ? (
+        <div className="text-center py-8 text-gray-400">
+          <div className="text-sm">{error}</div>
+          <button onClick={fetchTips} className="mt-2 text-sm text-sky-600 underline">Opnieuw proberen</button>
+        </div>
+      ) : tips ? (
+        <div className="space-y-3">
+          {tips.did_you_know && (
+            <div className="rounded-xl p-4 bg-sky-50 border border-sky-100">
+              <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
+              <div className="text-sm text-gray-700 leading-relaxed">{tips.did_you_know}</div>
+            </div>
+          )}
+          {tips.best_time && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex gap-2 items-start">
+              <span>📅</span>
+              <div>
+                <div className="text-xs font-bold text-amber-700 mb-0.5">Beste reistijd</div>
+                <div className="text-sm text-gray-700 leading-relaxed">{tips.best_time}</div>
+              </div>
+            </div>
+          )}
+          {(tips.tips || []).map((section, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 flex items-center gap-2 bg-gray-50 border-b border-gray-100">
+                <span>{section.icon}</span>
+                <span className="font-semibold text-gray-800 text-sm">{section.category}</span>
+              </div>
+              <ul className="divide-y divide-gray-50">
+                {(section.items || []).map((tip, j) => (
+                  <li key={j} className="flex items-start gap-3 px-4 py-2.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 mt-2 shrink-0" />
+                    <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          <div className="text-center pt-1">
+            <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); fetchTips(); }}
+              className="text-xs text-gray-400 hover:text-gray-600 underline">Nieuwe tips genereren</button>
+          </div>
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 
@@ -1467,7 +1566,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "budget", label: "Budget", icon: "💰" },
-    { key: "tips", label: "Tips", icon: "💡" },
+    { key: "tips", label: "Algemene tips", icon: "💡" },
   ];
 
   return (
