@@ -661,17 +661,19 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
     // Single-category fetch — fast and cheap
     const isEvents = category === "Evenementen & agenda";
     const prompt = isEvents
-      ? `Geef 3 specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen in "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2","tip3"]}`
-      : `Geef 2 praktische reisTips over "${category.toLowerCase()}" in "${destination}" in het Nederlands.${periodHint} Return ONLY valid JSON, no markdown: {"items":["tip1","tip2"]}`;
+      ? `Geef 3 specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen in de buurt van "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Als het een hotelnaam of adres is, gebruik dan de stad/regio. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2","tip3"]}`
+      : `Geef 2 praktische reisTips over "${category.toLowerCase()}" voor een bezoeker van "${destination}" in het Nederlands.${periodHint} Als het een hotelnaam of adres is, geef tips voor die stad/regio. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2"]}`;
 
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
+      max_tokens: 450,
       messages: [{ role: "user", content: prompt }],
     });
     const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-    try { sendJson(res, 200, JSON.parse(raw)); }
-    catch { sendError(res, 500, "Kon tips niet verwerken"); }
+    try {
+      const parsed = JSON.parse(raw);
+      sendJson(res, 200, { items: parsed.items || [] });
+    } catch { sendError(res, 500, "Kon tips niet verwerken"); }
     return;
   }
 
