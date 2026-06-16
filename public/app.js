@@ -293,36 +293,34 @@ function TripCard({ trip, onClick }) {
   const accent = trip.cover_color || "#0369a1";
 
   return (
-    <div onClick={onClick} className="bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden border border-gray-100 group">
-      {trip.cover_image ? (
-        <div className="h-44 w-full bg-gray-100 overflow-hidden relative">
-          <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
-          <div className="absolute top-2 right-2 flex gap-1">
-            {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-500/80 text-white backdrop-blur-sm">Gedeeld</span>}
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 p-3">
-            <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
-            {trip.destination && <div className="text-xs text-white/80 mt-0.5">📍 {trip.destination}</div>}
-          </div>
+    <div onClick={onClick} className="bg-white rounded-2xl shadow-sm active:scale-98 transition-all duration-150 cursor-pointer overflow-hidden border border-gray-100 group" style={{ WebkitTapHighlightColor: "transparent" }}>
+      {/* Cover */}
+      <div className="relative overflow-hidden" style={{ height: 190 }}>
+        {trip.cover_image
+          ? <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          : <div className="w-full h-full" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}bb)` }} />
+        }
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+        {/* Badges top */}
+        <div className="absolute top-3 left-3 right-3 flex justify-between items-start">
+          {until !== null && until >= 0 && (
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/95 text-sky-700 shadow">
+              {until === 0 ? "Vandaag! 🎉" : until === 1 ? "Morgen ✈️" : `${until} dagen`}
+            </span>
+          )}
+          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-purple-500/80 text-white backdrop-blur-sm ml-auto">Gedeeld</span>}
         </div>
-      ) : (
-        <div className="h-20 w-full relative flex items-end px-4 pb-3" style={{ background: accent }}>
-          <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/20" />
-          <div className="relative flex items-start justify-between w-full gap-2">
-            <h3 className="font-bold text-white text-base leading-tight drop-shadow">{trip.name}</h3>
-            <div className="flex gap-1 shrink-0">
-              {trip.is_owner === false && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/20 text-white">Gedeeld</span>}
-            </div>
-          </div>
+        {/* Title */}
+        <div className="absolute bottom-0 left-0 right-0 p-4">
+          <h3 className="font-bold text-white text-lg leading-tight drop-shadow-sm">{trip.name}</h3>
+          {trip.destination && <div className="text-sm text-white/80 mt-0.5">📍 {trip.destination}</div>}
         </div>
-      )}
+      </div>
 
-      <div className="p-4">
-        {!trip.cover_image && trip.destination && <div className="text-sm text-gray-500 mb-2">📍 {trip.destination}</div>}
+      <div className="px-4 py-3">
         <div className="flex items-center justify-between text-xs text-gray-400">
-          <div>{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</div>
-          <div className="flex gap-2 items-center">
+          <div className="font-medium">{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</div>
+          <div className="flex gap-3 items-center">
             {trip.activity_count > 0 && <span>🗓 {trip.activity_count}</span>}
             {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
           </div>
@@ -2007,9 +2005,19 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "map", label: "Kaart", icon: "🗺" },
   ];
 
+  // Bottom nav tabs for mobile
+  const bottomNavItems = [
+    { key: "days", icon: "🗓", label: "Planning" },
+    { key: "accommodation", icon: "🏨", label: "Verblijf" },
+    { key: "transport", icon: "✈️", label: "Vervoer" },
+    { key: "map", icon: "🗺", label: "Kaart" },
+    { key: "budget", icon: "💰", label: "Budget" },
+  ];
+
   return (
-    <div>
-      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
+    <div className="pb-2">
+      {/* Back button — only on desktop */}
+      <button onClick={onBack} className="hidden sm:inline-flex mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
         ← Alle reizen
       </button>
 
@@ -2075,7 +2083,19 @@ function TripDetail({ tripId, onBack, onChanged }) {
         )}
       </div>
 
-      <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+      {/* Desktop tabs / mobile: alleen de grote Dagplanning knop */}
+      <div className="hidden sm:block">
+        <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+      </div>
+      <div className="sm:hidden mb-4">
+        <button onClick={() => setTab("days")}
+          className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
+          style={tab === "days"
+            ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
+            : { background: "#f1f5f9", color: "#374151" }}>
+          🗓 Dagplanning
+        </button>
+      </div>
 
       {/* Budget balk */}
       {trip.budget && (() => {
@@ -2120,6 +2140,26 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
+
+      {/* Mobile bottom nav */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="flex">
+          <button onClick={onBack} className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-gray-400 hover:text-sky-600 transition-colors min-w-0" style={{ minHeight: 56 }}>
+            <span className="text-xl">←</span>
+            <span className="text-xs font-medium leading-none">Terug</span>
+          </button>
+          <div className="w-px bg-gray-100 my-2" />
+          {bottomNavItems.map((item) => (
+            <button key={item.key} onClick={() => setTab(item.key)}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0"
+              style={{ color: tab === item.key ? accent : "#9ca3af", minHeight: 56 }}>
+              <span className="text-xl leading-none">{item.icon}</span>
+              <span className="text-xs font-medium leading-none mt-0.5">{item.label}</span>
+              {tab === item.key && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
@@ -2306,63 +2346,65 @@ function App() {
 
   const tripStats = trips.length > 0 ? `${trips.length} rei${trips.length === 1 ? "s" : "zen"}` : null;
 
+  const isDetail = view.name === "detail";
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gradient-to-r from-sky-900 to-sky-700 text-white py-5 px-4 sm:px-8 mb-6 shadow-lg">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold flex items-center gap-2 cursor-pointer leading-none" onClick={() => setView({ name: "list" })}>
-              ✈️ Reisplanner
-            </h1>
-            <p className="text-sky-100 text-sm font-medium mt-1">{greeting(user.given_name || user.name)}</p>
-            {view.name === "list" && tripStats && (
-              <p className="text-sky-300 text-xs mt-0.5 hidden sm:block">{tripStats}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {view.name === "list" && (
-              <Button onClick={() => setShowTripForm(true)} className="!bg-white !text-sky-800 hover:!bg-sky-50 font-semibold shadow-sm">
-                + Nieuwe reis
-              </Button>
-            )}
+      {/* Sticky compact header */}
+      <header className="sticky top-0 z-40 bg-sky-800 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+          <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2 font-bold text-lg leading-none min-w-0">
+            ✈️ <span className="truncate">Reisplanner</span>
+          </button>
+          <div className="flex items-center gap-2 shrink-0">
             {user.is_admin && view.name !== "admin" && (
-              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1 rounded hover:bg-sky-800 transition-colors">
-                👁 Alle reizen
+              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
+                👁
               </button>
             )}
-            <div className="flex items-center gap-2 border-l border-sky-600 pl-3">
-              {user.avatar
-                ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 ring-offset-1 ring-offset-sky-800 shrink-0" />
-                : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center text-white font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
-              }
-              <div className="hidden sm:block">
-                <div className="text-sm font-medium text-white leading-none">{user.given_name || user.name?.split(" ")[0] || user.email}</div>
-                <button onClick={handleLogout} className="text-sky-300 hover:text-white text-xs transition-colors">Uitloggen</button>
-              </div>
-              <button onClick={handleLogout} className="sm:hidden text-sky-200 hover:text-white text-xs font-medium px-2 py-1 rounded-lg border border-sky-500 hover:border-sky-300 transition-colors">Uit</button>
-            </div>
+            <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
+              Uitloggen
+            </button>
+            {user.avatar
+              ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 shrink-0" />
+              : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+            }
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-8 pb-12">
+      <main className="max-w-5xl mx-auto px-3 sm:px-8 pb-28 pt-4">
         {view.name === "list" ? (
-          loading ? (
-            <div className="text-center py-16 text-gray-400">Laden...</div>
-          ) : trips.length === 0 ? (
-            <div className="text-center py-24 text-gray-400">
-              <div className="text-6xl mb-4">🗺️</div>
-              <div className="text-xl font-semibold text-gray-600 mb-2">Nog geen reizen</div>
-              <div className="mb-6">Maak je eerste reis aan om te beginnen</div>
-              <Button onClick={() => setShowTripForm(true)}>+ Nieuwe reis</Button>
+          <>
+            {/* Greeting banner */}
+            <div className="mb-5 px-1">
+              <div className="text-2xl font-bold text-gray-800">{greeting(user.given_name || user.name)} 👋</div>
+              {tripStats && <div className="text-sm text-gray-500 mt-0.5">{tripStats}</div>}
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {trips.map((t) => (
-                <TripCard key={t.id} trip={t} onClick={() => setView({ name: "detail", id: t.id })} />
-              ))}
-            </div>
-          )
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">Laden...</div>
+            ) : trips.length === 0 ? (
+              <div className="text-center py-24 text-gray-400">
+                <div className="text-6xl mb-4">🗺️</div>
+                <div className="text-xl font-semibold text-gray-600 mb-2">Nog geen reizen</div>
+                <div className="mb-6 text-sm">Maak je eerste reis aan om te beginnen</div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {trips.map((t) => (
+                  <TripCard key={t.id} trip={t} onClick={() => setView({ name: "detail", id: t.id })} />
+                ))}
+              </div>
+            )}
+            {/* FAB */}
+            <button
+              onClick={() => setShowTripForm(true)}
+              className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-5 py-4 rounded-2xl text-white font-bold text-base shadow-xl active:scale-95 transition-all"
+              style={{ background: "linear-gradient(135deg,#0369a1,#0ea5e9)", boxShadow: "0 8px 24px rgba(3,105,161,0.45)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+            >
+              + Nieuwe reis
+            </button>
+          </>
         ) : view.name === "admin" ? (
           <AdminView onBack={() => setView({ name: "list" })} />
         ) : (
