@@ -713,7 +713,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                             <div className="flex flex-col gap-1 items-end shrink-0">
                               <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
                                 className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors whitespace-nowrap">
-                                🗺 Tips
+                                🗺 Lokale tips
                               </button>
                             </div>
                           </div>
