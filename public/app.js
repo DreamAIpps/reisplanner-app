@@ -1362,12 +1362,15 @@ function MapTab({ trip, accommodations, transports, days }) {
       });
 
       // Transport: unique cities from origin/destination
+      // Use airport codes or city names — append country context from trip destination if short
       const transportPairs = [];
       transports.forEach((t) => {
         if (t.origin && t.destination) {
-          transportPairs.push({ from: t.origin, to: t.destination, type: t.transport_type });
-          if (!items.find((i) => i.query === t.origin)) items.push({ label: t.origin, sublabel: "", type: "transport", query: t.origin });
-          if (!items.find((i) => i.query === t.destination)) items.push({ label: t.destination, sublabel: "", type: "transport", query: t.destination });
+          const fromQ = t.origin;
+          const toQ = t.destination;
+          transportPairs.push({ from: fromQ, to: toQ, type: t.transport_type });
+          if (!items.find((i) => i.query === fromQ)) items.push({ label: t.origin, sublabel: "", type: "transport", query: fromQ });
+          if (!items.find((i) => i.query === toQ)) items.push({ label: t.destination, sublabel: "", type: "transport", query: toQ });
         }
       });
 
@@ -1396,8 +1399,8 @@ function MapTab({ trip, accommodations, transports, days }) {
       const L = window.L;
       const map = L.map(mapRef.current);
       mapInstanceRef.current = map;
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
         maxZoom: 19,
       }).addTo(map);
 
@@ -1410,19 +1413,18 @@ function MapTab({ trip, accommodations, transports, days }) {
         if (!fromGeo || !toGeo) return;
         const isAir = (pair.type || "").toLowerCase().includes("vlieg") || (pair.type || "").toLowerCase().includes("fly") || (pair.type || "").toLowerCase().includes("air") || !pair.type;
         if (isAir) {
-          // Curved arc for flights using intermediate points
-          const lats = [], lngs = [];
-          const steps = 20;
+          // Great-circle arc approximation
+          const steps = 40;
+          const latlngs = [];
           for (let s = 0; s <= steps; s++) {
             const t2 = s / steps;
             const lat = fromGeo.lat + (toGeo.lat - fromGeo.lat) * t2;
             const lon = fromGeo.lon + (toGeo.lon - fromGeo.lon) * t2;
-            const arc = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lon - fromGeo.lon) * 0.15);
-            lats.push(lat + arc * 0.5);
-            lngs.push(lon);
+            // Bulge perpendicular to route (northward arc)
+            const bulge = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lat - fromGeo.lat) + Math.abs(toGeo.lon - fromGeo.lon)) * 0.08;
+            latlngs.push([lat + bulge, lon]);
           }
-          const latlngs = lats.map((lat, i) => [lat, lngs[i]]);
-          L.polyline(latlngs, { color: "#0369a1", weight: 2, opacity: 0.6, dashArray: "6 4" }).addTo(map);
+          L.polyline(latlngs, { color: "#0369a1", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
         } else {
           L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#059669", weight: 2, opacity: 0.6 }).addTo(map);
         }
@@ -1430,12 +1432,11 @@ function MapTab({ trip, accommodations, transports, days }) {
 
       // Add markers
       const iconSvg = (emoji, color) => L.divIcon({
-        className: "",
-        html: `<div style="background:${color};border:2px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:32px;height:32px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center">
-          <span style="transform:rotate(45deg);font-size:14px;line-height:1">${emoji}</span></div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 32],
-        popupAnchor: [0, -34],
+        className: "leaflet-reisplanner-icon",
+        html: `<div style="background:${color};border:2.5px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center"><span style="transform:rotate(45deg);font-size:15px;line-height:1;display:block">${emoji}</span></div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 34],
+        popupAnchor: [0, -36],
       });
 
       const typeConfig = {
