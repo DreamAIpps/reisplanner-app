@@ -798,7 +798,10 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")) {
     const match = matchRoute(req.method, pathname);
     if (!match) { res.writeHead(404); res.end(); return; }
-    try { await match.handler(req, res, match.params, {}); }
+    try {
+      const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
+      await match.handler(req, res, match.params, body);
+    }
     catch (err) { console.error(err); res.writeHead(302, { Location: "/login?error=1" }); res.end(); }
     return;
   }
