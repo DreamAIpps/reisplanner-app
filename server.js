@@ -415,6 +415,35 @@ route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+route("GET", "/api/accommodations/:id/ai-tip", async (req, res, params) => {
+  const { rows } = await query(
+    `SELECT a.*, t.destination FROM accommodations a JOIN trips t ON t.id = a.trip_id WHERE a.id = $1`,
+    [params.id]
+  );
+  if (!rows.length) return sendError(res, 404, "Niet gevonden");
+  const acc = rows[0];
+  const hotelName = acc.name || "dit hotel";
+  const city = acc.destination || (acc.address ? acc.address.split(",").slice(-2).join(",").trim() : "");
+  const priceInfo = acc.cost ? `De geboekte prijs is €${acc.cost}.` : "";
+
+  const prompt = `Je bent een reisassistent. Geef een korte AI-tip voor het hotel "${hotelName}"${city ? ` in ${city}` : ""}.
+${priceInfo}
+Geef:
+1. De ligging van het hotel t.o.v. bekende bezienswaardigheden of wijken (bijv. afstand tot centrum, toeristische hotspots).
+2. Twee vergelijkbare hotels in dezelfde stad en prijsklasse als alternatief.
+Return ONLY valid JSON, no markdown:
+{"location_tip":"...", "alternatives":[{"name":"Hotel A","reason":"..."},{"name":"Hotel B","reason":"..."}]}`;
+
+  const msg = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 400,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  try { sendJson(res, 200, JSON.parse(raw)); }
+  catch { sendError(res, 500, "Kon tip niet verwerken"); }
+});
+
 // ---------- Transport ----------
 route("GET", "/api/trips/:id/transports", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);

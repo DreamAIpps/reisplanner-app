@@ -669,21 +669,28 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                       return (
                         <div key={a.id}
                           onClick={() => setEditingAccommodation(a)}
-                          className="flex items-center gap-3 rounded-xl px-4 py-3 border cursor-pointer hover:shadow-md transition-shadow"
+                          className="rounded-xl border cursor-pointer hover:shadow-md transition-shadow"
                           style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-                          <div className="text-2xl">🏨</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "#b45309" }}>
-                              {isCheckIn && isCheckOut ? "Check-in & Check-out" : isCheckIn ? "Check-in" : "Check-out"}
+                          <div className="flex items-center gap-3 px-4 py-3">
+                            <div className="text-2xl">🏨</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "#b45309" }}>
+                                {isCheckIn && isCheckOut ? "Check-in & Check-out" : isCheckIn ? "Check-in" : "Check-out"}
+                              </div>
+                              <div className="font-semibold text-gray-800 text-sm">{a.name}</div>
+                              {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
+                              {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
                             </div>
-                            <div className="font-semibold text-gray-800 text-sm">{a.name}</div>
-                            {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
-                            {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
+                            <div className="flex flex-col gap-1 items-end shrink-0">
+                              <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
+                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors whitespace-nowrap">
+                                🗺 Tips
+                              </button>
+                            </div>
                           </div>
-                          <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
-                            className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors shrink-0 whitespace-nowrap">
-                            💡 Tips
-                          </button>
+                          <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
+                            <HotelAiTip accommodationId={a.id} />
+                          </div>
                         </div>
                       );
                     })}
@@ -801,22 +808,27 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
       ) : (
         <div className="space-y-3">
           {accommodations.map((acc) => (
-            <div key={acc.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex gap-4 items-start group">
-              <div className="text-2xl">🏨</div>
-              <div className="flex-1">
-                <div className="font-semibold text-gray-800">{acc.name}</div>
-                {acc.address && <div className="text-sm text-gray-500">📍 {acc.address}</div>}
-                <div className="flex gap-4 mt-1 text-sm text-gray-500">
-                  {acc.check_in && <span>Check-in: {fmt(acc.check_in)}</span>}
-                  {acc.check_out && <span>Check-out: {fmt(acc.check_out)}</span>}
-                  {acc.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{acc.booking_ref}</span>}
-                  {acc.cost && <span className="text-sky-700 font-medium">{fmtMoney(acc.cost)}</span>}
+            <div key={acc.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
+              <div className="flex gap-4 items-start">
+                <div className="text-2xl">🏨</div>
+                <div className="flex-1">
+                  <div className="font-semibold text-gray-800">{acc.name}</div>
+                  {acc.address && <div className="text-sm text-gray-500">📍 {acc.address}</div>}
+                  <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
+                    {acc.check_in && <span>Check-in: {fmt(acc.check_in)}</span>}
+                    {acc.check_out && <span>Check-out: {fmt(acc.check_out)}</span>}
+                    {acc.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{acc.booking_ref}</span>}
+                    {acc.cost && <span className="text-sky-700 font-medium">{fmtMoney(acc.cost)}</span>}
+                  </div>
+                  {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
                 </div>
-                {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
+                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">✏️</button>
+                  <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>
+                </div>
               </div>
-              <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">✏️</button>
-                <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>
+              <div className="mt-2 ml-10">
+                <HotelAiTip accommodationId={acc.id} />
               </div>
             </div>
           ))}
@@ -1131,6 +1143,68 @@ function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyP
           ) : items ? (
             <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
           ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Hotel AI Tip ----------
+function HotelAiTip({ accommodationId }) {
+  const [tip, setTip] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const cacheKey = `hotel_ai_tip_${accommodationId}`;
+
+  function load() {
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setTip(data); return; } }
+    } catch {}
+    setLoading(true);
+    apiFetch(`/api/accommodations/${accommodationId}/ai-tip`)
+      .then((d) => { setTip(d); try { localStorage.setItem(cacheKey, JSON.stringify({ data: d, ts: Date.now() })); } catch {} })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+
+  function handleClick(e) {
+    e.stopPropagation();
+    if (!open) { setOpen(true); if (!tip) load(); }
+    else setOpen(false);
+  }
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <button onClick={handleClick}
+        className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors shrink-0 whitespace-nowrap"
+        style={{ background: open ? "#fef3c7" : "#fef9c3", color: "#b45309" }}>
+        💡 AI tip {open ? "▴" : "▾"}
+      </button>
+      {open && (
+        <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm">
+          {loading ? (
+            <div className="space-y-2 animate-pulse">
+              <div className="h-3 bg-amber-200 rounded w-3/4" />
+              <div className="h-3 bg-amber-100 rounded w-full" />
+            </div>
+          ) : tip ? (
+            <div className="space-y-2">
+              {tip.location_tip && (
+                <div className="text-gray-700 leading-relaxed">📍 {tip.location_tip}</div>
+              )}
+              {tip.alternatives?.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-amber-700 mt-2 mb-1">Vergelijkbare hotels:</div>
+                  {tip.alternatives.map((alt, i) => (
+                    <div key={i} className="text-gray-600 text-xs leading-relaxed">• <span className="font-medium">{alt.name}</span> — {alt.reason}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-gray-400">Tip kon niet worden geladen.</div>
+          )}
         </div>
       )}
     </div>
