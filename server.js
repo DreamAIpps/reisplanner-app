@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const anthropicClient = new Anthropic();
 
 const PORT = process.env.PORT || 3002;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -434,7 +435,7 @@ Geef:
 Return ONLY valid JSON, no markdown:
 {"location_tip":"...", "alternatives":[{"name":"Hotel A","reason":"..."},{"name":"Hotel B","reason":"..."}]}`;
 
-  const msg = await client.messages.create({
+  const msg = await anthropicClient.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 400,
     messages: [{ role: "user", content: prompt }],
@@ -684,7 +685,7 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
 
   const category = urlObj.searchParams.get("category");
 
-  const client = new Anthropic();
+  const client = anthropicClient;
 
   if (category) {
     const isEvents = category === "Evenementen & agenda";
@@ -750,7 +751,7 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   const tripYear = tripStartStr ? tripStartStr.slice(0, 4) : null;
   const tripYearHint = tripYear ? `\nIMPORTANT: This trip takes place from ${tripStartStr} to ${tripEndStr} (year: ${tripYear}). Any date without a year MUST use year ${tripYear}. Never use any other year.` : "";
 
-  const client = new Anthropic();
+  const client = anthropicClient;
   const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
 {
   "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
