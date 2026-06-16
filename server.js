@@ -802,7 +802,7 @@ const server = http.createServer(async (req, res) => {
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
       await match.handler(req, res, match.params, body);
     }
-    catch (err) { console.error(err); res.writeHead(302, { Location: "/login?error=1" }); res.end(); }
+    catch (err) { console.error(err); if (!res.headersSent) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); } }
     return;
   }
 
