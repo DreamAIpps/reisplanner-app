@@ -157,18 +157,34 @@ function Button({ variant = "primary", className = "", children, ...props }) {
 }
 
 function Tabs({ tabs, active, onChange, accentColor }) {
+  const primary = tabs.filter((t) => t.primary);
+  const secondary = tabs.filter((t) => !t.primary);
   return (
-    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 overflow-x-auto">
-      {tabs.map((t) => (
+    <div className="mb-6 space-y-2">
+      {primary.map((t) => (
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-          style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
+          className="w-full py-3 px-4 rounded-xl text-base font-bold transition-all shadow-sm whitespace-nowrap"
+          style={active === t.key
+            ? { background: accentColor || "#0369a1", color: "#fff", boxShadow: `0 4px 14px ${accentColor}55` }
+            : { background: "#f1f5f9", color: "#374151" }}
         >
           {t.icon} {t.label}
         </button>
       ))}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 overflow-x-auto">
+        {secondary.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => onChange(t.key)}
+            className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+            style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1985,7 +2001,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const accent = trip.cover_color || "#0369a1";
 
   const tabs = [
-    { key: "days", label: "Dagen", icon: "🗓" },
+    { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "map", label: "Kaart", icon: "🗺" },
