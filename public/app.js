@@ -1,5 +1,24 @@
 const { useState, useEffect, useCallback, useRef } = React;
 
+// ---------- Error boundary ----------
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) return (
+      <div className="min-h-screen flex items-center justify-center p-8 bg-gray-50">
+        <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
+          <div className="text-5xl mb-4">😕</div>
+          <h2 className="text-lg font-bold text-gray-800 mb-2">Er ging iets mis</h2>
+          <p className="text-sm text-gray-500 mb-4">{this.state.error.message}</p>
+          <button onClick={() => window.location.reload()} className="bg-sky-600 text-white rounded-xl px-6 py-2 text-sm font-medium hover:bg-sky-700">Pagina herladen</button>
+        </div>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 // ---------- Constants ----------
 const TRANSPORT_TYPES = ["Vliegtuig", "Trein", "Bus", "Huurauto", "Taxi", "Boot", "Anders"];
 const EXPENSE_CATEGORIES = ["Vluchten", "Accommodatie", "Vervoer", "Eten & Drinken", "Activiteiten", "Winkelen", "Overig"];
@@ -1798,7 +1817,8 @@ function App() {
   useEffect(() => {
     fetch("/auth/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((u) => { setUser(u); setAuthLoading(false); });
+      .then((u) => { setUser(u); setAuthLoading(false); })
+      .catch(() => { setUser(null); setAuthLoading(false); });
   }, []);
 
   const loadTrips = useCallback(async () => {
@@ -1908,4 +1928,6 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <ErrorBoundary><App /></ErrorBoundary>
+);
