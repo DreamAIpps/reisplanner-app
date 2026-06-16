@@ -139,12 +139,12 @@ function Button({ variant = "primary", className = "", children, ...props }) {
 
 function Tabs({ tabs, active, onChange, accentColor }) {
   return (
-    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 overflow-x-auto">
       {tabs.map((t) => (
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+          className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
           style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
         >
           {t.icon} {t.label}
@@ -1595,28 +1595,30 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {/* Header */}
       <div className="rounded-2xl shadow-md overflow-hidden mb-6" style={{ border: `1px solid ${accent}22` }}>
         {trip.cover_image ? (
-          <div className="relative h-64 w-full overflow-hidden">
-            <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-            <div className="absolute top-3 right-3 flex gap-2 flex-wrap justify-end">
-              <Button variant="secondary" onClick={() => setImporting(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">📧 Importeren</Button>
-              {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">🔗 Delen</Button>}
-              {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="!bg-white/90 !text-gray-800 backdrop-blur-sm shadow-sm text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-              {trip.is_owner && <button onClick={handleDelete} className="inline-flex items-center gap-1.5 bg-white/90 text-red-600 backdrop-blur-sm shadow-sm text-xs px-3 py-1.5 rounded-lg font-medium hover:bg-white transition-colors">🗑 Verwijderen</button>}
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 p-5">
-              <div className="flex items-start gap-2 mb-1">
-                {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
+          <>
+            <div className="relative h-48 sm:h-64 w-full overflow-hidden">
+              <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
+              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
+                <div className="flex items-start gap-2 mb-1">
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
+                {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
+                <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
+                  {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                </div>
+                {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
-              <h2 className="text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
-              {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
-              <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
-                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
-              </div>
-              {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
             </div>
-          </div>
+            <div className="bg-white px-3 py-2.5 flex gap-2 overflow-x-auto border-t border-gray-100">
+              <Button variant="secondary" onClick={() => setImporting(true)} className="shrink-0 !text-xs !px-3 !py-1.5">📧 Importeren</Button>
+              {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
+              {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
+              {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+            </div>
+          </>
         ) : (
           <>
             <div className="relative h-28 w-full flex items-end px-6 pb-4" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
@@ -1629,18 +1631,16 @@ function TripDetail({ tripId, onBack, onChanged }) {
                 {trip.destination && <div className="text-white/80 text-sm mt-0.5">📍 {trip.destination}</div>}
               </div>
             </div>
-            <div className="bg-white px-6 py-4">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div className="text-sm text-gray-500 flex gap-4 flex-wrap">
-                  {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="secondary" onClick={() => setImporting(true)}>📧 Importeren</Button>
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)}>🔗 Delen</Button>}
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)}>✏️ Bewerken</Button>}
-                  {trip.is_owner && <Button variant="danger" onClick={handleDelete}>🗑 Verwijderen</Button>}
-                </div>
+            <div className="bg-white px-4 py-3">
+              <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
+                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                <Button variant="secondary" onClick={() => setImporting(true)} className="shrink-0">📧 Importeren</Button>
+                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
+                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
+                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
               </div>
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
@@ -1860,14 +1860,14 @@ function App() {
             )}
             <div className="flex items-center gap-2 border-l border-sky-600 pl-3">
               {user.avatar
-                ? <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full ring-2 ring-sky-400 ring-offset-1 ring-offset-sky-800 shrink-0" />
-                : <div className="w-10 h-10 rounded-full bg-sky-600 flex items-center justify-center text-white font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+                ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 ring-offset-1 ring-offset-sky-800 shrink-0" />
+                : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center text-white font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
               }
               <div className="hidden sm:block">
                 <div className="text-sm font-medium text-white leading-none">{user.given_name || user.name?.split(" ")[0] || user.email}</div>
                 <button onClick={handleLogout} className="text-sky-300 hover:text-white text-xs transition-colors">Uitloggen</button>
               </div>
-              <button onClick={handleLogout} className="sm:hidden text-sky-300 hover:text-white text-xs px-1 py-0.5 rounded">↩</button>
+              <button onClick={handleLogout} className="sm:hidden text-sky-200 hover:text-white text-xs font-medium px-2 py-1 rounded-lg border border-sky-500 hover:border-sky-300 transition-colors">Uit</button>
             </div>
           </div>
         </div>
