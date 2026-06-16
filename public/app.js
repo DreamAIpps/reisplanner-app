@@ -1345,7 +1345,7 @@ function ImportModal({ tripId, onImported, onClose }) {
             </Field>
           ) : (
             <div>
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageSelect} />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
               {imagePreview ? (
                 <div className="relative rounded-xl overflow-hidden">
                   <img src={imagePreview} alt="preview" className="w-full max-h-72 object-contain bg-gray-50" />
