@@ -1988,7 +1988,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "days", label: "Dagen", icon: "🗓" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
-    { key: "budget", label: "Budget", icon: "💰" },
     { key: "map", label: "Kaart", icon: "🗺" },
   ];
 
@@ -2061,6 +2060,44 @@ function TripDetail({ tripId, onBack, onChanged }) {
       </div>
 
       <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+
+      {/* Budget balk */}
+      {trip.budget && (() => {
+        const transportTotal = transports.reduce((s, t) => s + Number(t.cost || 0), 0);
+        const accommodationTotal = accommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
+        const activityTotal = days.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
+        const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+        const total = Number(trip.budget);
+        const spent = transportTotal + accommodationTotal + activityTotal + expenseTotal;
+        const pct = (v) => Math.min((v / total) * 100, 100);
+        const tPct = pct(transportTotal);
+        const aPct = pct(accommodationTotal);
+        const acPct = pct(activityTotal);
+        const ePct = pct(expenseTotal);
+        const overBudget = spent > total;
+        return (
+          <button onClick={() => setTab("budget")} className="w-full mb-5 bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 text-left hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-baseline mb-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Budget</span>
+              <span className={`text-xs font-semibold ${overBudget ? "text-red-500" : "text-gray-600"}`}>
+                {fmtMoney(spent, trip.currency)} <span className="text-gray-400 font-normal">/ {fmtMoney(total, trip.currency)}</span>
+              </span>
+            </div>
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
+              <div style={{ width: `${tPct}%`, background: "#0369a1" }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
+              <div style={{ width: `${aPct}%`, background: "#b45309" }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
+              <div style={{ width: `${acPct}%`, background: "#059669" }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
+              <div style={{ width: `${ePct}%`, background: "#7c3aed" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
+            </div>
+            <div className="flex gap-3 mt-2 flex-wrap">
+              {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#0369a1"}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
+              {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#b45309"}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
+              {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#059669"}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
+              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#7c3aed"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
+            </div>
+          </button>
+        );
+      })()}
 
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
