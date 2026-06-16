@@ -83,7 +83,7 @@ function fmtDatetime(dt) {
 }
 function fmtMoney(n, currency = "EUR") {
   if (n == null || n === "") return "—";
-  return new Intl.NumberFormat("nl-NL", { style: "currency", currency }).format(n);
+  return new Intl.NumberFormat("nl-NL", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 function tripDuration(start, end) {
   if (!start || !end) return null;
