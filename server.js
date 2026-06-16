@@ -94,7 +94,8 @@ async function findOrCreateUser({ google_id, apple_id, email, name, given_name, 
         email_verified = COALESCE($7, email_verified),
         google_id = COALESCE($8, google_id),
         apple_id = COALESCE($9, apple_id),
-        last_login_at = NOW()
+        last_login_at = NOW(),
+        login_count = COALESCE(login_count, 0) + 1
        WHERE id = $10 RETURNING *`,
       [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null, email_verified||null, google_id||null, apple_id||null, existing.id]
     );
@@ -233,7 +234,16 @@ route("POST", "/api/trips/:id/invite", async (req, res, params) => {
 // ---------- Admin routes ----------
 route("GET", "/api/admin/users", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { rows } = await query("SELECT id, name, given_name, family_name, email, avatar, is_admin, last_login_at, created_at, google_id, apple_id, password_hash IS NOT NULL as has_password FROM users ORDER BY created_at DESC");
+  const { rows } = await query(`
+    SELECT u.id, u.name, u.given_name, u.family_name, u.email, u.avatar, u.is_admin,
+           u.last_login_at, u.created_at, u.google_id, u.apple_id,
+           u.password_hash IS NOT NULL as has_password,
+           COALESCE(u.login_count, 0) as login_count,
+           COUNT(s.token) FILTER (WHERE s.created_at > NOW() - INTERVAL '24 hours') as logins_24h
+    FROM users u
+    LEFT JOIN sessions s ON s.user_id = u.id
+    GROUP BY u.id
+    ORDER BY u.created_at DESC`);
   sendJson(res, 200, rows);
 });
 
@@ -536,7 +546,7 @@ route("POST", "/auth/login/password", async (req, res, params, body) => {
   if (!user || !user.password_hash) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
-  await query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
+  await query("UPDATE users SET last_login_at = NOW(), login_count = COALESCE(login_count, 0) + 1 WHERE id = $1", [user.id]);
   const token = await createSession(user.id);
   setSessionCookie(res, token);
   const cookies = parseCookies(req);

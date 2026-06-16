@@ -2219,8 +2219,14 @@ function AdminView({ onBack }) {
                 <div className="text-sm text-gray-500">{u.email}</div>
                 <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
                   <span>🔑 {LOGIN_METHOD(u)}</span>
-                  {u.last_login_at && <span>Laatst ingelogd: {fmt(u.last_login_at)}</span>}
+                  {u.last_login_at && <span>Laatst: {fmt(u.last_login_at)}</span>}
                   <span>Lid sinds: {fmt(u.created_at)}</span>
+                </div>
+                <div className="flex gap-3 mt-1 text-xs flex-wrap">
+                  <span className="font-medium text-gray-600">🔓 {u.login_count} x ingelogd</span>
+                  {Number(u.logins_24h) > 0
+                    ? <span className="font-semibold text-green-600">● {u.logins_24h}x afgelopen 24u</span>
+                    : <span className="text-gray-300">● niet actief vandaag</span>}
                 </div>
               </div>
               <div className="text-xs text-gray-400 shrink-0 text-right">
