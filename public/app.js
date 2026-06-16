@@ -349,6 +349,18 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport }) {
   }
   return (
     <Modal title={initial?.id ? "Activiteit bewerken" : "Activiteit toevoegen"} onClose={onClose}>
+      {!initial && onImport && (
+        <>
+          <button type="button" onClick={onImport}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
+            📧 Importeren uit bevestiging
+          </button>
+          <div className="relative my-3">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
+            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
+          </div>
+        </>
+      )}
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
         <div className="grid grid-cols-2 gap-4">
@@ -363,12 +375,9 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport }) {
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
         <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex items-center justify-between pt-2">
-          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
-          <div className="flex gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-          </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
         </div>
       </form>
     </Modal>
@@ -389,6 +398,18 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
   }
   return (
     <Modal title={initial?.id ? "Verblijf bewerken" : "Verblijf toevoegen"} onClose={onClose} wide>
+      {!initial && onImport && (
+        <>
+          <button type="button" onClick={onImport}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
+            📧 Importeren uit bevestiging
+          </button>
+          <div className="relative my-3">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
+            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
+          </div>
+        </>
+      )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Naam"><Input required value={form.name} onChange={set("name")} placeholder="bijv. Hotel Roma Centrale" /></Field>
         <div className="grid grid-cols-2 gap-4">
@@ -401,12 +422,9 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
           <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex items-center justify-between pt-2">
-          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
-          <div className="flex gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-          </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
         </div>
       </form>
     </Modal>
@@ -434,6 +452,18 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
   }
   return (
     <Modal title={initial?.id ? "Vervoer bewerken" : "Vervoer toevoegen"} onClose={onClose} wide>
+      {!initial && onImport && (
+        <>
+          <button type="button" onClick={onImport}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
+            📧 Importeren uit bevestiging
+          </button>
+          <div className="relative my-3">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
+            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
+          </div>
+        </>
+      )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Type">
           <Select value={form.type} onChange={set("type")}>
@@ -454,8 +484,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
         <div className="flex items-center justify-between pt-2">
-          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
-          <div className="flex gap-2">
+          <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
             <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
           </div>
