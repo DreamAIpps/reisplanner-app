@@ -684,7 +684,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                           {t.to_location && (
                             <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
                               className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors shrink-0 whitespace-nowrap">
-                              💡 Tips
+                              💡 Lokale tips
                             </button>
                           )}
                         </div>
@@ -1989,7 +1989,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "budget", label: "Budget", icon: "💰" },
-    { key: "tips", label: "Lokale tips", icon: "💡" },
     { key: "map", label: "Kaart", icon: "🗺" },
   ];
 
@@ -2067,7 +2066,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
-      {tab === "tips" && <TipsTab trip={trip} />}
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
