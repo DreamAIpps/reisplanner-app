@@ -653,23 +653,37 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
     dateRange = ` van ${s.getUTCDate()} ${startMonth} tot ${e.getUTCDate()} ${endMonth} ${e.getUTCFullYear()}`;
   }
 
-  const client = new Anthropic();
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1100,
-    messages: [{
-      role: "user",
-      content: `Geef korte reisTips voor "${destination}" in het Nederlands.${periodHint} Houd rekening met het seizoen en de drukte in die periode. Geef bij "Evenementen & agenda" specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen die plaatsvinden${dateRange ? dateRange : " in die periode"}. Return ONLY valid JSON, no markdown:
-{"tips":[{"category":"Lokaal vervoer","icon":"🚇","items":["tip1","tip2"]},{"category":"Taxi & apps","icon":"🚕","items":["tip1","tip2"]},{"category":"Restaurants","icon":"🍽","items":["tip1","tip2"]},{"category":"Activiteiten","icon":"🎯","items":["tip1","tip2"]},{"category":"Met kinderen","icon":"👨‍👩‍👧","items":["tip1","tip2"]},{"category":"Hotels","icon":"🏨","items":["tip1","tip2"]},{"category":"Evenementen & agenda","icon":"🎉","items":["tip1","tip2","tip3"]}],"did_you_know":"feitje"}`,
-    }],
-  });
+  const category = urlObj.searchParams.get("category");
 
-  const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-  try {
-    sendJson(res, 200, JSON.parse(raw));
-  } catch {
-    sendError(res, 500, "Kon tips niet verwerken");
+  const client = new Anthropic();
+
+  if (category) {
+    // Single-category fetch — fast and cheap
+    const isEvents = category === "Evenementen & agenda";
+    const prompt = isEvents
+      ? `Geef 3 specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen in "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2","tip3"]}`
+      : `Geef 2 praktische reisTips over "${category.toLowerCase()}" in "${destination}" in het Nederlands.${periodHint} Return ONLY valid JSON, no markdown: {"items":["tip1","tip2"]}`;
+
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    try { sendJson(res, 200, JSON.parse(raw)); }
+    catch { sendError(res, 500, "Kon tips niet verwerken"); }
+    return;
   }
+
+  // No category — return only did_you_know (shown immediately)
+  const msg = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 150,
+    messages: [{ role: "user", content: `Geef één verrassend en weinig bekend feitje over "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown: {"did_you_know":"feitje"}` }],
+  });
+  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  try { sendJson(res, 200, JSON.parse(raw)); }
+  catch { sendError(res, 500, "Kon tips niet verwerken"); }
 });
 
 // ---------- Photo suggestion via Unsplash ----------

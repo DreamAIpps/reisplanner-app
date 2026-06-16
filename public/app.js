@@ -1067,24 +1067,51 @@ const TIP_CATEGORIES = [
   { category: "Evenementen & agenda", icon: "🎉" },
 ];
 
-function TipAccordion({ category, icon, items, loading, accentColor, onOpen, opened }) {
-  function handleClick() {
-    if (!opened) onOpen();
+function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyPrefix }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const cacheKey = `${cacheKeyPrefix}_cat_${category}`;
+
+  function load() {
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { data, ts } = JSON.parse(cached);
+        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setItems(data); return; }
+      }
+    } catch {}
+    setLoading(true); setError(null);
+    const params = new URLSearchParams({ category });
+    if (location) params.set("location", location);
+    apiFetch(`/api/trips/${tripId}/tips?${params}`)
+      .then((d) => {
+        setItems(d.items || []);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ data: d.items || [], ts: Date.now() })); } catch {}
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }
+
+  function handleClick() {
+    if (!open) { setOpen(true); if (!items) load(); }
+    else setOpen(false);
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      <button
-        onClick={handleClick}
-        className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors"
-      >
+      <button onClick={handleClick} className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors">
         <span className="text-lg">{icon}</span>
         <span className="font-semibold text-gray-800 text-sm flex-1">{category}</span>
-        <span className="text-gray-400 text-xs transition-transform duration-200" style={{ transform: opened ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+        <span className="text-gray-400 text-xs" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", transition: "transform .2s" }}>▾</span>
       </button>
-      {opened && (
+      {open && (
         <div className="border-t border-gray-100">
           {loading ? (
             <div className="px-4 py-3 text-sm text-gray-400">Laden...</div>
+          ) : error ? (
+            <div className="px-4 py-3 text-sm text-red-500">{error} <button onClick={load} className="underline">Opnieuw</button></div>
           ) : items?.length ? (
             <ul className="divide-y divide-gray-50">
               {items.map((tip, j) => (
@@ -1094,9 +1121,9 @@ function TipAccordion({ category, icon, items, loading, accentColor, onOpen, ope
                 </li>
               ))}
             </ul>
-          ) : (
+          ) : items ? (
             <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
@@ -1105,72 +1132,35 @@ function TipAccordion({ category, icon, items, loading, accentColor, onOpen, ope
 
 // ---------- Tips modal (per locatie) ----------
 function TipsModal({ tripId, trip, location, onClose }) {
-  const [tips, setTips] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [openCategory, setOpenCategory] = useState(null);
+  const [didYouKnow, setDidYouKnow] = useState(null);
   const tripMonth = trip?.start_date ? String(trip.start_date).slice(0, 7) : "";
-  const cacheKey = `tips_loc_${location}_${tripMonth}`;
-
-  function fetchTips(categoryToOpen) {
-    setLoading(true); setError(null);
-    apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
-      .then((data) => {
-        setTips(data);
-        if (categoryToOpen) setOpenCategory(categoryToOpen);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }
+  const cacheKeyPrefix = `tips_loc_${location}_${tripMonth}`;
+  const dykKey = `${cacheKeyPrefix}_dyk`;
 
   useEffect(() => {
     try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); return; }
-      }
+      const cached = localStorage.getItem(dykKey);
+      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); return; } }
     } catch {}
+    apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
+      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
+      .catch(() => {});
   }, [location]);
-
-  function handleCategoryOpen(category) {
-    setOpenCategory(category);
-    if (!tips && !loading) fetchTips(category);
-  }
-
-  const didYouKnow = tips?.did_you_know;
-  const tipMap = Object.fromEntries((tips?.tips || []).map((s) => [s.category, s.items]));
 
   return (
     <Modal title={`Tips voor ${location}`} onClose={onClose} wide>
-      <div className="space-y-3">
+      <div className="space-y-2">
         {didYouKnow && (
-          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100">
+          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100 mb-1">
             <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
             <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
           </div>
         )}
-        {!tips && !loading && !error && (
-          <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
-        )}
-        {error && (
-          <div className="text-center py-2 text-sm text-red-500">{error}
-            <button onClick={() => fetchTips(openCategory)} className="ml-2 underline">Opnieuw</button>
-          </div>
-        )}
+        <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
         {TIP_CATEGORIES.map(({ category, icon }) => (
-          <TipAccordion key={category} category={category} icon={icon}
-            items={tipMap[category]} loading={loading && openCategory === category}
-            accentColor="#0369a1" opened={openCategory === category}
-            onOpen={() => handleCategoryOpen(category)} />
+          <TipAccordion key={category} tripId={tripId} category={category} icon={icon}
+            accentColor="#0369a1" location={location} cacheKeyPrefix={cacheKeyPrefix} />
         ))}
-        {tips && (
-          <div className="text-center pt-1">
-            <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); setOpenCategory(null); }}
-              className="text-xs text-gray-400 hover:text-gray-600 underline">Nieuwe tips genereren</button>
-          </div>
-        )}
       </div>
     </Modal>
   );
@@ -1178,41 +1168,22 @@ function TipsModal({ tripId, trip, location, onClose }) {
 
 // ---------- Tips tab ----------
 function TipsTab({ trip }) {
-  const [tips, setTips] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [openCategory, setOpenCategory] = useState(null);
+  const [didYouKnow, setDidYouKnow] = useState(null);
   const accent = trip.cover_color || "#0369a1";
   const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
-  const cacheKey = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
-
-  function fetchTips(categoryToOpen) {
-    setLoading(true); setError(null);
-    apiFetch(`/api/trips/${trip.id}/tips`)
-      .then((data) => {
-        setTips(data);
-        if (categoryToOpen) setOpenCategory(categoryToOpen);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }
+  const cacheKeyPrefix = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
+  const dykKey = `${cacheKeyPrefix}_dyk`;
 
   useEffect(() => {
     if (!trip.destination) return;
     try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); return; }
-      }
+      const cached = localStorage.getItem(dykKey);
+      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); return; } }
     } catch {}
+    apiFetch(`/api/trips/${trip.id}/tips`)
+      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
+      .catch(() => {});
   }, [trip.id, trip.destination]);
-
-  function handleCategoryOpen(category) {
-    setOpenCategory(category);
-    if (!tips && !loading) fetchTips(category);
-  }
 
   if (!trip.destination) return (
     <div className="text-center py-16 text-gray-400">
@@ -1222,8 +1193,6 @@ function TipsTab({ trip }) {
     </div>
   );
 
-  const tipMap = Object.fromEntries((tips?.tips || []).map((s) => [s.category, s.items]));
-
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -1231,39 +1200,21 @@ function TipsTab({ trip }) {
         <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
       </div>
 
-      {tips?.did_you_know && (
+      {didYouKnow && (
         <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: accent }}>Wist je dat?</div>
-          <div className="text-sm text-gray-700 leading-relaxed">{tips.did_you_know}</div>
+          <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
         </div>
       )}
 
-      {!tips && !loading && !error && (
-        <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
-      )}
-      {error && (
-        <div className="text-center mb-3 text-sm text-red-500">{error}
-          <button onClick={() => fetchTips(openCategory)} className="ml-2 underline">Opnieuw</button>
-        </div>
-      )}
+      <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
 
       <div className="space-y-2">
         {TIP_CATEGORIES.map(({ category, icon }) => (
-          <TipAccordion key={category} category={category} icon={icon}
-            items={tipMap[category]} loading={loading && openCategory === category}
-            accentColor={accent} opened={openCategory === category}
-            onOpen={() => handleCategoryOpen(category)} />
+          <TipAccordion key={category} tripId={trip.id} category={category} icon={icon}
+            accentColor={accent} cacheKeyPrefix={cacheKeyPrefix} />
         ))}
       </div>
-
-      {tips && (
-        <div className="mt-5 text-center">
-          <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); setOpenCategory(null); }}
-            className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors">
-            Nieuwe tips genereren
-          </button>
-        </div>
-      )}
     </div>
   );
 }
