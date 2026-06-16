@@ -1314,6 +1314,211 @@ function TipsTab({ trip }) {
   );
 }
 
+// ---------- Kaart tab ----------
+async function geocode(query) {
+  const key = `geocode_${query}`;
+  try {
+    const c = localStorage.getItem(key);
+    if (c) return JSON.parse(c);
+  } catch {}
+  await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+  const res = await fetch(url, { headers: { "Accept-Language": "nl", "User-Agent": "ReisplannerApp/1.0" } });
+  const data = await res.json();
+  const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name } : null;
+  if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
+  return result;
+}
+
+function MapTab({ trip, accommodations, transports, days }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [progress, setProgress] = useState(0);
+  const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    let cancelled = false;
+
+    async function buildMap() {
+      // Collect unique locations to geocode
+      const items = []; // {label, sublabel, type, query}
+
+      accommodations.forEach((a) => {
+        const q = a.address || a.name;
+        if (q) items.push({ label: a.name, sublabel: a.address || "", type: "hotel", query: q });
+      });
+
+      days.forEach((day) => {
+        (day.activities || []).forEach((act) => {
+          if (act.location) items.push({ label: act.name || act.location, sublabel: act.location, type: "activity", query: act.location + (trip.destination ? `, ${trip.destination}` : "") });
+        });
+      });
+
+      // Transport: unique cities from origin/destination
+      const transportPairs = [];
+      transports.forEach((t) => {
+        if (t.origin && t.destination) {
+          transportPairs.push({ from: t.origin, to: t.destination, type: t.transport_type });
+          if (!items.find((i) => i.query === t.origin)) items.push({ label: t.origin, sublabel: "", type: "transport", query: t.origin });
+          if (!items.find((i) => i.query === t.destination)) items.push({ label: t.destination, sublabel: "", type: "transport", query: t.destination });
+        }
+      });
+
+      if (items.length === 0) { setStatus("empty"); return; }
+      setTotal(items.length);
+
+      // Geocode sequentially (Nominatim rate limit)
+      const coordMap = {};
+      for (let i = 0; i < items.length; i++) {
+        if (cancelled) return;
+        const item = items[i];
+        if (coordMap[item.query] === undefined) {
+          const geo = await geocode(item.query);
+          coordMap[item.query] = geo;
+        }
+        setProgress(i + 1);
+      }
+
+      if (cancelled) return;
+
+      const validItems = items.filter((item) => coordMap[item.query]);
+      if (validItems.length === 0) { setStatus("error"); return; }
+
+      // Init Leaflet map
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const L = window.L;
+      const map = L.map(mapRef.current);
+      mapInstanceRef.current = map;
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      const bounds = [];
+
+      // Draw transport lines first (below markers)
+      transportPairs.forEach((pair) => {
+        const fromGeo = coordMap[pair.from];
+        const toGeo = coordMap[pair.to];
+        if (!fromGeo || !toGeo) return;
+        const isAir = (pair.type || "").toLowerCase().includes("vlieg") || (pair.type || "").toLowerCase().includes("fly") || (pair.type || "").toLowerCase().includes("air") || !pair.type;
+        if (isAir) {
+          // Curved arc for flights using intermediate points
+          const lats = [], lngs = [];
+          const steps = 20;
+          for (let s = 0; s <= steps; s++) {
+            const t2 = s / steps;
+            const lat = fromGeo.lat + (toGeo.lat - fromGeo.lat) * t2;
+            const lon = fromGeo.lon + (toGeo.lon - fromGeo.lon) * t2;
+            const arc = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lon - fromGeo.lon) * 0.15);
+            lats.push(lat + arc * 0.5);
+            lngs.push(lon);
+          }
+          const latlngs = lats.map((lat, i) => [lat, lngs[i]]);
+          L.polyline(latlngs, { color: "#0369a1", weight: 2, opacity: 0.6, dashArray: "6 4" }).addTo(map);
+        } else {
+          L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#059669", weight: 2, opacity: 0.6 }).addTo(map);
+        }
+      });
+
+      // Add markers
+      const iconSvg = (emoji, color) => L.divIcon({
+        className: "",
+        html: `<div style="background:${color};border:2px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:32px;height:32px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center">
+          <span style="transform:rotate(45deg);font-size:14px;line-height:1">${emoji}</span></div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -34],
+      });
+
+      const typeConfig = {
+        hotel: { emoji: "🏨", color: "#b45309" },
+        activity: { emoji: "🎯", color: "#0369a1" },
+        transport: { emoji: "✈️", color: "#6d28d9" },
+      };
+
+      // Deduplicate markers by query
+      const seen = new Set();
+      validItems.forEach((item) => {
+        if (seen.has(item.query)) return;
+        seen.add(item.query);
+        const geo = coordMap[item.query];
+        const cfg = typeConfig[item.type] || typeConfig.activity;
+        const marker = L.marker([geo.lat, geo.lon], { icon: iconSvg(cfg.emoji, cfg.color) }).addTo(map);
+        const popup = `<div style="font-family:system-ui;min-width:140px">
+          <div style="font-weight:600;font-size:13px;color:#1f2937">${item.label}</div>
+          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">${item.sublabel}</div>` : ""}
+        </div>`;
+        marker.bindPopup(popup);
+        bounds.push([geo.lat, geo.lon]);
+      });
+
+      if (bounds.length > 0) map.fitBounds(bounds, { padding: [40, 40] });
+      setStatus("ready");
+    }
+
+    buildMap().catch(() => setStatus("error"));
+    return () => { cancelled = true; };
+  }, [trip.id]);
+
+  useEffect(() => {
+    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
+  }, []);
+
+  const hasLocations = accommodations.some((a) => a.address || a.name) ||
+    transports.some((t) => t.origin && t.destination) ||
+    days.some((d) => (d.activities || []).some((a) => a.location));
+
+  if (!hasLocations) return (
+    <div className="text-center py-16 text-gray-400">
+      <div className="text-4xl mb-3">🗺</div>
+      <div className="font-medium">Geen locaties om te tonen</div>
+      <div className="text-sm mt-1">Voeg hotels, activiteiten of vervoer toe met locatiegegevens</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold text-gray-700">Reiskaart</h3>
+        <div className="flex gap-3 text-xs text-gray-500">
+          <span>🏨 Hotel</span>
+          <span>🎯 Activiteit</span>
+          <span>✈️ Vervoer</span>
+        </div>
+      </div>
+      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
+        {status === "loading" && (
+          <div className="absolute inset-0 bg-white/90 z-[1000] flex flex-col items-center justify-center gap-3">
+            <div className="text-3xl animate-pulse">🗺</div>
+            <div className="text-sm text-gray-600 font-medium">Locaties ophalen…</div>
+            {total > 0 && (
+              <div className="w-48">
+                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-sky-500 rounded-full transition-all" style={{ width: `${(progress / total) * 100}%` }} />
+                </div>
+                <div className="text-xs text-gray-400 text-center mt-1">{progress} / {total}</div>
+              </div>
+            )}
+          </div>
+        )}
+        {status === "error" && (
+          <div className="absolute inset-0 bg-white/90 z-[1000] flex items-center justify-center">
+            <div className="text-center text-gray-400">
+              <div className="text-3xl mb-2">😕</div>
+              <div className="text-sm">Kaart kon niet worden geladen</div>
+            </div>
+          </div>
+        )}
+        <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      </div>
+      <div className="text-xs text-gray-400 text-center mt-2">© OpenStreetMap contributors</div>
+    </div>
+  );
+}
+
 // ---------- Import modal ----------
 function ImportModal({ tripId, onImported, onClose }) {
   const [mode, setMode] = useState("text"); // "text" | "image"
@@ -1750,6 +1955,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "budget", label: "Budget", icon: "💰" },
     { key: "tips", label: "Algemene tips", icon: "💡" },
+    { key: "map", label: "Kaart", icon: "🗺" },
   ];
 
   return (
@@ -1821,6 +2027,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
       {tab === "tips" && <TipsTab trip={trip} />}
+      {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
