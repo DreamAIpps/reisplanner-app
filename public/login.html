@@ -99,8 +99,6 @@
       const isSocial = tab === 'social';
       document.getElementById('panel-social').classList.toggle('hidden', !isSocial);
       document.getElementById('panel-register').classList.toggle('hidden', isSocial);
-      document.getElementById('tab-social').className = `flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${isSocial ? 'bg-white shadow text-sky-700' : 'text-gray-500 hover:text-gray-700'}`;
-      document.getElementById('tab-register').className = `flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${!isSocial ? 'bg-white shadow text-sky-700' : 'text-gray-500 hover:text-gray-700'}`;
       hideMessages();
     }
 
