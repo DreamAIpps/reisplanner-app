@@ -1114,12 +1114,19 @@ function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyP
             <div className="px-4 py-3 text-sm text-red-500">{error} <button onClick={load} className="underline">Opnieuw</button></div>
           ) : items?.length ? (
             <ul className="divide-y divide-gray-50">
-              {items.map((tip, j) => (
-                <li key={j} className="flex items-start gap-3 px-4 py-2.5">
-                  <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
-                  <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
-                </li>
-              ))}
+              {items.map((tip, j) => {
+                const tipText = typeof tip === "string" ? tip : tip.text;
+                const tipUrl = typeof tip === "object" ? tip.url : null;
+                return (
+                  <li key={j} className="flex items-start gap-3 px-4 py-2.5">
+                    <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
+                    <span className="text-sm text-gray-700 leading-relaxed">
+                      {tipText}
+                      {tipUrl && <a href={tipUrl} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline text-xs whitespace-nowrap">↗ website</a>}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           ) : items ? (
             <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
@@ -1133,6 +1140,7 @@ function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyP
 // ---------- Tips modal (per locatie) ----------
 function TipsModal({ tripId, trip, location, onClose }) {
   const [didYouKnow, setDidYouKnow] = useState(null);
+  const [dykLoading, setDykLoading] = useState(true);
   const tripMonth = trip?.start_date ? String(trip.start_date).slice(0, 7) : "";
   const cacheKeyPrefix = `tips_loc_${location}_${tripMonth}`;
   const dykKey = `${cacheKeyPrefix}_dyk`;
@@ -1140,22 +1148,28 @@ function TipsModal({ tripId, trip, location, onClose }) {
   useEffect(() => {
     try {
       const cached = localStorage.getItem(dykKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); return; } }
+      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
     } catch {}
     apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
       .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDykLoading(false));
   }, [location]);
 
   return (
     <Modal title={`Tips voor ${location}`} onClose={onClose} wide>
       <div className="space-y-2">
-        {didYouKnow && (
+        {dykLoading ? (
+          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100 mb-1 animate-pulse">
+            <div className="h-3 w-20 bg-sky-200 rounded mb-2" />
+            <div className="h-4 w-full bg-sky-100 rounded" />
+          </div>
+        ) : didYouKnow ? (
           <div className="rounded-xl p-4 bg-sky-50 border border-sky-100 mb-1">
             <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
             <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
           </div>
-        )}
+        ) : null}
         <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
         {TIP_CATEGORIES.map(({ category, icon }) => (
           <TipAccordion key={category} tripId={tripId} category={category} icon={icon}
@@ -1169,20 +1183,22 @@ function TipsModal({ tripId, trip, location, onClose }) {
 // ---------- Tips tab ----------
 function TipsTab({ trip }) {
   const [didYouKnow, setDidYouKnow] = useState(null);
+  const [dykLoading, setDykLoading] = useState(true);
   const accent = trip.cover_color || "#0369a1";
   const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
   const cacheKeyPrefix = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
   const dykKey = `${cacheKeyPrefix}_dyk`;
 
   useEffect(() => {
-    if (!trip.destination) return;
+    if (!trip.destination) { setDykLoading(false); return; }
     try {
       const cached = localStorage.getItem(dykKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); return; } }
+      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
     } catch {}
     apiFetch(`/api/trips/${trip.id}/tips`)
       .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDykLoading(false));
   }, [trip.id, trip.destination]);
 
   if (!trip.destination) return (
@@ -1200,12 +1216,17 @@ function TipsTab({ trip }) {
         <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
       </div>
 
-      {didYouKnow && (
+      {dykLoading ? (
+        <div className="rounded-xl p-4 mb-4 border animate-pulse" style={{ background: accent + "10", borderColor: accent + "30" }}>
+          <div className="h-3 w-20 rounded mb-2" style={{ background: accent + "40" }} />
+          <div className="h-4 w-full rounded" style={{ background: accent + "20" }} />
+        </div>
+      ) : didYouKnow ? (
         <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: accent }}>Wist je dat?</div>
           <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
         </div>
-      )}
+      ) : null}
 
       <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
 

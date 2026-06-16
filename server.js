@@ -658,15 +658,16 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   const client = new Anthropic();
 
   if (category) {
-    // Single-category fetch — fast and cheap
     const isEvents = category === "Evenementen & agenda";
+    const itemCount = isEvents ? 3 : 2;
+    const itemTemplate = `{"text":"tip","url":"https://... of null"}`;
     const prompt = isEvents
-      ? `Geef 3 specifieke festivals, evenementen, markten of bijzondere lokale gebeurtenissen in de buurt van "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Als het een hotelnaam of adres is, gebruik dan de stad/regio. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2","tip3"]}`
-      : `Geef 2 praktische reisTips over "${category.toLowerCase()}" voor een bezoeker van "${destination}" in het Nederlands.${periodHint} Als het een hotelnaam of adres is, geef tips voor die stad/regio. Return ONLY valid JSON, no markdown: {"items":["tip1","tip2"]}`;
+      ? `Geef ${itemCount} specifieke festivals, evenementen of markten in de buurt van "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Als het een hotelnaam is, gebruik de stad/regio. Voeg per item een relevante website-URL toe (officiële site, ticketsite of informatiesite). Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate},${itemTemplate}]}`
+      : `Geef ${itemCount} praktische reisTips over "${category.toLowerCase()}" voor een bezoeker van "${destination}" in het Nederlands.${periodHint} Als het een hotelnaam is, geef tips voor die stad/regio. Voeg per tip een relevante website-URL toe (app-store, boekingssite, informatiesite, etc.) indien beschikbaar, anders null. Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate}]}`;
 
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 450,
+      max_tokens: 600,
       messages: [{ role: "user", content: prompt }],
     });
     const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
@@ -677,7 +678,7 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
     return;
   }
 
-  // No category — return only did_you_know (shown immediately)
+  // No category — return only did_you_know (shown immediately on mount)
   const msg = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 150,
