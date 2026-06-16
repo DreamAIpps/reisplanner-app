@@ -332,7 +332,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -363,9 +363,12 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose }) {
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
         <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        <div className="flex items-center justify-between pt-2">
+          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          </div>
         </div>
       </form>
     </Modal>
@@ -373,7 +376,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose }) {
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -398,9 +401,12 @@ function AccommodationForm({ tripId, initial, onSaved, onClose }) {
           <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        <div className="flex items-center justify-between pt-2">
+          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          </div>
         </div>
       </form>
     </Modal>
@@ -408,7 +414,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose }) {
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -447,9 +453,12 @@ function TransportForm({ tripId, initial, onSaved, onClose }) {
           <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        <div className="flex items-center justify-between pt-2">
+          {!initial && onImport ? <button type="button" onClick={onImport} className="text-xs text-sky-600 hover:underline">📧 Importeren uit bevestiging</button> : <span />}
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          </div>
         </div>
       </form>
     </Modal>
@@ -503,6 +512,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [editingAccommodation, setEditingAccommodation] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
@@ -738,7 +748,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {showActivityForm && (
         <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
-          onClose={() => setShowActivityForm(null)} />
+          onClose={() => setShowActivityForm(null)}
+          onImport={() => { setShowActivityForm(null); setImporting(true); }} />
       )}
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
@@ -755,6 +766,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
           onSaved={() => { setEditingAccommodation(null); onRefresh(); }}
           onClose={() => setEditingAccommodation(null)} />
       )}
+      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
       {tipsLocation && (
         <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
@@ -766,6 +778,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 function AccommodationTab({ trip, accommodations, onRefresh }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   async function handleDelete(id) {
     if (!confirm("Verblijf verwijderen?")) return;
@@ -810,8 +823,9 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
         </div>
       )}
 
-      {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} />}
+      {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && <AccommodationForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
+      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
     </div>
   );
 }
@@ -822,6 +836,7 @@ const TRANSPORT_ICONS = { Vliegtuig: "✈️", Trein: "🚆", Bus: "🚌", Huura
 function TransportTab({ trip, transports, onRefresh }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   async function handleDelete(id) {
     if (!confirm("Vervoer verwijderen?")) return;
@@ -867,8 +882,9 @@ function TransportTab({ trip, transports, onRefresh }) {
         </div>
       )}
 
-      {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} />}
+      {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && <TransportForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
+      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
     </div>
   );
 }
@@ -1041,27 +1057,47 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
 }
 
 // ---------- Tips accordion ----------
-function TipAccordion({ section, accentColor }) {
-  const [open, setOpen] = useState(false);
+const TIP_CATEGORIES = [
+  { category: "Lokaal vervoer", icon: "🚇" },
+  { category: "Taxi & apps", icon: "🚕" },
+  { category: "Restaurants", icon: "🍽" },
+  { category: "Activiteiten", icon: "🎯" },
+  { category: "Met kinderen", icon: "👨‍👩‍👧" },
+  { category: "Hotels", icon: "🏨" },
+  { category: "Evenementen & agenda", icon: "🎉" },
+];
+
+function TipAccordion({ category, icon, items, loading, accentColor, onOpen, opened }) {
+  function handleClick() {
+    if (!opened) onOpen();
+  }
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={handleClick}
         className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors"
       >
-        <span className="text-lg">{section.icon}</span>
-        <span className="font-semibold text-gray-800 text-sm flex-1">{section.category}</span>
-        <span className="text-gray-400 text-xs transition-transform duration-200" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+        <span className="text-lg">{icon}</span>
+        <span className="font-semibold text-gray-800 text-sm flex-1">{category}</span>
+        <span className="text-gray-400 text-xs transition-transform duration-200" style={{ transform: opened ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
       </button>
-      {open && (
-        <ul className="divide-y divide-gray-50 border-t border-gray-100">
-          {(section.items || []).map((tip, j) => (
-            <li key={j} className="flex items-start gap-3 px-4 py-2.5">
-              <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
-              <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
-            </li>
-          ))}
-        </ul>
+      {opened && (
+        <div className="border-t border-gray-100">
+          {loading ? (
+            <div className="px-4 py-3 text-sm text-gray-400">Laden...</div>
+          ) : items?.length ? (
+            <ul className="divide-y divide-gray-50">
+              {items.map((tip, j) => (
+                <li key={j} className="flex items-start gap-3 px-4 py-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
+                  <span className="text-sm text-gray-700 leading-relaxed">{tip}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1070,16 +1106,18 @@ function TipAccordion({ section, accentColor }) {
 // ---------- Tips modal (per locatie) ----------
 function TipsModal({ tripId, trip, location, onClose }) {
   const [tips, setTips] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [openCategory, setOpenCategory] = useState(null);
   const tripMonth = trip?.start_date ? String(trip.start_date).slice(0, 7) : "";
   const cacheKey = `tips_loc_${location}_${tripMonth}`;
 
-  function fetchTips() {
+  function fetchTips(categoryToOpen) {
     setLoading(true); setError(null);
     apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
       .then((data) => {
         setTips(data);
+        if (categoryToOpen) setOpenCategory(categoryToOpen);
         try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
       })
       .catch((err) => setError(err.message))
@@ -1091,51 +1129,49 @@ function TipsModal({ tripId, trip, location, onClose }) {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); setLoading(false); return; }
+        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); return; }
       }
     } catch {}
-    fetchTips();
   }, [location]);
+
+  function handleCategoryOpen(category) {
+    setOpenCategory(category);
+    if (!tips && !loading) fetchTips(category);
+  }
+
+  const didYouKnow = tips?.did_you_know;
+  const tipMap = Object.fromEntries((tips?.tips || []).map((s) => [s.category, s.items]));
 
   return (
     <Modal title={`Tips voor ${location}`} onClose={onClose} wide>
-      {loading ? (
-        <div className="text-center py-12 text-gray-400">
-          <div className="text-3xl mb-3">✨</div>
-          <div className="font-medium text-gray-600">Tips ophalen voor {location}...</div>
-          <div className="text-sm mt-1">Even geduld</div>
-        </div>
-      ) : error ? (
-        <div className="text-center py-8 text-gray-400">
-          <div className="text-sm">{error}</div>
-          <button onClick={fetchTips} className="mt-2 text-sm text-sky-600 underline">Opnieuw proberen</button>
-        </div>
-      ) : tips ? (
-        <div className="space-y-3">
-          {tips.did_you_know && (
-            <div className="rounded-xl p-4 bg-sky-50 border border-sky-100">
-              <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
-              <div className="text-sm text-gray-700 leading-relaxed">{tips.did_you_know}</div>
-            </div>
-          )}
-          {tips.best_time && (
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex gap-2 items-start">
-              <span>📅</span>
-              <div>
-                <div className="text-xs font-bold text-amber-700 mb-0.5">Beste reistijd</div>
-                <div className="text-sm text-gray-700 leading-relaxed">{tips.best_time}</div>
-              </div>
-            </div>
-          )}
-          {(tips.tips || []).map((section, i) => (
-            <TipAccordion key={i} section={section} accentColor="#0369a1" />
-          ))}
+      <div className="space-y-3">
+        {didYouKnow && (
+          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100">
+            <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
+            <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
+          </div>
+        )}
+        {!tips && !loading && !error && (
+          <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
+        )}
+        {error && (
+          <div className="text-center py-2 text-sm text-red-500">{error}
+            <button onClick={() => fetchTips(openCategory)} className="ml-2 underline">Opnieuw</button>
+          </div>
+        )}
+        {TIP_CATEGORIES.map(({ category, icon }) => (
+          <TipAccordion key={category} category={category} icon={icon}
+            items={tipMap[category]} loading={loading && openCategory === category}
+            accentColor="#0369a1" opened={openCategory === category}
+            onOpen={() => handleCategoryOpen(category)} />
+        ))}
+        {tips && (
           <div className="text-center pt-1">
-            <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); fetchTips(); }}
+            <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); setOpenCategory(null); }}
               className="text-xs text-gray-400 hover:text-gray-600 underline">Nieuwe tips genereren</button>
           </div>
-        </div>
-      ) : null}
+        )}
+      </div>
     </Modal>
   );
 }
@@ -1145,15 +1181,17 @@ function TipsTab({ trip }) {
   const [tips, setTips] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [openCategory, setOpenCategory] = useState(null);
   const accent = trip.cover_color || "#0369a1";
   const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
   const cacheKey = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
 
-  function fetchTips() {
+  function fetchTips(categoryToOpen) {
     setLoading(true); setError(null);
     apiFetch(`/api/trips/${trip.id}/tips`)
       .then((data) => {
         setTips(data);
+        if (categoryToOpen) setOpenCategory(categoryToOpen);
         try { localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })); } catch {}
       })
       .catch((err) => setError(err.message))
@@ -1169,8 +1207,12 @@ function TipsTab({ trip }) {
         if (Date.now() - ts < 24 * 60 * 60 * 1000) { setTips(data); return; }
       }
     } catch {}
-    fetchTips();
   }, [trip.id, trip.destination]);
+
+  function handleCategoryOpen(category) {
+    setOpenCategory(category);
+    if (!tips && !loading) fetchTips(category);
+  }
 
   if (!trip.destination) return (
     <div className="text-center py-16 text-gray-400">
@@ -1180,60 +1222,48 @@ function TipsTab({ trip }) {
     </div>
   );
 
-  if (loading) return (
-    <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">✨</div>
-      <div className="font-medium text-gray-600">Tips ophalen voor {trip.destination}...</div>
-      <div className="text-sm mt-1">Claude denkt na, even geduld</div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">😕</div>
-      <div className="text-sm">{error}</div>
-      <button onClick={fetchTips} className="mt-3 text-sm underline" style={{ color: accent }}>Opnieuw proberen</button>
-    </div>
-  );
-
-  if (!tips) return null;
+  const tipMap = Object.fromEntries((tips?.tips || []).map((s) => [s.category, s.items]));
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-700">Tips voor {trip.destination}</h3>
         <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
       </div>
 
-      {tips.did_you_know && (
+      {tips?.did_you_know && (
         <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: accent }}>Wist je dat?</div>
           <div className="text-sm text-gray-700 leading-relaxed">{tips.did_you_know}</div>
         </div>
       )}
 
-      {tips.best_time && (
-        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-4 flex gap-3 items-start">
-          <span className="text-xl">📅</span>
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-0.5">Beste reistijd</div>
-            <div className="text-sm text-gray-700 leading-relaxed">{tips.best_time}</div>
-          </div>
+      {!tips && !loading && !error && (
+        <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
+      )}
+      {error && (
+        <div className="text-center mb-3 text-sm text-red-500">{error}
+          <button onClick={() => fetchTips(openCategory)} className="ml-2 underline">Opnieuw</button>
         </div>
       )}
 
       <div className="space-y-2">
-        {(tips.tips || []).map((section, i) => (
-          <TipAccordion key={i} section={section} accentColor={accent} />
+        {TIP_CATEGORIES.map(({ category, icon }) => (
+          <TipAccordion key={category} category={category} icon={icon}
+            items={tipMap[category]} loading={loading && openCategory === category}
+            accentColor={accent} opened={openCategory === category}
+            onOpen={() => handleCategoryOpen(category)} />
         ))}
       </div>
 
-      <div className="mt-5 text-center">
-        <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); fetchTips(); }}
-          className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors">
-          Nieuwe tips genereren
-        </button>
-      </div>
+      {tips && (
+        <div className="mt-5 text-center">
+          <button onClick={() => { try { localStorage.removeItem(cacheKey); } catch {} setTips(null); setOpenCategory(null); }}
+            className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors">
+            Nieuwe tips genereren
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1251,9 +1281,34 @@ function ImportModal({ tripId, onImported, onClose }) {
   const [saved, setSaved] = useState({ transports: [], accommodations: [], activities: [] });
   const [days, setDays] = useState([]);
   const [activityDays, setActivityDays] = useState({});
+  const [existing, setExisting] = useState({ transports: [], accommodations: [] });
+  const [confirmReplace, setConfirmReplace] = useState(null); // { type, item, idx, conflicts }
   const fileRef = useRef(null);
 
-  useEffect(() => { api.getDays(tripId).then(setDays); }, [tripId]);
+  useEffect(() => {
+    api.getDays(tripId).then(setDays);
+    Promise.all([
+      apiFetch(`/api/trips/${tripId}/transports`),
+      apiFetch(`/api/trips/${tripId}/accommodations`),
+    ]).then(([t, a]) => setExisting({ transports: t, accommodations: a })).catch(() => {});
+  }, [tripId]);
+
+  function conflictsForTransport(t) {
+    const dates = [t.departure_time, t.arrival_time].filter(Boolean).map((d) => String(d).slice(0, 10));
+    return existing.transports.filter((e) =>
+      [e.departure_time, e.arrival_time].filter(Boolean).some((d) => dates.includes(String(d).slice(0, 10)))
+    );
+  }
+
+  function conflictsForAccommodation(a) {
+    if (!a.check_in && !a.check_out) return [];
+    return existing.accommodations.filter((e) =>
+      (a.check_in && (String(e.check_in).slice(0, 10) === String(a.check_in).slice(0, 10) ||
+                      String(e.check_out).slice(0, 10) === String(a.check_in).slice(0, 10))) ||
+      (a.check_out && (String(e.check_in).slice(0, 10) === String(a.check_out).slice(0, 10) ||
+                       String(e.check_out).slice(0, 10) === String(a.check_out).slice(0, 10)))
+    );
+  }
 
   function handleImageSelect(e) {
     const file = e.target.files[0];
@@ -1289,22 +1344,36 @@ function ImportModal({ tripId, onImported, onClose }) {
     finally { setLoading(false); }
   }
 
-  async function saveTransport(t, idx) {
+  async function doSaveTransport(t, idx, replace) {
     setSaving(true);
     try {
+      if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/transports/${e.id}`, { method: "DELETE" })));
       await api.addTransport(tripId, t);
       setSaved((s) => ({ ...s, transports: [...s.transports, idx] }));
     } catch (err) { alert(err.message); }
-    finally { setSaving(false); }
+    finally { setSaving(false); setConfirmReplace(null); }
   }
 
-  async function saveAccommodation(a, idx) {
+  async function saveTransport(t, idx) {
+    const conflicts = conflictsForTransport(t);
+    if (conflicts.length) { setConfirmReplace({ type: "transport", item: t, idx, conflicts }); return; }
+    await doSaveTransport(t, idx, []);
+  }
+
+  async function doSaveAccommodation(a, idx, replace) {
     setSaving(true);
     try {
+      if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/accommodations/${e.id}`, { method: "DELETE" })));
       await api.addAccommodation(tripId, a);
       setSaved((s) => ({ ...s, accommodations: [...s.accommodations, idx] }));
     } catch (err) { alert(err.message); }
-    finally { setSaving(false); }
+    finally { setSaving(false); setConfirmReplace(null); }
+  }
+
+  async function saveAccommodation(a, idx) {
+    const conflicts = conflictsForAccommodation(a);
+    if (conflicts.length) { setConfirmReplace({ type: "accommodation", item: a, idx, conflicts }); return; }
+    await doSaveAccommodation(a, idx, []);
   }
 
   async function saveActivity(act, idx) {
@@ -1340,6 +1409,38 @@ function ImportModal({ tripId, onImported, onClose }) {
 
   const totalFound = result ? (result.transports.length + result.accommodations.length + result.activities.length) : 0;
   const totalSaved = saved.transports.length + saved.accommodations.length + saved.activities.length;
+
+  if (confirmReplace) {
+    const { type, item, idx, conflicts } = confirmReplace;
+    return (
+      <Modal title="Bestaande items vervangen?" onClose={() => setConfirmReplace(null)} wide>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Op deze datum{conflicts.length > 1 ? "s zijn" : " is"} al {conflicts.length === 1 ? "een item" : `${conflicts.length} items`} aanwezig:
+          </p>
+          <ul className="space-y-1">
+            {conflicts.map((c) => (
+              <li key={c.id} className="text-sm bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-gray-700">
+                {type === "transport" ? `${c.type}: ${c.from_location} → ${c.to_location}` : c.name}
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-gray-600">Wil je {conflicts.length === 1 ? "dit item" : "deze items"} vervangen door de nieuwe import?</p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => {
+              setConfirmReplace(null);
+              if (type === "transport") doSaveTransport(item, idx, []);
+              else doSaveAccommodation(item, idx, []);
+            }}>Naast elkaar bewaren</Button>
+            <Button onClick={() => {
+              if (type === "transport") doSaveTransport(item, idx, conflicts);
+              else doSaveAccommodation(item, idx, conflicts);
+            }} disabled={saving}>{saving ? "Bezig..." : "Vervangen"}</Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title="Bevestiging importeren" onClose={onClose} wide>
