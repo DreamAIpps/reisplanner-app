@@ -146,6 +146,8 @@ function appUrl(req) {
 }
 
 async function readFormBody(req) {
+  // If body was already buffered by the auth middleware, reuse it
+  if (req._rawBody) return new URLSearchParams(req._rawBody.toString());
   return new Promise((resolve, reject) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
@@ -846,7 +848,22 @@ const server = http.createServer(async (req, res) => {
     const match = matchRoute(req.method, pathname);
     if (!match) { res.writeHead(404); res.end(); return; }
     try {
-      const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
+      let body = {};
+      if (["POST", "PUT", "PATCH"].includes(req.method)) {
+        const raw = await new Promise((resolve, reject) => {
+          const chunks = [];
+          req.on("data", (c) => chunks.push(c));
+          req.on("end", () => resolve(Buffer.concat(chunks)));
+          req.on("error", reject);
+        });
+        req._rawBody = raw;
+        const ct = req.headers["content-type"] || "";
+        if (ct.includes("application/x-www-form-urlencoded")) {
+          body = Object.fromEntries(new URLSearchParams(raw.toString()));
+        } else {
+          try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch {}
+        }
+      }
       await match.handler(req, res, match.params, body);
     }
     catch (err) { console.error(err); if (!res.headersSent) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); } }
