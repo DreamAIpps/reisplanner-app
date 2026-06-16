@@ -1075,7 +1075,6 @@ const TIP_CATEGORIES = [
   { category: "Restaurants", icon: "🍽" },
   { category: "Activiteiten", icon: "🎯" },
   { category: "Met kinderen", icon: "👨‍👩‍👧" },
-  { category: "Hotels", icon: "🏨" },
   { category: "Evenementen & agenda", icon: "🎉" },
 ];
 
@@ -1179,7 +1178,7 @@ function HotelAiTip({ accommodationId }) {
       <button onClick={handleClick}
         className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors shrink-0 whitespace-nowrap"
         style={{ background: open ? "#fef3c7" : "#fef9c3", color: "#b45309" }}>
-        💡 AI tip {open ? "▴" : "▾"}
+        🏨 Hotel tips {open ? "▴" : "▾"}
       </button>
       {open && (
         <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm">
@@ -1191,13 +1190,19 @@ function HotelAiTip({ accommodationId }) {
           ) : tip ? (
             <div className="space-y-2">
               {tip.location_tip && (
-                <div className="text-gray-700 leading-relaxed">📍 {tip.location_tip}</div>
+                <div className="text-gray-700 leading-relaxed text-sm">
+                  📍 {tip.location_tip}
+                  {tip.location_url && <a href={tip.location_url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline text-xs whitespace-nowrap">↗ bekijk</a>}
+                </div>
               )}
               {tip.alternatives?.length > 0 && (
                 <div>
                   <div className="text-xs font-semibold text-amber-700 mt-2 mb-1">Vergelijkbare hotels:</div>
                   {tip.alternatives.map((alt, i) => (
-                    <div key={i} className="text-gray-600 text-xs leading-relaxed">• <span className="font-medium">{alt.name}</span> — {alt.reason}</div>
+                    <div key={i} className="text-gray-600 text-xs leading-relaxed mb-1">
+                      • <span className="font-medium">{alt.name}</span> — {alt.reason}
+                      {alt.url && <a href={alt.url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline whitespace-nowrap">↗ boeken</a>}
+                    </div>
                   ))}
                 </div>
               )}
@@ -1954,7 +1959,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "budget", label: "Budget", icon: "💰" },
-    { key: "tips", label: "Algemene tips", icon: "💡" },
+    { key: "tips", label: "Lokale tips", icon: "💡" },
     { key: "map", label: "Kaart", icon: "🗺" },
   ];
 

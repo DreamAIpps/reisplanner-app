@@ -427,13 +427,13 @@ route("GET", "/api/accommodations/:id/ai-tip", async (req, res, params) => {
   const city = acc.destination || (acc.address ? acc.address.split(",").slice(-2).join(",").trim() : "");
   const priceInfo = acc.cost ? `De geboekte prijs is €${acc.cost}.` : "";
 
-  const prompt = `Je bent een reisassistent. Geef een korte AI-tip voor het hotel "${hotelName}"${city ? ` in ${city}` : ""}.
+  const prompt = `Je bent een reisassistent. Geef een korte tip voor het hotel "${hotelName}"${city ? ` in ${city}` : ""}.
 ${priceInfo}
 Geef:
-1. De ligging van het hotel t.o.v. bekende bezienswaardigheden of wijken (bijv. afstand tot centrum, toeristische hotspots).
-2. Twee vergelijkbare hotels in dezelfde stad en prijsklasse als alternatief.
+1. De ligging van het hotel t.o.v. bekende bezienswaardigheden of wijken (bijv. afstand tot centrum, toeristische hotspots). Voeg een relevante URL toe (bijv. Google Maps of officiële hotelsite).
+2. Twee vergelijkbare hotels in dezelfde stad en prijsklasse als alternatief, elk met een boekings-URL (booking.com, hotels.com of officiële site).
 Return ONLY valid JSON, no markdown:
-{"location_tip":"...", "alternatives":[{"name":"Hotel A","reason":"..."},{"name":"Hotel B","reason":"..."}]}`;
+{"location_tip":"...","location_url":"https://...","alternatives":[{"name":"Hotel A","reason":"...","url":"https://..."},{"name":"Hotel B","reason":"...","url":"https://..."}]}`;
 
   const msg = await anthropicClient.messages.create({
     model: "claude-haiku-4-5-20251001",
