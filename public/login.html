@@ -97,8 +97,12 @@
   </div>
 
   <script>
-    if (new URLSearchParams(location.search).get('error')) {
+    const _params = new URLSearchParams(location.search);
+    if (_params.get('error')) {
       showError('Er ging iets mis. Probeer het opnieuw.');
+    }
+    if (_params.get('tab') === 'register') {
+      setTab('register');
     }
 
     function setTab(tab) {
