@@ -2297,6 +2297,43 @@ function AdminView({ onBack }) {
   );
 }
 
+// ---------- LandingPage ----------
+function LandingPage() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-sky-50 to-white flex flex-col">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 text-center">
+        <div className="text-6xl mb-4">✈️</div>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Reisplanner</h1>
+        <p className="text-gray-500 text-base mb-8 max-w-xs">Jouw reizen, overzichtelijk gepland. Sla vluchten, hotels, activiteiten en kosten op in één app.</p>
+
+        <div className="w-full max-w-xs space-y-3 mb-8">
+          <a href="/login"
+            className="block w-full bg-sky-600 text-white rounded-xl px-4 py-3 text-sm font-semibold hover:bg-sky-700 transition-colors text-center">
+            Inloggen
+          </a>
+          <a href="/login?tab=register"
+            className="block w-full border-2 border-sky-600 text-sky-700 rounded-xl px-4 py-3 text-sm font-semibold hover:bg-sky-50 transition-colors text-center">
+            Account aanmaken
+          </a>
+        </div>
+
+        <div className="w-full max-w-xs grid grid-cols-3 gap-3 text-center">
+          {[
+            { icon: "🗓️", label: "Dagplanning" },
+            { icon: "🏨", label: "Accommodaties" },
+            { icon: "💸", label: "Kosten bijhouden" },
+          ].map(({ icon, label }) => (
+            <div key={label} className="bg-white rounded-xl p-3 shadow-sm border border-gray-100">
+              <div className="text-2xl mb-1">{icon}</div>
+              <div className="text-xs font-medium text-gray-600">{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- App ----------
 function App() {
   const [user, setUser] = useState(null);
@@ -2339,10 +2376,7 @@ function App() {
     <div className="min-h-screen flex items-center justify-center text-gray-400">Laden...</div>
   );
 
-  if (!user) {
-    window.location.href = "/login";
-    return null;
-  }
+  if (!user) return <LandingPage />;
 
   const tripStats = trips.length > 0 ? `${trips.length} rei${trips.length === 1 ? "s" : "zen"}` : null;
 
