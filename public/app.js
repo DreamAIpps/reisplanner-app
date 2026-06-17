@@ -1707,8 +1707,8 @@ function ImportModal({ tripId, onImported, onClose }) {
   useEffect(() => {
     api.getDays(tripId).then(setDays);
     Promise.all([
-      apiFetch(`/api/trips/${tripId}/transports`),
-      apiFetch(`/api/trips/${tripId}/accommodations`),
+      api.getTransports(tripId),
+      api.getAccommodations(tripId),
     ]).then(([t, a]) => setExisting({ transports: t, accommodations: a })).catch(() => {});
   }, [tripId]);
 
@@ -1746,6 +1746,10 @@ function ImportModal({ tripId, onImported, onClose }) {
 
   async function handleAnalyze(e) {
     e.preventDefault();
+    if (_guestMode) {
+      setError("De importfunctie vereist een account. Log in of maak een account aan om deze functie te gebruiken.");
+      return;
+    }
     setLoading(true); setError(null); setResult(null);
     try {
       const body = mode === "image" ? { image: imageData } : { text };
