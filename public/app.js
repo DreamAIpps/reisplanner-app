@@ -37,36 +37,155 @@ async function apiFetch(url, options = {}) {
   return res.json();
 }
 
+// ---------- Guest Storage ----------
+const _GK = "rp_guest";
+function _gr() { try { return JSON.parse(localStorage.getItem(_GK) || "{}"); } catch { return {}; } }
+function _gw(d) { try { localStorage.setItem(_GK, JSON.stringify(d)); } catch {} }
+function _gid() { return "g" + Date.now() + Math.random().toString(36).slice(2, 5); }
+
+let _guestMode = false;
+function setGuestMode(v) { _guestMode = v; }
+
+const guestApi = {
+  getTrips() {
+    const d = _gr(); const acts = d.activities || [];
+    return Promise.resolve((d.trips || []).map(t => ({ ...t, is_owner: true, activity_count: acts.filter(a => a.trip_id === t.id).length })));
+  },
+  getTrip(id) {
+    const t = (_gr().trips || []).find(t => t.id === id);
+    return t ? Promise.resolve({ ...t, is_owner: true }) : Promise.reject(new Error("Reis niet gevonden"));
+  },
+  createTrip(data) {
+    const d = _gr(); const t = { ...data, id: _gid(), created_at: new Date().toISOString() };
+    d.trips = [...(d.trips || []), t]; _gw(d); return Promise.resolve(t);
+  },
+  updateTrip(id, data) {
+    const d = _gr(); let found;
+    d.trips = (d.trips || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
+  },
+  deleteTrip(id) {
+    const d = _gr();
+    d.trips = (d.trips || []).filter(t => t.id !== id);
+    const kept = new Set((d.days || []).filter(day => day.trip_id !== id).map(day => day.id));
+    d.days = (d.days || []).filter(day => day.trip_id !== id);
+    d.activities = (d.activities || []).filter(a => kept.has(a.day_id));
+    d.accommodations = (d.accommodations || []).filter(a => a.trip_id !== id);
+    d.transports = (d.transports || []).filter(t => t.trip_id !== id);
+    d.expenses = (d.expenses || []).filter(e => e.trip_id !== id);
+    _gw(d); return Promise.resolve(null);
+  },
+  getDays(tripId) {
+    const d = _gr();
+    const days = (d.days || []).filter(day => day.trip_id === tripId).sort((a, b) => (a.date || "") < (b.date || "") ? -1 : 1);
+    const acts = d.activities || [];
+    return Promise.resolve(days.map(day => ({ ...day, activities: acts.filter(a => a.day_id === day.id).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1) })));
+  },
+  addDay(tripId, data) {
+    const d = _gr(); const day = { ...data, id: _gid(), trip_id: tripId };
+    d.days = [...(d.days || []), day]; _gw(d); return Promise.resolve({ ...day, activities: [] });
+  },
+  updateDay(id, data) {
+    const d = _gr(); let found;
+    d.days = (d.days || []).map(day => day.id === id ? (found = { ...day, ...data }) : day); _gw(d); return Promise.resolve(found);
+  },
+  deleteDay(id) {
+    const d = _gr();
+    d.days = (d.days || []).filter(day => day.id !== id);
+    d.activities = (d.activities || []).filter(a => a.day_id !== id);
+    _gw(d); return Promise.resolve(null);
+  },
+  addActivity(dayId, data) {
+    const d = _gr(); const day = (d.days || []).find(day => day.id === dayId);
+    const act = { ...data, id: _gid(), day_id: dayId, trip_id: day && day.trip_id };
+    d.activities = [...(d.activities || []), act]; _gw(d); return Promise.resolve(act);
+  },
+  updateActivity(id, data) {
+    const d = _gr(); let found;
+    d.activities = (d.activities || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
+  },
+  deleteActivity(id) {
+    const d = _gr(); d.activities = (d.activities || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  getAccommodations(tripId) {
+    return Promise.resolve((_gr().accommodations || []).filter(a => a.trip_id === tripId));
+  },
+  addAccommodation(tripId, data) {
+    const d = _gr(); const acc = { ...data, id: _gid(), trip_id: tripId };
+    d.accommodations = [...(d.accommodations || []), acc]; _gw(d); return Promise.resolve(acc);
+  },
+  updateAccommodation(id, data) {
+    const d = _gr(); let found;
+    d.accommodations = (d.accommodations || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
+  },
+  deleteAccommodation(id) {
+    const d = _gr(); d.accommodations = (d.accommodations || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  getTransports(tripId) {
+    return Promise.resolve((_gr().transports || []).filter(t => t.trip_id === tripId));
+  },
+  addTransport(tripId, data) {
+    const d = _gr(); const tr = { ...data, id: _gid(), trip_id: tripId };
+    d.transports = [...(d.transports || []), tr]; _gw(d); return Promise.resolve(tr);
+  },
+  updateTransport(id, data) {
+    const d = _gr(); let found;
+    d.transports = (d.transports || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
+  },
+  deleteTransport(id) {
+    const d = _gr(); d.transports = (d.transports || []).filter(t => t.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  getExpenses(tripId) {
+    return Promise.resolve((_gr().expenses || []).filter(e => e.trip_id === tripId));
+  },
+  addExpense(tripId, data) {
+    const d = _gr(); const exp = { ...data, id: _gid(), trip_id: tripId };
+    d.expenses = [...(d.expenses || []), exp]; _gw(d); return Promise.resolve(exp);
+  },
+  updateExpense(id, data) {
+    const d = _gr(); let found;
+    d.expenses = (d.expenses || []).map(e => e.id === id ? (found = { ...e, ...data }) : e); _gw(d); return Promise.resolve(found);
+  },
+  deleteExpense(id) {
+    const d = _gr(); d.expenses = (d.expenses || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
+  createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
+  getAdminTrips() { return Promise.resolve([]); },
+  getAdminUsers() { return Promise.resolve([]); },
+  assignTrip() { return Promise.resolve(null); },
+  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
+};
+
 const api = {
-  getTrips: () => apiFetch("/api/trips"),
-  getTrip: (id) => apiFetch(`/api/trips/${id}`),
-  createTrip: (d) => apiFetch("/api/trips", { method: "POST", body: JSON.stringify(d) }),
-  updateTrip: (id, d) => apiFetch(`/api/trips/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteTrip: (id) => apiFetch(`/api/trips/${id}`, { method: "DELETE" }),
-  getDays: (tripId) => apiFetch(`/api/trips/${tripId}/days`),
-  addDay: (tripId, d) => apiFetch(`/api/trips/${tripId}/days`, { method: "POST", body: JSON.stringify(d) }),
-  updateDay: (id, d) => apiFetch(`/api/days/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteDay: (id) => apiFetch(`/api/days/${id}`, { method: "DELETE" }),
-  addActivity: (dayId, d) => apiFetch(`/api/days/${dayId}/activities`, { method: "POST", body: JSON.stringify(d) }),
-  updateActivity: (id, d) => apiFetch(`/api/activities/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteActivity: (id) => apiFetch(`/api/activities/${id}`, { method: "DELETE" }),
-  getAccommodations: (tripId) => apiFetch(`/api/trips/${tripId}/accommodations`),
-  addAccommodation: (tripId, d) => apiFetch(`/api/trips/${tripId}/accommodations`, { method: "POST", body: JSON.stringify(d) }),
-  updateAccommodation: (id, d) => apiFetch(`/api/accommodations/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteAccommodation: (id) => apiFetch(`/api/accommodations/${id}`, { method: "DELETE" }),
-  getTransports: (tripId) => apiFetch(`/api/trips/${tripId}/transports`),
-  addTransport: (tripId, d) => apiFetch(`/api/trips/${tripId}/transports`, { method: "POST", body: JSON.stringify(d) }),
-  updateTransport: (id, d) => apiFetch(`/api/transports/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteTransport: (id) => apiFetch(`/api/transports/${id}`, { method: "DELETE" }),
-  getExpenses: (tripId) => apiFetch(`/api/trips/${tripId}/expenses`),
-  addExpense: (tripId, d) => apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
-  updateExpense: (id, d) => apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteExpense: (id) => apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
-  importEmail: (tripId, text) => apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
-  createInvite: (tripId) => apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
-  getAdminTrips: () => apiFetch("/api/admin/trips"),
-  getAdminUsers: () => apiFetch("/api/admin/users"),
-  assignTrip: (tripId, userId) => apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
+  getTrips: () => _guestMode ? guestApi.getTrips() : apiFetch("/api/trips"),
+  getTrip: (id) => _guestMode ? guestApi.getTrip(id) : apiFetch(`/api/trips/${id}`),
+  createTrip: (d) => _guestMode ? guestApi.createTrip(d) : apiFetch("/api/trips", { method: "POST", body: JSON.stringify(d) }),
+  updateTrip: (id, d) => _guestMode ? guestApi.updateTrip(id, d) : apiFetch(`/api/trips/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteTrip: (id) => _guestMode ? guestApi.deleteTrip(id) : apiFetch(`/api/trips/${id}`, { method: "DELETE" }),
+  getDays: (tripId) => _guestMode ? guestApi.getDays(tripId) : apiFetch(`/api/trips/${tripId}/days`),
+  addDay: (tripId, d) => _guestMode ? guestApi.addDay(tripId, d) : apiFetch(`/api/trips/${tripId}/days`, { method: "POST", body: JSON.stringify(d) }),
+  updateDay: (id, d) => _guestMode ? guestApi.updateDay(id, d) : apiFetch(`/api/days/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteDay: (id) => _guestMode ? guestApi.deleteDay(id) : apiFetch(`/api/days/${id}`, { method: "DELETE" }),
+  addActivity: (dayId, d) => _guestMode ? guestApi.addActivity(dayId, d) : apiFetch(`/api/days/${dayId}/activities`, { method: "POST", body: JSON.stringify(d) }),
+  updateActivity: (id, d) => _guestMode ? guestApi.updateActivity(id, d) : apiFetch(`/api/activities/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteActivity: (id) => _guestMode ? guestApi.deleteActivity(id) : apiFetch(`/api/activities/${id}`, { method: "DELETE" }),
+  getAccommodations: (tripId) => _guestMode ? guestApi.getAccommodations(tripId) : apiFetch(`/api/trips/${tripId}/accommodations`),
+  addAccommodation: (tripId, d) => _guestMode ? guestApi.addAccommodation(tripId, d) : apiFetch(`/api/trips/${tripId}/accommodations`, { method: "POST", body: JSON.stringify(d) }),
+  updateAccommodation: (id, d) => _guestMode ? guestApi.updateAccommodation(id, d) : apiFetch(`/api/accommodations/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteAccommodation: (id) => _guestMode ? guestApi.deleteAccommodation(id) : apiFetch(`/api/accommodations/${id}`, { method: "DELETE" }),
+  getTransports: (tripId) => _guestMode ? guestApi.getTransports(tripId) : apiFetch(`/api/trips/${tripId}/transports`),
+  addTransport: (tripId, d) => _guestMode ? guestApi.addTransport(tripId, d) : apiFetch(`/api/trips/${tripId}/transports`, { method: "POST", body: JSON.stringify(d) }),
+  updateTransport: (id, d) => _guestMode ? guestApi.updateTransport(id, d) : apiFetch(`/api/transports/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteTransport: (id) => _guestMode ? guestApi.deleteTransport(id) : apiFetch(`/api/transports/${id}`, { method: "DELETE" }),
+  getExpenses: (tripId) => _guestMode ? guestApi.getExpenses(tripId) : apiFetch(`/api/trips/${tripId}/expenses`),
+  addExpense: (tripId, d) => _guestMode ? guestApi.addExpense(tripId, d) : apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
+  updateExpense: (id, d) => _guestMode ? guestApi.updateExpense(id, d) : apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteExpense: (id) => _guestMode ? guestApi.deleteExpense(id) : apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
+  importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
+  createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
+  getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
+  getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
+  assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
 };
 
@@ -2297,43 +2416,6 @@ function AdminView({ onBack }) {
   );
 }
 
-// ---------- LandingPage ----------
-function LandingPage() {
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 to-white flex flex-col">
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 text-center">
-        <div className="text-6xl mb-4">✈️</div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Reisplanner</h1>
-        <p className="text-gray-500 text-base mb-8 max-w-xs">Jouw reizen, overzichtelijk gepland. Sla vluchten, hotels, activiteiten en kosten op in één app.</p>
-
-        <div className="w-full max-w-xs space-y-3 mb-8">
-          <a href="/login"
-            className="block w-full bg-sky-600 text-white rounded-xl px-4 py-3 text-sm font-semibold hover:bg-sky-700 transition-colors text-center">
-            Inloggen
-          </a>
-          <a href="/login?tab=register"
-            className="block w-full border-2 border-sky-600 text-sky-700 rounded-xl px-4 py-3 text-sm font-semibold hover:bg-sky-50 transition-colors text-center">
-            Account aanmaken
-          </a>
-        </div>
-
-        <div className="w-full max-w-xs grid grid-cols-3 gap-3 text-center">
-          {[
-            { icon: "🗓️", label: "Dagplanning" },
-            { icon: "🏨", label: "Accommodaties" },
-            { icon: "💸", label: "Kosten bijhouden" },
-          ].map(({ icon, label }) => (
-            <div key={label} className="bg-white rounded-xl p-3 shadow-sm border border-gray-100">
-              <div className="text-2xl mb-1">{icon}</div>
-              <div className="text-xs font-medium text-gray-600">{label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ---------- App ----------
 function App() {
   const [user, setUser] = useState(null);
@@ -2357,15 +2439,16 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
+    setGuestMode(!user);
     loadTrips();
     const params = new URLSearchParams(location.search);
     const tripId = params.get("trip");
     if (tripId) {
-      setView({ name: "detail", id: parseInt(tripId) });
+      setView({ name: "detail", id: tripId });
       window.history.replaceState({}, "", "/");
     }
-  }, [user, loadTrips]);
+  }, [user, authLoading, loadTrips]);
 
   async function handleLogout() {
     await fetch("/auth/logout", { method: "POST" });
@@ -2376,11 +2459,7 @@ function App() {
     <div className="min-h-screen flex items-center justify-center text-gray-400">Laden...</div>
   );
 
-  if (!user) return <LandingPage />;
-
   const tripStats = trips.length > 0 ? `${trips.length} rei${trips.length === 1 ? "s" : "zen"}` : null;
-
-  const isDetail = view.name === "detail";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -2391,18 +2470,27 @@ function App() {
             ✈️ <span className="truncate">Reisplanner</span>
           </button>
           <div className="flex items-center gap-2 shrink-0">
-            {user.is_admin && view.name !== "admin" && (
-              <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
-                👁
-              </button>
+            {user ? (
+              <>
+                {user.is_admin && view.name !== "admin" && (
+                  <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
+                    👁
+                  </button>
+                )}
+                <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
+                  Uitloggen
+                </button>
+                {user.avatar
+                  ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 shrink-0" />
+                  : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+                }
+              </>
+            ) : (
+              <>
+                <a href="/login" className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">Inloggen</a>
+                <a href="/login?tab=register" className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-sky-500 text-white hover:bg-sky-400 transition-colors whitespace-nowrap">Account aanmaken</a>
+              </>
             )}
-            <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
-              Uitloggen
-            </button>
-            {user.avatar
-              ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 shrink-0" />
-              : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
-            }
           </div>
         </div>
       </header>
@@ -2410,10 +2498,22 @@ function App() {
       <main className="max-w-5xl mx-auto px-3 sm:px-8 pb-28 pt-4">
         {view.name === "list" ? (
           <>
-            {/* Greeting banner */}
+            {/* Greeting / guest notice */}
             <div className="mb-5 px-1">
-              <div className="text-2xl font-bold text-gray-800">{greeting(user.given_name || user.name)} 👋</div>
-              {tripStats && <div className="text-sm text-gray-500 mt-0.5">{tripStats}</div>}
+              {user ? (
+                <>
+                  <div className="text-2xl font-bold text-gray-800">{greeting(user.given_name || user.name)}</div>
+                  {tripStats && <div className="text-sm text-gray-500 mt-0.5">{tripStats}</div>}
+                </>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+                  <span className="text-xl shrink-0">👤</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-amber-800 text-sm">Je gebruikt de app als gast</div>
+                    <div className="text-xs text-amber-700 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in</a> of <a href="/login?tab=register" className="underline font-medium">maak een account</a> om ze overal beschikbaar te hebben.</div>
+                  </div>
+                </div>
+              )}
             </div>
             {loading ? (
               <div className="text-center py-16 text-gray-400">Laden...</div>
