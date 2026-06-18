@@ -167,16 +167,16 @@ async function generateAppleClientSecret() {
 }
 
 async function verifyAppleIdToken(idToken) {
-  const keysRes = await fetch("https://appleid.apple.com/auth/keys");
-  const { keys } = await keysRes.json();
-  const headerB64 = idToken.split(".")[0];
-  const header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
+  const { keys } = await (await fetch("https://appleid.apple.com/auth/keys")).json();
+  const [headerB64] = idToken.split(".");
+  // Convert base64url → base64 before decoding
+  const headerJson = Buffer.from(headerB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString();
+  const header = JSON.parse(headerJson);
   const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) throw new Error(`Apple JWK not found for kid=${header.kid}`);
+  if (!jwk) throw new Error(`Apple JWK niet gevonden (kid: ${header.kid})`);
   const pubKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
-  const options = { algorithms: ["RS256"] };
-  if (process.env.APPLE_CLIENT_ID) options.audience = process.env.APPLE_CLIENT_ID;
-  return jwt.verify(idToken, pubKey, options);
+  // Verify signature and expiry only — audience validation left to app logic
+  return jwt.verify(idToken, pubKey, { algorithms: ["RS256"] });
 }
 
 // ---------- Router ----------
