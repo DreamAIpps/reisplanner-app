@@ -167,12 +167,16 @@ async function generateAppleClientSecret() {
 }
 
 async function verifyAppleIdToken(idToken) {
-  const { keys } = await (await fetch("https://appleid.apple.com/auth/keys")).json();
-  const header = JSON.parse(Buffer.from(idToken.split(".")[0], "base64").toString());
+  const keysRes = await fetch("https://appleid.apple.com/auth/keys");
+  const { keys } = await keysRes.json();
+  const headerB64 = idToken.split(".")[0];
+  const header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
   const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) throw new Error("Apple key not found");
+  if (!jwk) throw new Error(`Apple JWK not found for kid=${header.kid}`);
   const pubKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
-  return jwt.verify(idToken, pubKey, { algorithms: ["RS256"] });
+  const options = { algorithms: ["RS256"] };
+  if (process.env.APPLE_CLIENT_ID) options.audience = process.env.APPLE_CLIENT_ID;
+  return jwt.verify(idToken, pubKey, options);
 }
 
 // ---------- Router ----------
@@ -623,12 +627,20 @@ route("GET", "/auth/google/callback", async (req, res) => {
 });
 
 route("GET", "/auth/apple", async (req, res) => {
+  if (!process.env.APPLE_CLIENT_ID) {
+    console.error("Apple Sign In: APPLE_CLIENT_ID is not set");
+    res.writeHead(302, { Location: "/login?error=apple-config" });
+    res.end();
+    return;
+  }
+  const state = crypto.randomBytes(16).toString("hex");
   const params = new URLSearchParams({
     client_id: process.env.APPLE_CLIENT_ID,
     redirect_uri: `${appUrl(req)}/auth/apple/callback`,
     response_type: "code id_token",
     scope: "name email",
     response_mode: "form_post",
+    state,
   });
   res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
   res.end();
@@ -636,10 +648,31 @@ route("GET", "/auth/apple", async (req, res) => {
 
 route("POST", "/auth/apple/callback", async (req, res) => {
   const body = await readFormBody(req);
+  const appleError = body.get("error");
+  if (appleError) {
+    console.error("Apple callback error from Apple:", appleError);
+    res.writeHead(302, { Location: `/login?error=apple-${appleError}` });
+    res.end();
+    return;
+  }
   const idToken = body.get("id_token");
-  if (!idToken) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
+  if (!idToken) {
+    console.error("Apple callback: no id_token in body");
+    res.writeHead(302, { Location: "/login?error=1" });
+    res.end();
+    return;
+  }
 
-  const payload = await verifyAppleIdToken(idToken);
+  let payload;
+  try {
+    payload = await verifyAppleIdToken(idToken);
+  } catch (err) {
+    console.error("Apple id_token verification failed:", err.message);
+    res.writeHead(302, { Location: "/login?error=1" });
+    res.end();
+    return;
+  }
+
   let given_name = null, family_name = null;
   try {
     const u = JSON.parse(body.get("user") || "{}");

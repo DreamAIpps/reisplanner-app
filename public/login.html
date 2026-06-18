@@ -98,7 +98,12 @@
 
   <script>
     const _params = new URLSearchParams(location.search);
-    if (_params.get('error')) {
+    const _err = _params.get('error');
+    if (_err === 'apple-config') {
+      showError('Apple Sign In is niet geconfigureerd op de server. Gebruik e-mail of Google om in te loggen.');
+    } else if (_err && _err.startsWith('apple-')) {
+      showError('Apple Sign In mislukt (' + _err.replace('apple-', '') + '). Probeer Google of e-mail.');
+    } else if (_err) {
       showError('Er ging iets mis. Probeer het opnieuw.');
     }
     if (_params.get('tab') === 'register') {
