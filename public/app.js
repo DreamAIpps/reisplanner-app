@@ -1909,7 +1909,7 @@ function ImportModal({ tripId, onImported, onClose }) {
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
             <Button type="submit" disabled={loading || (mode === "text" ? !text.trim() : !imageData)}>
-              {loading ? "Analyseren..." : "✨ Analyseren"}
+              {loading ? "Toevoegen..." : "✨ Toevoegen"}
             </Button>
           </div>
         </form>
