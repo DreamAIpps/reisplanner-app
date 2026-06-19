@@ -101,6 +101,16 @@
     const _err = _params.get('error');
     if (_err === 'apple-config') {
       showError('Apple Sign In is niet geconfigureerd op de server. Gebruik e-mail of Google om in te loggen.');
+    } else if (_err === 'apple-no-token') {
+      showError('Apple stuurde geen authenticatietoken. Probeer het opnieuw.');
+    } else if (_err === 'apple-verify-expired') {
+      showError('Apple token is verlopen. Probeer opnieuw in te loggen.');
+    } else if (_err === 'apple-verify-jwk') {
+      showError('Apple sleutel niet herkend. Probeer het over een minuut opnieuw.');
+    } else if (_err === 'apple-verify-invalid') {
+      showError('Apple token ongeldig. Probeer het opnieuw of gebruik Google/e-mail.');
+    } else if (_err === 'apple-db') {
+      showError('Fout bij opslaan gebruikersgegevens. Probeer het opnieuw.');
     } else if (_err && _err.startsWith('apple-')) {
       showError('Apple Sign In mislukt (' + _err.replace('apple-', '') + '). Probeer Google of e-mail.');
     } else if (_err) {

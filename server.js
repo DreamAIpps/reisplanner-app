@@ -648,6 +648,7 @@ route("GET", "/auth/apple", async (req, res) => {
 
 route("POST", "/auth/apple/callback", async (req, res) => {
   const body = await readFormBody(req);
+  console.log("Apple callback received. Keys in body:", [...body.keys()].join(", "));
   const appleError = body.get("error");
   if (appleError) {
     console.error("Apple callback error from Apple:", appleError);
@@ -658,7 +659,7 @@ route("POST", "/auth/apple/callback", async (req, res) => {
   const idToken = body.get("id_token");
   if (!idToken) {
     console.error("Apple callback: no id_token in body");
-    res.writeHead(302, { Location: "/login?error=1" });
+    res.writeHead(302, { Location: "/login?error=apple-no-token" });
     res.end();
     return;
   }
@@ -668,7 +669,8 @@ route("POST", "/auth/apple/callback", async (req, res) => {
     payload = await verifyAppleIdToken(idToken);
   } catch (err) {
     console.error("Apple id_token verification failed:", err.message);
-    res.writeHead(302, { Location: "/login?error=1" });
+    const code = err.message.includes("expired") ? "expired" : err.message.includes("JWK") ? "jwk" : "invalid";
+    res.writeHead(302, { Location: `/login?error=apple-verify-${code}` });
     res.end();
     return;
   }
@@ -681,15 +683,21 @@ route("POST", "/auth/apple/callback", async (req, res) => {
   } catch {}
   const name = [given_name, family_name].filter(Boolean).join(" ") || null;
 
-  const user = await findOrCreateUser({
-    apple_id: payload.sub,
-    email: payload.email || null,
-    email_verified: payload.email_verified === "true" || payload.email_verified === true,
-    name,
-    given_name,
-    family_name,
-  });
-  await handlePostLogin(req, res, user);
+  try {
+    const user = await findOrCreateUser({
+      apple_id: payload.sub,
+      email: payload.email || null,
+      email_verified: payload.email_verified === "true" || payload.email_verified === true,
+      name,
+      given_name,
+      family_name,
+    });
+    await handlePostLogin(req, res, user);
+  } catch (err) {
+    console.error("Apple callback: findOrCreateUser/handlePostLogin failed:", err.message);
+    res.writeHead(302, { Location: "/login?error=apple-db" });
+    res.end();
+  }
 });
 
 // ---------- App icon (SVG, used as PWA icon) ----------
