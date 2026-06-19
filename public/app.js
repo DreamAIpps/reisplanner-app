@@ -834,24 +834,26 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                           onClick={() => setEditingAccommodation(a)}
                           className="rounded-xl border cursor-pointer hover:shadow-md transition-shadow"
                           style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-                          <div className="flex items-center gap-3 px-4 py-3">
-                            <div className="text-2xl">🏨</div>
+                          <div className="flex items-center gap-2 px-3 py-2.5">
+                            <div className="text-xl shrink-0">🏨</div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "#b45309" }}>
-                                {isCheckIn && isCheckOut ? "Check-in & Check-out" : isCheckIn ? "Check-in" : "Check-out"}
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#b45309" }}>
+                                  {isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}
+                                </span>
+                                {a.cost && <span className="text-xs font-medium text-amber-700 ml-auto shrink-0">{fmtMoney(a.cost, trip.currency)}</span>}
                               </div>
-                              <div className="font-semibold text-gray-800 text-sm">{a.name}</div>
-                              {a.address && <div className="text-xs text-gray-400 mt-0.5">📍 {a.address}</div>}
-                              {a.cost && <div className="text-xs font-medium text-amber-700 mt-0.5">{fmtMoney(a.cost, trip.currency)}</div>}
+                              <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
+                              {a.address && <div className="text-xs text-gray-400 truncate">📍 {a.address}</div>}
                             </div>
-                            <div className="flex flex-col gap-1 items-end shrink-0">
-                              <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
-                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors whitespace-nowrap">
-                                🗺 Lokale tips
-                              </button>
-                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
+                              className="shrink-0 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors"
+                              title="Lokale tips">
+                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">🗺 Lokale tips</span>
+                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">🗺</span>
+                            </button>
                           </div>
-                          <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
+                          <div className="px-3 pb-2.5" onClick={(e) => e.stopPropagation()}>
                             <HotelAiTip accommodationId={a.id} />
                           </div>
                         </div>
