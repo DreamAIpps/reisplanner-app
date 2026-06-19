@@ -626,6 +626,23 @@ route("GET", "/auth/google/callback", async (req, res) => {
   await handlePostLogin(req, res, user);
 });
 
+route("GET", "/auth/apple/config-check", async (req, res) => {
+  const redirectUri = `${appUrl(req)}/auth/apple/callback`;
+  const clientId = process.env.APPLE_CLIENT_ID || "(niet ingesteld)";
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(`<!DOCTYPE html><html><body style="font-family:monospace;padding:24px;max-width:600px">
+    <h2>Apple Sign In configuratie</h2>
+    <p><b>APPLE_CLIENT_ID:</b> ${clientId}</p>
+    <p><b>redirect_uri die naar Apple wordt gestuurd:</b><br><code style="background:#f0f0f0;padding:4px 8px;border-radius:4px;word-break:break-all">${redirectUri}</code></p>
+    <hr>
+    <p>Controleer in <a href="https://developer.apple.com/account/resources/identifiers/list/serviceId">Apple Developer Console</a> of:</p>
+    <ul>
+      <li>Er een <b>Service ID</b> bestaat met identifier <b>${clientId}</b></li>
+      <li>De Return URL exact is: <b>${redirectUri}</b></li>
+    </ul>
+  </body></html>`);
+});
+
 route("GET", "/auth/apple", async (req, res) => {
   if (!process.env.APPLE_CLIENT_ID) {
     console.error("Apple Sign In: APPLE_CLIENT_ID is not set");
@@ -642,6 +659,7 @@ route("GET", "/auth/apple", async (req, res) => {
     response_mode: "form_post",
     state,
   });
+  console.log("Apple Sign In: redirecting to Apple with redirect_uri:", `${appUrl(req)}/auth/apple/callback`);
   res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
   res.end();
 });
