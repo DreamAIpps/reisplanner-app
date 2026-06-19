@@ -796,28 +796,29 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                       return (
                         <div key={t.id + (isArrival ? "-a" : "-d")}
                           onClick={() => setEditingTransport(t)}
-                          className="flex items-center gap-3 rounded-xl px-4 py-3 border cursor-pointer hover:shadow-md transition-shadow"
+                          className="flex items-center gap-2 rounded-xl px-3 py-2.5 border cursor-pointer hover:shadow-md transition-shadow"
                           style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}>
-                          <div className="text-2xl">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
+                          <div className="text-xl shrink-0">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#1d4ed8" }}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#1d4ed8" }}>
                                 {isArrival ? "Aankomst" : "Vertrek"}
                               </span>
                               {time && <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>
                                 {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
                               </span>}
+                              {t.booking_ref && <span className="font-mono bg-blue-100 text-blue-600 px-1 py-0.5 rounded text-xs hidden sm:inline">#{t.booking_ref}</span>}
+                              {t.cost && <span className="font-medium text-blue-700 text-xs ml-auto shrink-0">{fmtMoney(t.cost, trip.currency)}</span>}
                             </div>
-                            <div className="font-semibold text-gray-800 text-sm">{t.from_location} → {t.to_location}</div>
-                            <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
-                              {t.booking_ref && <span className="font-mono bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
-                              {t.cost && <span className="font-medium text-blue-700">{fmtMoney(t.cost, trip.currency)}</span>}
-                            </div>
+                            <div className="text-sm font-medium text-gray-700 truncate">{t.from_location} → {t.to_location}</div>
+                            {t.booking_ref && <div className="text-xs text-gray-400 font-mono sm:hidden">#{t.booking_ref}</div>}
                           </div>
                           {t.to_location && (
                             <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
-                              className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors shrink-0 whitespace-nowrap">
-                              💡 Lokale tips
+                              className="shrink-0 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+                              title="Lokale tips">
+                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">💡 Lokale tips</span>
+                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">💡</span>
                             </button>
                           )}
                         </div>
