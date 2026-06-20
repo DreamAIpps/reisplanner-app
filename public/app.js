@@ -465,7 +465,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -508,9 +508,17 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport }) {
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
         <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        <div className="flex justify-between items-center pt-2">
+          {onDelete ? (
+            <button type="button" onClick={onDelete}
+              className="text-sm text-red-500 hover:text-red-700 px-2 py-1">
+              🗑 Verwijderen
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          </div>
         </div>
       </form>
     </Modal>
@@ -895,8 +903,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
                               {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
                             </div>
-                            <div className="opacity-0 group-hover:opacity-100 flex gap-1 shrink-0 transition-opacity">
-                              <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 text-sm">🗑</button>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1">🗑</button>
                             </div>
                           </div>
                         </div>
@@ -926,7 +934,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
-          onClose={() => setEditingActivity(null)} />
+          onClose={() => setEditingActivity(null)}
+          onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
       )}
       {editingTransport && (
         <TransportForm tripId={trip.id} initial={editingTransport}
