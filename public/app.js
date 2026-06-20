@@ -792,7 +792,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                         style={{ background: accent }}>
                         + Activiteit
                       </button>
-                      <button onClick={() => handleDeleteDay(day.id)} className="text-gray-300 hover:text-red-400 px-1 ml-1">🗑</button>
                     </div>
                   </div>
 
