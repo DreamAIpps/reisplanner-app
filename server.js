@@ -905,6 +905,36 @@ route("DELETE", "/api/expenses/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Packing list ----------
+route("GET", "/api/trips/:id/packing", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM packing_items WHERE trip_id = $1 ORDER BY category, created_at ASC", [params.id]);
+  sendJson(res, 200, rows);
+});
+
+route("POST", "/api/trips/:id/packing", async (req, res, params, body) => {
+  const { category, item } = body;
+  if (!item) return sendError(res, 400, "Item is verplicht");
+  const { rows } = await query(
+    "INSERT INTO packing_items (trip_id, category, item) VALUES ($1,$2,$3) RETURNING *",
+    [params.id, category || "Overig", item]
+  );
+  sendJson(res, 201, rows[0]);
+});
+
+route("PUT", "/api/packing/:id", async (req, res, params, body) => {
+  const { category, item, checked } = body;
+  const { rows } = await query(
+    "UPDATE packing_items SET category=COALESCE($1,category), item=COALESCE($2,item), checked=COALESCE($3,checked) WHERE id=$4 RETURNING *",
+    [category ?? null, item ?? null, checked ?? null, params.id]
+  );
+  sendJson(res, 200, rows[0]);
+});
+
+route("DELETE", "/api/packing/:id", async (req, res, params) => {
+  await query("DELETE FROM packing_items WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");

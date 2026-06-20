@@ -148,6 +148,20 @@ const guestApi = {
   deleteExpense(id) {
     const d = _gr(); d.expenses = (d.expenses || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
   },
+  getPackingItems(tripId) {
+    return Promise.resolve((_gr().packing_items || []).filter(p => p.trip_id === tripId).sort((a, b) => (a.category < b.category ? -1 : 1)));
+  },
+  addPackingItem(tripId, data) {
+    const d = _gr(); const item = { ...data, id: _gid(), trip_id: tripId, checked: false, created_at: new Date().toISOString() };
+    d.packing_items = [...(d.packing_items || []), item]; _gw(d); return Promise.resolve(item);
+  },
+  updatePackingItem(id, data) {
+    const d = _gr(); let found;
+    d.packing_items = (d.packing_items || []).map(p => p.id === id ? (found = { ...p, ...data }) : p); _gw(d); return Promise.resolve(found);
+  },
+  deletePackingItem(id) {
+    const d = _gr(); d.packing_items = (d.packing_items || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
+  },
   importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
   createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
   getAdminTrips() { return Promise.resolve([]); },
@@ -187,6 +201,10 @@ const api = {
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
+  getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
+  addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
+  updatePackingItem: (id, d) => _guestMode ? guestApi.updatePackingItem(id, d) : apiFetch(`/api/packing/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deletePackingItem: (id) => _guestMode ? guestApi.deletePackingItem(id) : apiFetch(`/api/packing/${id}`, { method: "DELETE" }),
 };
 
 // ---------- Helpers ----------
@@ -2110,6 +2128,160 @@ function ShareModal({ tripId, onClose }) {
   );
 }
 
+// ---------- Packing tab ----------
+const PACKING_CATEGORIES = ["📄 Documenten", "👕 Kleding", "🔌 Elektronica", "🧴 Toilettas", "💊 Medicijnen", "🎒 Overig"];
+const PACKING_SUGGESTIONS = {
+  "📄 Documenten": ["Paspoort", "Vliegtickets", "Reisverzekering", "Rijbewijs", "Hotelvouchers", "Visabewijzen"],
+  "👕 Kleding": ["T-shirts", "Broeken", "Ondergoed", "Sokken", "Trui/vest", "Regenjas", "Zwemkleding", "Pyjama", "Schoenen", "Slippers"],
+  "🔌 Elektronica": ["Telefoon oplader", "Reisstekker adapter", "Powerbank", "Oordopjes", "Camera", "Laptop"],
+  "🧴 Toilettas": ["Tandenborstel", "Tandpasta", "Shampoo", "Douchegel", "Zonnebrandcrème", "Deodorant", "Scheerspullen"],
+  "💊 Medicijnen": ["Paracetamol", "Reizigersdiarree tabletten", "Pleisters", "Antihistamine", "Persoonlijke medicatie"],
+  "🎒 Overig": ["Reiskussen", "Slaapmasker", "Hangslot", "Paraplu", "Waterfles", "Snacks voor onderweg"],
+};
+
+function PackingTab({ tripId }) {
+  const [items, setItems] = useState([]);
+  const [newItem, setNewItem] = useState("");
+  const [newCategory, setNewCategory] = useState(PACKING_CATEGORIES[0]);
+  const [openCategory, setOpenCategory] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = React.useCallback(() => {
+    api.getPackingItems(tripId).then(data => { setItems(data); setLoading(false); });
+  }, [tripId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!newItem.trim()) return;
+    await api.addPackingItem(tripId, { category: newCategory, item: newItem.trim() });
+    setNewItem("");
+    load();
+  }
+
+  async function handleToggle(item) {
+    await api.updatePackingItem(item.id, { checked: !item.checked });
+    setItems(prev => prev.map(p => p.id === item.id ? { ...p, checked: !p.checked } : p));
+  }
+
+  async function handleDelete(id) {
+    await api.deletePackingItem(id);
+    setItems(prev => prev.filter(p => p.id !== id));
+  }
+
+  async function handleSuggest(cat, suggestion) {
+    if (items.some(p => p.category === cat && p.item === suggestion)) return;
+    await api.addPackingItem(tripId, { category: cat, item: suggestion });
+    load();
+  }
+
+  async function handleUncheckAll() {
+    await Promise.all(items.filter(p => p.checked).map(p => api.updatePackingItem(p.id, { checked: false })));
+    load();
+  }
+
+  const grouped = PACKING_CATEGORIES.reduce((acc, cat) => {
+    acc[cat] = items.filter(p => p.category === cat);
+    return acc;
+  }, {});
+  const checkedCount = items.filter(p => p.checked).length;
+
+  if (loading) return <div className="text-center py-12 text-gray-400">Laden...</div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Progress bar */}
+      {items.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium text-gray-700">{checkedCount} / {items.length} ingepakt</span>
+            {checkedCount > 0 && (
+              <button onClick={handleUncheckAll} className="text-xs text-gray-400 hover:text-gray-600">Alles uitvinken</button>
+            )}
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${items.length ? (checkedCount / items.length) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Add item */}
+      <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex gap-2">
+        <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
+          className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-400 shrink-0">
+          {PACKING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Item toevoegen..."
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 min-w-0" />
+        <button type="submit" className="bg-sky-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-sky-700 shrink-0">+</button>
+      </form>
+
+      {/* Categories */}
+      {PACKING_CATEGORIES.map(cat => {
+        const catItems = grouped[cat] || [];
+        const catChecked = catItems.filter(p => p.checked).length;
+        const isOpen = openCategory === cat;
+        const suggestions = (PACKING_SUGGESTIONS[cat] || []).filter(s => !catItems.some(p => p.item === s));
+        return (
+          <div key={cat} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <button onClick={() => setOpenCategory(isOpen ? null : cat)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-gray-800 text-sm">{cat}</span>
+                {catItems.length > 0 && (
+                  <span className="text-xs text-gray-400">{catChecked}/{catItems.length}</span>
+                )}
+              </div>
+              <span className="text-gray-400 text-xs">{isOpen ? "▲" : "▼"}</span>
+            </button>
+
+            {isOpen && (
+              <div className="border-t border-gray-50 px-4 pb-3">
+                {catItems.length === 0 && (
+                  <p className="text-xs text-gray-400 italic py-2">Nog geen items in deze categorie</p>
+                )}
+                <div className="divide-y divide-gray-50">
+                  {catItems.map(item => (
+                    <div key={item.id} className="flex items-center gap-3 py-2 group">
+                      <input type="checkbox" checked={item.checked} onChange={() => handleToggle(item)}
+                        className="w-4 h-4 rounded accent-sky-600 cursor-pointer shrink-0" />
+                      <span className={`flex-1 text-sm ${item.checked ? "line-through text-gray-400" : "text-gray-800"}`}>{item.item}</span>
+                      <button onClick={() => handleDelete(item.id)}
+                        className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑</button>
+                    </div>
+                  ))}
+                </div>
+                {suggestions.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-50">
+                    <p className="text-xs text-gray-400 mb-1.5">Suggesties:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestions.slice(0, 6).map(s => (
+                        <button key={s} onClick={() => handleSuggest(cat, s)}
+                          className="text-xs px-2 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700 transition-colors">
+                          + {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {items.length === 0 && (
+        <div className="text-center py-10 text-gray-400">
+          <div className="text-4xl mb-2">🎒</div>
+          <div className="text-sm">Nog niets op de paklijst</div>
+          <div className="text-xs mt-1">Voeg items toe of kies suggesties per categorie</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Trip detail ----------
 function TripDetail({ tripId, onBack, onChanged }) {
   const [trip, setTrip] = useState(null);
@@ -2150,6 +2322,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "map", label: "Kaart", icon: "🗺" },
+    { key: "packing", label: "Paklijst", icon: "🎒" },
   ];
 
   // Bottom nav tabs for mobile
@@ -2158,6 +2331,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "accommodation", icon: "🏨", label: "Verblijf" },
     { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "map", icon: "🗺", label: "Kaart" },
+    { key: "packing", icon: "🎒", label: "Paklijst" },
     { key: "budget", icon: "💰", label: "Budget" },
   ];
 
@@ -2287,6 +2461,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
+      {tab === "packing" && <PackingTab tripId={trip.id} />}
 
       {/* Mobile bottom nav */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>

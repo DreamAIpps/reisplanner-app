@@ -134,6 +134,15 @@ async function initDb() {
       amount NUMERIC(10,2) NOT NULL,
       paid_by TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS packing_items (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      category TEXT NOT NULL DEFAULT 'Overig',
+      item TEXT NOT NULL,
+      checked BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 
