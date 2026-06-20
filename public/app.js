@@ -972,7 +972,12 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {accommodations.map((acc) => (
+          {accommodations.map((acc) => {
+            const nights = (acc.check_in && acc.check_out)
+              ? Math.round((new Date(acc.check_out) - new Date(acc.check_in)) / 86400000)
+              : null;
+            const perNight = nights > 0 && acc.cost ? Number(acc.cost) / nights : null;
+            return (
             <div key={acc.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
               <div className="flex gap-4 items-start">
                 <div className="text-2xl">🏨</div>
@@ -983,8 +988,15 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
                     {acc.check_in && <span>Check-in: {fmt(acc.check_in)}</span>}
                     {acc.check_out && <span>Check-out: {fmt(acc.check_out)}</span>}
                     {acc.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{acc.booking_ref}</span>}
-                    {acc.cost && <span className="text-sky-700 font-medium">{fmtMoney(acc.cost)}</span>}
                   </div>
+                  {acc.cost && (
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-sky-700 font-medium text-sm">{fmtMoney(acc.cost, trip.currency)}</span>
+                      {perNight && nights && (
+                        <span className="text-xs text-gray-400">· {nights} {nights === 1 ? "nacht" : "nachten"} · <span className="text-gray-500 font-medium">{fmtMoney(perNight, trip.currency)}/nacht</span></span>
+                      )}
+                    </div>
+                  )}
                   {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1">
@@ -996,7 +1008,8 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
                 <HotelAiTip accommodationId={acc.id} />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
