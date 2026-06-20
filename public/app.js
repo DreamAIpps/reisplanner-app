@@ -781,6 +781,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
             const dayName = d ? DAY_NAMES[d.getDay()] : "";
             const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
             const totalItems = dayTransports.length + dayAccommodations.length + day.activities.length;
+            const nightAccommodation = dayStr ? accommodations.find(a => {
+              if (!a.check_in || !a.check_out) return false;
+              return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
+            }) : null;
 
             return (
               <div key={day.id} className="relative flex gap-4 pb-6">
@@ -800,9 +804,17 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                 {/* Day content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-2 pt-1.5">
-                    <div className="flex items-center gap-2">
-                      {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
-                      {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
+                        {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
+                      </div>
+                      {nightAccommodation && (
+                        <span className="text-xs text-amber-700 flex items-center gap-1">
+                          <span>🏨</span>
+                          <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setShowActivityForm({ dayId: day.id })}
