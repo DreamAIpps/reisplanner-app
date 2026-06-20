@@ -143,6 +143,9 @@ async function initDb() {
       checked BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Overig';
+    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS checked BOOLEAN DEFAULT FALSE;
   `);
 }
 
