@@ -599,7 +599,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
     cost: initial.cost ?? "",
     booking_ref: initial.booking_ref ?? "",
     notes: initial.notes ?? "",
-  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "" });
+  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -641,6 +641,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
           <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} /></Field>
           <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         </div>
+        <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
         <div className="flex items-center justify-between pt-2">
           <div className="flex justify-end gap-2">
@@ -849,6 +850,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                             </div>
                             <div className="text-sm font-medium text-gray-700 truncate">{t.from_location} → {t.to_location}</div>
                             {t.booking_ref && <div className="text-xs text-gray-400 font-mono sm:hidden">#{t.booking_ref}</div>}
+                            {t.baggage_allowance && <div className="text-xs text-blue-600 truncate">🧳 {t.baggage_allowance}</div>}
                           </div>
                           {t.to_location && (
                             <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
@@ -1098,6 +1100,7 @@ function TransportTab({ trip, transports, onRefresh }) {
                     {t.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
                     {t.cost && <span className="text-sky-700 font-medium">{fmtMoney(t.cost)}</span>}
                   </div>
+                  {t.baggage_allowance && <div className="text-sm text-blue-600 mt-1">🧳 {t.baggage_allowance}</div>}
                   {t.notes && <div className="text-sm text-gray-500 mt-1">{t.notes}</div>}
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1">

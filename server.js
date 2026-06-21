@@ -468,23 +468,23 @@ route("GET", "/api/trips/:id/transports", async (req, res, params) => {
 });
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
   const trip = tripRows[0];
   const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
   if (err) return sendError(res, 400, err);
   const { rows } = await query(
-    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
-    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null]
+    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null]
   );
   sendJson(res, 201, rows[0]);
 });
 
 route("PUT", "/api/transports/:id", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
   const { rows } = await query(
-    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8 WHERE id=$9 RETURNING *",
-    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, params.id]
+    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9 WHERE id=$10 RETURNING *",
+    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, params.id]
   );
   sendJson(res, 200, rows[0]);
 });
