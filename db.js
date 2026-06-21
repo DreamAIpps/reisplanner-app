@@ -122,8 +122,10 @@ async function initDb() {
       arrival_time TIMESTAMPTZ,
       booking_ref TEXT,
       cost NUMERIC(10,2),
-      notes TEXT
+      notes TEXT,
+      baggage_allowance TEXT
     );
+    ALTER TABLE transports ADD COLUMN IF NOT EXISTS baggage_allowance TEXT;
 
     CREATE TABLE IF NOT EXISTS expenses (
       id SERIAL PRIMARY KEY,
