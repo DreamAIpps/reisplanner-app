@@ -664,6 +664,45 @@ route("GET", "/auth/apple", async (req, res) => {
   res.end();
 });
 
+route("GET", "/auth/apple/client-id", async (req, res) => {
+  sendJson(res, 200, { clientId: process.env.APPLE_CLIENT_ID || null });
+});
+
+route("POST", "/auth/apple/js-callback", async (req, res, params, body) => {
+  const { id_token, name } = body;
+  if (!id_token) return sendJson(res, 400, { error: "Geen id_token ontvangen" });
+
+  let payload;
+  try {
+    payload = await verifyAppleIdToken(id_token);
+  } catch (err) {
+    console.error("Apple JS callback: token verification failed:", err.message);
+    const code = err.message.includes("expired") ? "expired" : err.message.includes("JWK") ? "jwk" : "invalid";
+    return sendJson(res, 401, { error: `apple-verify-${code}` });
+  }
+
+  const given_name = name?.firstName || null;
+  const family_name = name?.lastName || null;
+  const fullName = [given_name, family_name].filter(Boolean).join(" ") || null;
+
+  try {
+    const user = await findOrCreateUser({
+      apple_id: payload.sub,
+      email: payload.email || null,
+      email_verified: payload.email_verified === "true" || payload.email_verified === true,
+      name: fullName,
+      given_name,
+      family_name,
+    });
+    const sessionToken = await createSession(user.id);
+    setSessionCookie(res, sessionToken);
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error("Apple JS callback: findOrCreateUser failed:", err.message);
+    sendJson(res, 500, { error: "apple-db" });
+  }
+});
+
 route("POST", "/auth/apple/callback", async (req, res) => {
   const body = await readFormBody(req);
   console.log("Apple callback received. Keys in body:", [...body.keys()].join(", "));
