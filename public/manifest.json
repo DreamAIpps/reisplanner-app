@@ -1,11 +1,11 @@
 {
-  "name": "Reisplanner",
-  "short_name": "Reisplanner",
-  "description": "Jouw reizen, overzichtelijk gepland",
+  "name": "Mijn Wijnkelder",
+  "short_name": "Wijnkelder",
+  "description": "Beheer jouw wijnkelder",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0c4a6e",
-  "theme_color": "#0369a1",
+  "background_color": "#7c2d12",
+  "theme_color": "#7c2d12",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }

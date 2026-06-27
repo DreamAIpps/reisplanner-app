@@ -68,7 +68,6 @@ async function getSession(req) {
 
 async function findOrCreateUser({ google_id, apple_id, email, name, given_name, family_name, avatar, locale, email_verified }) {
   let existing = null;
-
   if (google_id) {
     const { rows } = await query("SELECT * FROM users WHERE google_id = $1", [google_id]);
     existing = rows[0] || null;
@@ -81,31 +80,22 @@ async function findOrCreateUser({ google_id, apple_id, email, name, given_name, 
     const { rows } = await query("SELECT * FROM users WHERE email = $1", [email]);
     existing = rows[0] || null;
   }
-
   if (existing) {
     const { rows } = await query(
-      `UPDATE users SET
-        email = COALESCE($1, email),
-        name = COALESCE($2, name),
-        given_name = COALESCE($3, given_name),
-        family_name = COALESCE($4, family_name),
-        avatar = COALESCE($5, avatar),
-        locale = COALESCE($6, locale),
-        email_verified = COALESCE($7, email_verified),
-        google_id = COALESCE($8, google_id),
-        apple_id = COALESCE($9, apple_id),
-        last_login_at = NOW(),
-        login_count = COALESCE(login_count, 0) + 1
-       WHERE id = $10 RETURNING *`,
-      [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null, email_verified||null, google_id||null, apple_id||null, existing.id]
+      `UPDATE users SET email=COALESCE($1,email), name=COALESCE($2,name), given_name=COALESCE($3,given_name),
+       family_name=COALESCE($4,family_name), avatar=COALESCE($5,avatar), locale=COALESCE($6,locale),
+       email_verified=COALESCE($7,email_verified), google_id=COALESCE($8,google_id), apple_id=COALESCE($9,apple_id),
+       last_login_at=NOW(), login_count=COALESCE(login_count,0)+1 WHERE id=$10 RETURNING *`,
+      [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null,
+       email_verified||null, google_id||null, apple_id||null, existing.id]
     );
     return rows[0];
   }
-
   const { rows } = await query(
     `INSERT INTO users (email, name, given_name, family_name, avatar, locale, email_verified, google_id, apple_id, last_login_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING *`,
-    [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null, email_verified||false, google_id||null, apple_id||null]
+    [email||null, name||null, given_name||null, family_name||null, avatar||null, locale||null,
+     email_verified||false, google_id||null, apple_id||null]
   );
   return rows[0];
 }
@@ -122,21 +112,8 @@ function setSessionCookie(res, token) {
 
 async function handlePostLogin(req, res, user) {
   const sessionToken = await createSession(user.id);
-  const cookies = [`session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`];
-  let redirect = "/";
-
-  const { invite } = parseCookies(req);
-  if (invite) {
-    const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [invite]);
-    if (rows.length) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
-      redirect = `/?trip=${rows[0].trip_id}`;
-    }
-    cookies.push("invite=; HttpOnly; Path=/; Max-Age=0");
-  }
-
-  res.setHeader("Set-Cookie", cookies);
-  res.writeHead(302, { Location: redirect });
+  res.setHeader("Set-Cookie", `session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`);
+  res.writeHead(302, { Location: "/" });
   res.end();
 }
 
@@ -147,7 +124,6 @@ function appUrl(req) {
 }
 
 async function readFormBody(req) {
-  // If body was already buffered by the auth middleware, reuse it
   if (req._rawBody) return new URLSearchParams(req._rawBody.toString());
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -169,14 +145,33 @@ async function generateAppleClientSecret() {
 async function verifyAppleIdToken(idToken) {
   const { keys } = await (await fetch("https://appleid.apple.com/auth/keys")).json();
   const [headerB64] = idToken.split(".");
-  // Convert base64url → base64 before decoding
   const headerJson = Buffer.from(headerB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString();
   const header = JSON.parse(headerJson);
   const jwk = keys.find((k) => k.kid === header.kid);
   if (!jwk) throw new Error(`Apple JWK niet gevonden (kid: ${header.kid})`);
   const pubKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
-  // Verify signature and expiry only — audience validation left to app logic
   return jwt.verify(idToken, pubKey, { algorithms: ["RS256"] });
+}
+
+// ---------- Password helpers ----------
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString("hex");
+    crypto.scrypt(password, salt, 64, (err, hash) => {
+      if (err) reject(err);
+      else resolve(`${salt}:${hash.toString("hex")}`);
+    });
+  });
+}
+
+function verifyPassword(password, stored) {
+  return new Promise((resolve, reject) => {
+    const [salt, hash] = stored.split(":");
+    crypto.scrypt(password, salt, 64, (err, derived) => {
+      if (err) reject(err);
+      else resolve(derived.toString("hex") === hash);
+    });
+  });
 }
 
 // ---------- Router ----------
@@ -209,251 +204,152 @@ function serveStatic(res, filePath) {
   });
 }
 
-// ---------- Invite routes ----------
-route("GET", "/invite/:token", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [params.token]);
-  if (!rows.length) { res.writeHead(302, { Location: "/?error=invalid-invite" }); res.end(); return; }
+// ---------- Wine routes ----------
+route("GET", "/api/wines/stats", async (req, res) => {
+  const { rows: totals } = await query(`
+    SELECT
+      COUNT(*)::int as total_labels,
+      COALESCE(SUM(bottles), 0)::int as total_bottles,
+      COALESCE(SUM(CASE WHEN price IS NOT NULL THEN price * bottles ELSE 0 END), 0)::numeric as total_value
+    FROM wines WHERE user_id = $1
+  `, [req.user.id]);
 
-  const user = await getSession(req);
-  if (!user) {
-    res.setHeader("Set-Cookie", `invite=${params.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`);
-    res.writeHead(302, { Location: "/login" });
-    res.end();
-    return;
-  }
+  const { rows: byType } = await query(`
+    SELECT type, COUNT(*)::int as labels, COALESCE(SUM(bottles),0)::int as bottles
+    FROM wines WHERE user_id = $1
+    GROUP BY type ORDER BY bottles DESC
+  `, [req.user.id]);
 
-  await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
-  res.writeHead(302, { Location: `/?trip=${rows[0].trip_id}` });
-  res.end();
+  const currentYear = new Date().getFullYear();
+  const { rows: readyToDrink } = await query(`
+    SELECT w.*, ROUND(AVG(t.rating),1)::float as avg_rating
+    FROM wines w LEFT JOIN tastings t ON t.wine_id = w.id
+    WHERE w.user_id = $1
+      AND w.drink_from <= $2
+      AND (w.drink_until IS NULL OR w.drink_until >= $2)
+      AND w.bottles > 0
+    GROUP BY w.id
+    ORDER BY w.drink_from ASC
+    LIMIT 10
+  `, [req.user.id, currentYear]);
+
+  sendJson(res, 200, { ...totals[0], by_type: byType, ready_to_drink: readyToDrink });
 });
 
-route("POST", "/api/trips/:id/invite", async (req, res, params) => {
-  const { rows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
-  if (!rows.length) return sendError(res, 403, "Alleen de eigenaar kan uitnodigen");
-  const token = crypto.randomBytes(16).toString("hex");
-  await query("INSERT INTO trip_invites (token, trip_id, created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [token, params.id, req.user.id]);
-  sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}` });
-});
-
-// ---------- Admin routes ----------
-route("GET", "/api/admin/users", async (req, res) => {
-  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+route("GET", "/api/wines", async (req, res) => {
   const { rows } = await query(`
-    SELECT u.id, u.name, u.given_name, u.family_name, u.email, u.avatar, u.is_admin,
-           u.last_login_at, u.created_at, u.google_id, u.apple_id,
-           u.password_hash IS NOT NULL as has_password,
-           COALESCE(u.login_count, 0) as login_count,
-           COUNT(s.token) FILTER (WHERE s.created_at > NOW() - INTERVAL '24 hours') as logins_24h
-    FROM users u
-    LEFT JOIN sessions s ON s.user_id = u.id
-    GROUP BY u.id
-    ORDER BY u.created_at DESC`);
-  sendJson(res, 200, rows);
-});
-
-route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => {
-  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { user_id } = body;
-  const { rows } = await query("UPDATE trips SET user_id = $1 WHERE id = $2 RETURNING *", [user_id, params.id]);
-  if (!rows.length) return sendError(res, 404, "Trip not found");
-  sendJson(res, 200, rows[0]);
-});
-
-route("GET", "/api/admin/trips", async (req, res) => {
-  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { rows } = await query(`
-    SELECT t.*, u.name as user_name, u.email as user_email, u.avatar as user_avatar,
-      COALESCE(SUM(e.amount), 0) as total_spent,
-      COUNT(DISTINCT a.id) as activity_count
-    FROM trips t
-    LEFT JOIN users u ON u.id = t.user_id
-    LEFT JOIN expenses e ON e.trip_id = t.id
-    LEFT JOIN activities a ON a.trip_id = t.id
-    GROUP BY t.id, u.name, u.email, u.avatar
-    ORDER BY u.name ASC, t.start_date DESC NULLS LAST
-  `);
-  sendJson(res, 200, rows);
-});
-
-// ---------- Trip routes ----------
-route("GET", "/api/trips", async (req, res) => {
-  const { rows } = await query(`
-    SELECT t.*, (t.user_id = $1) as is_owner,
-      COALESCE(SUM(e.amount), 0) as total_spent,
-      COUNT(DISTINCT a.id) as activity_count
-    FROM trips t
-    LEFT JOIN expenses e ON e.trip_id = t.id
-    LEFT JOIN activities a ON a.trip_id = t.id
-    WHERE t.user_id = $1 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = t.id AND user_id = $1)
-    GROUP BY t.id
-    ORDER BY t.start_date DESC NULLS LAST, t.created_at DESC
+    SELECT w.*,
+      ROUND(AVG(t.rating),1)::float as avg_rating,
+      COUNT(t.id)::int as tasting_count
+    FROM wines w
+    LEFT JOIN tastings t ON t.wine_id = w.id
+    WHERE w.user_id = $1
+    GROUP BY w.id
+    ORDER BY w.created_at DESC
   `, [req.user.id]);
   sendJson(res, 200, rows);
 });
 
-route("GET", "/api/trips/:id", async (req, res, params) => {
-  const { rows } = await query(
-    "SELECT *, (user_id = $2) as is_owner FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))",
-    [params.id, req.user.id]
-  );
-  if (!rows.length) return sendError(res, 404, "Trip not found");
-  sendJson(res, 200, rows[0]);
-});
-
-route("POST", "/api/trips", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
-  if (!name) return sendError(res, 400, "Name is required");
-  const { rows } = await query(
-    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, req.user.id]
-  );
-  // Auto-create day entries if dates are set
-  if (start_date && end_date) {
-    const trip = rows[0];
-    const start = new Date(start_date);
-    const end = new Date(end_date);
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      await query("INSERT INTO days (trip_id, date) VALUES ($1, $2)", [trip.id, d.toISOString().slice(0, 10)]);
-    }
-  }
+route("POST", "/api/wines", async (req, res, params, body) => {
+  const { name, producer, vintage_year, region, country, grape_variety, type, price, purchase_date, bottles, rack, notes, label_image, drink_from, drink_until } = body;
+  if (!name) return sendError(res, 400, "Naam is verplicht");
+  const { rows } = await query(`
+    INSERT INTO wines (user_id, name, producer, vintage_year, region, country, grape_variety, type, price, purchase_date, bottles, rack, notes, label_image, drink_from, drink_until)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *
+  `, [req.user.id, name, producer||null, vintage_year||null, region||null, country||null, grape_variety||null, type||"Rood", price||null, purchase_date||null, bottles||1, rack||null, notes||null, label_image||null, drink_from||null, drink_until||null]);
   sendJson(res, 201, rows[0]);
 });
 
-route("PUT", "/api/trips/:id", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
-  const { rows } = await query(
-    `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
-     WHERE id=$11 AND user_id=$12 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, params.id, req.user.id]
-  );
-  if (!rows.length) return sendError(res, 404, "Trip not found");
+route("GET", "/api/wines/:id", async (req, res, params) => {
+  const { rows } = await query(`
+    SELECT w.*, ROUND(AVG(t.rating),1)::float as avg_rating, COUNT(t.id)::int as tasting_count
+    FROM wines w LEFT JOIN tastings t ON t.wine_id = w.id
+    WHERE w.id = $1 AND w.user_id = $2 GROUP BY w.id
+  `, [params.id, req.user.id]);
+  if (!rows.length) return sendError(res, 404, "Wijn niet gevonden");
   sendJson(res, 200, rows[0]);
 });
 
-route("DELETE", "/api/trips/:id", async (req, res, params) => {
-  await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
-  res.writeHead(204); res.end();
-});
-
-// ---------- Days & activities ----------
-route("GET", "/api/trips/:id/days", async (req, res, params) => {
-  const { rows: days } = await query("SELECT * FROM days WHERE trip_id = $1 ORDER BY date ASC", [params.id]);
-  const { rows: acts } = await query("SELECT * FROM activities WHERE trip_id = $1 ORDER BY time ASC NULLS LAST, id ASC", [params.id]);
-  const result = days.map((d) => ({ ...d, activities: acts.filter((a) => a.day_id === d.id) }));
-  sendJson(res, 200, result);
-});
-
-route("POST", "/api/trips/:id/days", async (req, res, params, body) => {
-  const { date, title, notes } = body;
-  const { rows } = await query(
-    "INSERT INTO days (trip_id, date, title, notes) VALUES ($1,$2,$3,$4) RETURNING *",
-    [params.id, date, title||null, notes||null]
-  );
-  sendJson(res, 201, { ...rows[0], activities: [] });
-});
-
-route("PUT", "/api/days/:id", async (req, res, params, body) => {
-  const { title, notes } = body;
-  const { rows } = await query("UPDATE days SET title=$1, notes=$2 WHERE id=$3 RETURNING *", [title||null, notes||null, params.id]);
+route("PUT", "/api/wines/:id", async (req, res, params, body) => {
+  const { name, producer, vintage_year, region, country, grape_variety, type, price, purchase_date, bottles, rack, notes, label_image, drink_from, drink_until } = body;
+  if (!name) return sendError(res, 400, "Naam is verplicht");
+  const { rows } = await query(`
+    UPDATE wines SET name=$1, producer=$2, vintage_year=$3, region=$4, country=$5, grape_variety=$6,
+      type=$7, price=$8, purchase_date=$9, bottles=$10, rack=$11, notes=$12, label_image=$13, drink_from=$14, drink_until=$15
+    WHERE id=$16 AND user_id=$17 RETURNING *
+  `, [name, producer||null, vintage_year||null, region||null, country||null, grape_variety||null, type||"Rood", price||null, purchase_date||null, bottles||1, rack||null, notes||null, label_image||null, drink_from||null, drink_until||null, params.id, req.user.id]);
+  if (!rows.length) return sendError(res, 404, "Wijn niet gevonden");
   sendJson(res, 200, rows[0]);
 });
 
-route("DELETE", "/api/days/:id", async (req, res, params) => {
-  await query("DELETE FROM days WHERE id = $1", [params.id]);
+route("DELETE", "/api/wines/:id", async (req, res, params) => {
+  await query("DELETE FROM wines WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
 });
 
-route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
-  const { trip_id, time, title, location, notes, category, cost } = body;
+// ---------- Tastings ----------
+route("GET", "/api/wines/:id/tastings", async (req, res, params) => {
   const { rows } = await query(
-    "INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-    [params.id, trip_id, time||null, title, location||null, notes||null, category||"activity", cost||null]
+    "SELECT * FROM tastings WHERE wine_id = $1 ORDER BY tasting_date DESC NULLS LAST, created_at DESC",
+    [params.id]
   );
-  sendJson(res, 201, rows[0]);
-});
-
-route("PUT", "/api/activities/:id", async (req, res, params, body) => {
-  const { time, title, location, notes, category, cost } = body;
-  const { rows } = await query(
-    "UPDATE activities SET time=$1, title=$2, location=$3, notes=$4, category=$5, cost=$6 WHERE id=$7 RETURNING *",
-    [time||null, title, location||null, notes||null, category||"activity", cost||null, params.id]
-  );
-  sendJson(res, 200, rows[0]);
-});
-
-route("DELETE", "/api/activities/:id", async (req, res, params) => {
-  await query("DELETE FROM activities WHERE id = $1", [params.id]);
-  res.writeHead(204); res.end();
-});
-
-// ---------- Date validation helper ----------
-function checkDateInRange(dateStr, tripStart, tripEnd) {
-  if (!dateStr || !tripStart || !tripEnd) return null;
-  const date = new Date(dateStr).toISOString().slice(0, 10);
-  const start = new Date(tripStart).toISOString().slice(0, 10);
-  const end = new Date(tripEnd).toISOString().slice(0, 10);
-  if (date < start || date > end) {
-    return `Deze datum (${new Date(date).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}) valt buiten de reisperiode (${new Date(start).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })} – ${new Date(end).toLocaleDateString("nl-NL", { day: "numeric", month: "long" })}).`;
-  }
-  return null;
-}
-
-// ---------- Accommodation ----------
-route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM accommodations WHERE trip_id = $1 ORDER BY check_in ASC NULLS LAST", [params.id]);
   sendJson(res, 200, rows);
 });
 
-route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
-  const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
-  const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
-  const trip = tripRows[0];
-  const err = checkDateInRange(check_in, trip?.start_date, trip?.end_date) || checkDateInRange(check_out, trip?.start_date, trip?.end_date);
-  if (err) return sendError(res, 400, err);
-  const { rows } = await query(
-    "INSERT INTO accommodations (trip_id, name, check_in, check_out, address, booking_ref, cost, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-    [params.id, name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null]
-  );
+route("POST", "/api/wines/:id/tastings", async (req, res, params, body) => {
+  const { tasting_date, rating, notes, nose, palate, finish } = body;
+  const { rows } = await query(`
+    INSERT INTO tastings (wine_id, user_id, tasting_date, rating, notes, nose, palate, finish)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+  `, [params.id, req.user.id, tasting_date||null, rating||null, notes||null, nose||null, palate||null, finish||null]);
   sendJson(res, 201, rows[0]);
 });
 
-route("PUT", "/api/accommodations/:id", async (req, res, params, body) => {
-  const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
-  const { rows } = await query(
-    "UPDATE accommodations SET name=$1, check_in=$2, check_out=$3, address=$4, booking_ref=$5, cost=$6, notes=$7 WHERE id=$8 RETURNING *",
-    [name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, params.id]
-  );
+route("PUT", "/api/tastings/:id", async (req, res, params, body) => {
+  const { tasting_date, rating, notes, nose, palate, finish } = body;
+  const { rows } = await query(`
+    UPDATE tastings SET tasting_date=$1, rating=$2, notes=$3, nose=$4, palate=$5, finish=$6
+    WHERE id=$7 AND user_id=$8 RETURNING *
+  `, [tasting_date||null, rating||null, notes||null, nose||null, palate||null, finish||null, params.id, req.user.id]);
+  if (!rows.length) return sendError(res, 404, "Notitie niet gevonden");
   sendJson(res, 200, rows[0]);
 });
 
-route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
-  await query("DELETE FROM accommodations WHERE id = $1", [params.id]);
+route("DELETE", "/api/tastings/:id", async (req, res, params) => {
+  await query("DELETE FROM tastings WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
 });
 
-route("GET", "/api/accommodations/:id/ai-tip", async (req, res, params) => {
-  const { rows } = await query(
-    `SELECT a.*, t.destination FROM accommodations a JOIN trips t ON t.id = a.trip_id WHERE a.id = $1`,
-    [params.id]
-  );
-  if (!rows.length) return sendError(res, 404, "Niet gevonden");
-  const acc = rows[0];
-  const hotelName = acc.name || "dit hotel";
-  const city = acc.destination || (acc.address ? acc.address.split(",").slice(-2).join(",").trim() : "");
-  const priceInfo = acc.cost ? `De geboekte prijs is €${acc.cost}.` : "";
+// ---------- AI tips ----------
+route("GET", "/api/wines/:id/ai-tip", async (req, res, params) => {
+  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+  const { rows } = await query("SELECT * FROM wines WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!rows.length) return sendError(res, 404, "Wijn niet gevonden");
+  const wine = rows[0];
 
-  const prompt = `Je bent een reisassistent. Geef een korte tip voor het hotel "${hotelName}"${city ? ` in ${city}` : ""}.
-${priceInfo}
-Geef:
-1. De ligging van het hotel t.o.v. bekende bezienswaardigheden of wijken (bijv. afstand tot centrum, toeristische hotspots). Voeg een relevante URL toe (bijv. Google Maps of officiële hotelsite).
-2. Twee vergelijkbare hotels in dezelfde stad en prijsklasse als alternatief, elk met een boekings-URL (booking.com, hotels.com of officiële site).
-Return ONLY valid JSON, no markdown:
-{"location_tip":"...","location_url":"https://...","alternatives":[{"name":"Hotel A","reason":"...","url":"https://..."},{"name":"Hotel B","reason":"...","url":"https://..."}]}`;
+  const url = new URL(req.url, "http://localhost");
+  const tipType = url.searchParams.get("type") || "pairing";
+
+  const wineDesc = [
+    wine.vintage_year,
+    wine.producer,
+    wine.name,
+    wine.region ? `uit ${wine.region}` : null,
+    wine.grape_variety ? `(${wine.grape_variety})` : null,
+  ].filter(Boolean).join(" ");
+
+  let prompt;
+  if (tipType === "pairing") {
+    prompt = `Geef 3 specifieke spijscombinaties voor ${wine.type || "wijn"} "${wineDesc}". Return ONLY valid JSON, no markdown: {"pairings":[{"dish":"...","reason":"..."},{"dish":"...","reason":"..."},{"dish":"...","reason":"..."}]}`;
+  } else if (tipType === "window") {
+    prompt = `Geef advies over het drinkmoment voor ${wine.type || "wijn"} "${wineDesc}"${wine.drink_from ? `. Aangegeven periode: ${wine.drink_from}–${wine.drink_until || "?"}` : ""}. Return ONLY valid JSON, no markdown: {"advice":"...","optimal_year":"...","peak":"..."}`;
+  } else {
+    prompt = `Geef 3 vergelijkbare wijnen als "${wineDesc}" die de gebruiker kan proberen. Return ONLY valid JSON, no markdown: {"wines":[{"name":"...","producer":"...","region":"...","reason":"..."},{"name":"...","producer":"...","region":"...","reason":"..."},{"name":"...","producer":"...","region":"...","reason":"..."}]}`;
+  }
 
   const msg = await anthropicClient.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 400,
+    max_tokens: 600,
     messages: [{ role: "user", content: prompt }],
   });
   const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
@@ -461,60 +357,18 @@ Return ONLY valid JSON, no markdown:
   catch { sendError(res, 500, "Kon tip niet verwerken"); }
 });
 
-// ---------- Transport ----------
-route("GET", "/api/trips/:id/transports", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);
+// ---------- Admin ----------
+route("GET", "/api/admin/users", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query(`
+    SELECT id, name, email, avatar, is_admin, last_login_at, created_at,
+           COALESCE(login_count, 0) as login_count
+    FROM users ORDER BY created_at DESC
+  `);
   sendJson(res, 200, rows);
 });
 
-route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
-  const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
-  const trip = tripRows[0];
-  const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
-  if (err) return sendError(res, 400, err);
-  const { rows } = await query(
-    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
-    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null]
-  );
-  sendJson(res, 201, rows[0]);
-});
-
-route("PUT", "/api/transports/:id", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
-  const { rows } = await query(
-    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9 WHERE id=$10 RETURNING *",
-    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, params.id]
-  );
-  sendJson(res, 200, rows[0]);
-});
-
-route("DELETE", "/api/transports/:id", async (req, res, params) => {
-  await query("DELETE FROM transports WHERE id = $1", [params.id]);
-  res.writeHead(204); res.end();
-});
-
 // ---------- Auth routes ----------
-// ---------- Password helpers ----------
-function hashPassword(password) {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    crypto.scrypt(password, salt, 64, (err, hash) => {
-      if (err) reject(err);
-      else resolve(`${salt}:${hash.toString("hex")}`);
-    });
-  });
-}
-function verifyPassword(password, stored) {
-  return new Promise((resolve, reject) => {
-    const [salt, hash] = stored.split(":");
-    crypto.scrypt(password, salt, 64, (err, derived) => {
-      if (err) reject(err);
-      else resolve(derived.toString("hex") === hash);
-    });
-  });
-}
-
 route("POST", "/auth/register", async (req, res, params, body) => {
   const { email, password, name } = body;
   if (!email || !password) return sendJson(res, 400, { error: "E-mail en wachtwoord zijn verplicht" });
@@ -524,21 +378,11 @@ route("POST", "/auth/register", async (req, res, params, body) => {
   const hash = await hashPassword(password);
   const displayName = name?.trim() || email.split("@")[0];
   const result = await query(
-    "INSERT INTO users (email, name, password_hash, email_verified, last_login_at) VALUES ($1, $2, $3, false, NOW()) RETURNING id",
+    "INSERT INTO users (email, name, password_hash, email_verified, last_login_at) VALUES ($1,$2,$3,false,NOW()) RETURNING id",
     [email.toLowerCase(), displayName, hash]
   );
-  const userId = result.rows[0].id;
-  const token = await createSession(userId);
+  const token = await createSession(result.rows[0].id);
   setSessionCookie(res, token);
-  const cookies = parseCookies(req);
-  const inviteToken = cookies["invite_token"];
-  if (inviteToken) {
-    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
-    if (inv.rows.length > 0) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, userId]);
-    }
-    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
-  }
   sendJson(res, 200, { ok: true });
 });
 
@@ -550,18 +394,9 @@ route("POST", "/auth/login/password", async (req, res, params, body) => {
   if (!user || !user.password_hash) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) return sendJson(res, 401, { error: "Onbekend e-mailadres of onjuist wachtwoord" });
-  await query("UPDATE users SET last_login_at = NOW(), login_count = COALESCE(login_count, 0) + 1 WHERE id = $1", [user.id]);
+  await query("UPDATE users SET last_login_at=NOW(), login_count=COALESCE(login_count,0)+1 WHERE id=$1", [user.id]);
   const token = await createSession(user.id);
   setSessionCookie(res, token);
-  const cookies = parseCookies(req);
-  const inviteToken = cookies["invite_token"];
-  if (inviteToken) {
-    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
-    if (inv.rows.length > 0) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, user.id]);
-    }
-    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
-  }
   sendJson(res, 200, { ok: true });
 });
 
@@ -593,357 +428,68 @@ route("GET", "/auth/google/callback", async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const code = url.searchParams.get("code");
   if (!code) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
-
   const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code, grant_type: "authorization_code",
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: `${appUrl(req)}/auth/google/callback`,
-    }),
+    body: new URLSearchParams({ code, grant_type: "authorization_code", client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: `${appUrl(req)}/auth/google/callback` }),
   });
   const tokenData = await tokenResp.json();
   if (!tokenData.access_token) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
-
-  const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
-  });
+  const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
   const u = await userResp.json();
   if (!u.sub) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
-
-  const user = await findOrCreateUser({
-    google_id: u.sub,
-    email: u.email,
-    name: u.name,
-    given_name: u.given_name,
-    family_name: u.family_name,
-    avatar: u.picture,
-    locale: u.locale,
-    email_verified: u.email_verified,
-  });
+  const user = await findOrCreateUser({ google_id: u.sub, email: u.email, name: u.name, given_name: u.given_name, family_name: u.family_name, avatar: u.picture, locale: u.locale, email_verified: u.email_verified });
   await handlePostLogin(req, res, user);
 });
 
-route("GET", "/auth/apple/config-check", async (req, res) => {
-  const redirectUri = `${appUrl(req)}/auth/apple/callback`;
-  const clientId = process.env.APPLE_CLIENT_ID || "(niet ingesteld)";
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(`<!DOCTYPE html><html><body style="font-family:monospace;padding:24px;max-width:600px">
-    <h2>Apple Sign In configuratie</h2>
-    <p><b>APPLE_CLIENT_ID:</b> ${clientId}</p>
-    <p><b>redirect_uri die naar Apple wordt gestuurd:</b><br><code style="background:#f0f0f0;padding:4px 8px;border-radius:4px;word-break:break-all">${redirectUri}</code></p>
-    <hr>
-    <p>Controleer in <a href="https://developer.apple.com/account/resources/identifiers/list/serviceId">Apple Developer Console</a> of:</p>
-    <ul>
-      <li>Er een <b>Service ID</b> bestaat met identifier <b>${clientId}</b></li>
-      <li>De Return URL exact is: <b>${redirectUri}</b></li>
-    </ul>
-  </body></html>`);
-});
-
 route("GET", "/auth/apple", async (req, res) => {
-  if (!process.env.APPLE_CLIENT_ID) {
-    console.error("Apple Sign In: APPLE_CLIENT_ID is not set");
-    res.writeHead(302, { Location: "/login?error=apple-config" });
-    res.end();
-    return;
-  }
+  if (!process.env.APPLE_CLIENT_ID) { res.writeHead(302, { Location: "/login?error=apple-config" }); res.end(); return; }
   const state = crypto.randomBytes(16).toString("hex");
-  const params = new URLSearchParams({
-    client_id: process.env.APPLE_CLIENT_ID,
-    redirect_uri: `${appUrl(req)}/auth/apple/callback`,
-    response_type: "code id_token",
-    scope: "name email",
-    response_mode: "form_post",
-    state,
-  });
-  console.log("Apple Sign In: redirecting to Apple with redirect_uri:", `${appUrl(req)}/auth/apple/callback`);
+  const params = new URLSearchParams({ client_id: process.env.APPLE_CLIENT_ID, redirect_uri: `${appUrl(req)}/auth/apple/callback`, response_type: "code id_token", scope: "name email", response_mode: "form_post", state });
   res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
   res.end();
 });
 
 route("POST", "/auth/apple/callback", async (req, res) => {
   const body = await readFormBody(req);
-  console.log("Apple callback received. Keys in body:", [...body.keys()].join(", "));
   const appleError = body.get("error");
-  if (appleError) {
-    console.error("Apple callback error from Apple:", appleError);
-    res.writeHead(302, { Location: `/login?error=apple-${appleError}` });
-    res.end();
-    return;
-  }
+  if (appleError) { res.writeHead(302, { Location: `/login?error=apple-${appleError}` }); res.end(); return; }
   const idToken = body.get("id_token");
-  if (!idToken) {
-    console.error("Apple callback: no id_token in body");
-    res.writeHead(302, { Location: "/login?error=apple-no-token" });
-    res.end();
-    return;
-  }
-
+  if (!idToken) { res.writeHead(302, { Location: "/login?error=apple-no-token" }); res.end(); return; }
   let payload;
-  try {
-    payload = await verifyAppleIdToken(idToken);
-  } catch (err) {
-    console.error("Apple id_token verification failed:", err.message);
+  try { payload = await verifyAppleIdToken(idToken); }
+  catch (err) {
     const code = err.message.includes("expired") ? "expired" : err.message.includes("JWK") ? "jwk" : "invalid";
-    res.writeHead(302, { Location: `/login?error=apple-verify-${code}` });
-    res.end();
-    return;
+    res.writeHead(302, { Location: `/login?error=apple-verify-${code}` }); res.end(); return;
   }
-
   let given_name = null, family_name = null;
-  try {
-    const u = JSON.parse(body.get("user") || "{}");
-    given_name = u.name?.firstName || null;
-    family_name = u.name?.lastName || null;
-  } catch {}
+  try { const u = JSON.parse(body.get("user") || "{}"); given_name = u.name?.firstName || null; family_name = u.name?.lastName || null; } catch {}
   const name = [given_name, family_name].filter(Boolean).join(" ") || null;
-
   try {
-    const user = await findOrCreateUser({
-      apple_id: payload.sub,
-      email: payload.email || null,
-      email_verified: payload.email_verified === "true" || payload.email_verified === true,
-      name,
-      given_name,
-      family_name,
-    });
+    const user = await findOrCreateUser({ apple_id: payload.sub, email: payload.email || null, email_verified: payload.email_verified === "true" || payload.email_verified === true, name, given_name, family_name });
     await handlePostLogin(req, res, user);
-  } catch (err) {
-    console.error("Apple callback: findOrCreateUser/handlePostLogin failed:", err.message);
-    res.writeHead(302, { Location: "/login?error=apple-db" });
-    res.end();
-  }
+  } catch { res.writeHead(302, { Location: "/login?error=apple-db" }); res.end(); }
 });
 
-// ---------- App icon (SVG, used as PWA icon) ----------
+// ---------- App icons ----------
 route("GET", "/icon-192.png", async (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#0369a1"/><text x="96" y="130" font-size="100" text-anchor="middle">✈️</text></svg>`;
-  res.writeHead(200, { "Content-Type": "image/svg+xml" });
-  res.end(svg);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#7c2d12"/><text x="96" y="130" font-size="100" text-anchor="middle">🍷</text></svg>`;
+  res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg);
 });
 route("GET", "/icon-512.png", async (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="#0369a1"/><text x="256" y="340" font-size="260" text-anchor="middle">✈️</text></svg>`;
-  res.writeHead(200, { "Content-Type": "image/svg+xml" });
-  res.end(svg);
-});
-
-// ---------- AI destination tips ----------
-route("GET", "/api/trips/:id/tips", async (req, res, params) => {
-  const tripResult = await query("SELECT destination, start_date, end_date FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
-  if (!tripResult.rows.length) return sendError(res, 404, "Reis niet gevonden");
-  const urlObj = new URL(req.url, "http://localhost");
-  const destination = urlObj.searchParams.get("location") || tripResult.rows[0]?.destination;
-  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
-  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
-
-  const { start_date, end_date } = tripResult.rows[0];
-  const MONTHS_NL = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
-  let periodHint = "";
-  let dateRange = "";
-  if (start_date) {
-    const s = new Date(start_date);
-    const e = end_date ? new Date(end_date) : s;
-    const startMonth = MONTHS_NL[s.getUTCMonth()];
-    const endMonth = MONTHS_NL[e.getUTCMonth()];
-    periodHint = startMonth === endMonth
-      ? ` De reis is in ${startMonth}.`
-      : ` De reis is van ${startMonth} tot ${endMonth}.`;
-    dateRange = ` van ${s.getUTCDate()} ${startMonth} tot ${e.getUTCDate()} ${endMonth} ${e.getUTCFullYear()}`;
-  }
-
-  const category = urlObj.searchParams.get("category");
-
-  const client = anthropicClient;
-
-  if (category) {
-    const isEvents = category === "Evenementen & agenda";
-    const itemCount = isEvents ? 3 : 2;
-    const itemTemplate = `{"text":"tip","url":"https://... of null"}`;
-    const prompt = isEvents
-      ? `Geef ${itemCount} specifieke festivals, evenementen of markten in de buurt van "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Als het een hotelnaam is, gebruik de stad/regio. Voeg per item een relevante website-URL toe (officiële site, ticketsite of informatiesite). Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate},${itemTemplate}]}`
-      : `Geef ${itemCount} praktische reisTips over "${category.toLowerCase()}" voor een bezoeker van "${destination}" in het Nederlands.${periodHint} Als het een hotelnaam is, geef tips voor die stad/regio. Voeg per tip een relevante website-URL toe (app-store, boekingssite, informatiesite, etc.) indien beschikbaar, anders null. Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate}]}`;
-
-    const msg = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 600,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-    try {
-      const parsed = JSON.parse(raw);
-      sendJson(res, 200, { items: parsed.items || [] });
-    } catch { sendError(res, 500, "Kon tips niet verwerken"); }
-    return;
-  }
-
-  // No category — return only did_you_know (shown immediately on mount)
-  const msg = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 150,
-    messages: [{ role: "user", content: `Geef één verrassend en weinig bekend feitje over "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown: {"did_you_know":"feitje"}` }],
-  });
-  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-  try { sendJson(res, 200, JSON.parse(raw)); }
-  catch { sendError(res, 500, "Kon tips niet verwerken"); }
-});
-
-// ---------- Photo suggestion via Unsplash ----------
-route("GET", "/api/photo-suggest", async (req, res, params, body) => {
-  const url = new URL(req.url, "http://localhost");
-  const destination = url.searchParams.get("destination") || "";
-  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
-  if (!process.env.UNSPLASH_ACCESS_KEY) return sendError(res, 503, "UNSPLASH_ACCESS_KEY niet geconfigureerd");
-
-  const apiUrl = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(destination + " travel landscape")}&orientation=landscape&content_filter=high&client_id=${process.env.UNSPLASH_ACCESS_KEY}`;
-  const resp = await fetch(apiUrl);
-  if (!resp.ok) return sendError(res, 502, "Unsplash API fout");
-  const data = await resp.json();
-  sendJson(res, 200, {
-    url: data.urls.regular,
-    thumb: data.urls.small,
-    author: data.user.name,
-    author_link: data.user.links.html,
-  });
-});
-
-// ---------- Import (email parsing via Claude) ----------
-route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
-  const { text, image } = body;
-  if (!text?.trim() && !image) return sendError(res, 400, "Geen tekst of afbeelding opgegeven");
-  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
-
-  const tripRow2 = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
-  const toIso = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
-  const tripStartStr = toIso(tripRow2.rows[0]?.start_date);
-  const tripEndStr = toIso(tripRow2.rows[0]?.end_date);
-  const tripYear = tripStartStr ? tripStartStr.slice(0, 4) : null;
-  const tripYearHint = tripYear ? `\nIMPORTANT: This trip takes place from ${tripStartStr} to ${tripEndStr} (year: ${tripYear}). Any date without a year MUST use year ${tripYear}. Never use any other year.` : "";
-
-  const client = anthropicClient;
-  const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
-{
-  "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
-  "accommodations": [{"name": "", "check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "address": "", "booking_ref": "", "cost": null, "notes": ""}],
-  "activities": [{"date": "YYYY-MM-DD or null", "time": "HH:MM or null", "title": "", "location": "", "category": "Bezienswaardigheid|Restaurant|Museum|Natuur|Sport|Shopping|Anders", "cost": null, "notes": ""}]
-}
-Only include items actually present. Use null for missing values. Return empty arrays if nothing found. Activities are things like museum tickets, restaurant reservations, tours, events, excursions.${tripYearHint}`;
-
-  const content = image
-    ? [{ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }, { type: "text", text: prompt }]
-    : [{ type: "text", text: `${prompt}\n\nEmail text:\n${text}` }];
-
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    messages: [{ role: "user", content }],
-  });
-
-  const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-  try {
-    const parsed = JSON.parse(raw);
-
-    // Force correct year on all dates if trip year is known
-    const forceYear = (dateStr) => {
-      if (!dateStr || !tripYear) return dateStr;
-      return tripYear + "-" + String(dateStr).slice(5, 10);
-    };
-    const forceDtYear = (dtStr) => {
-      if (!dtStr || !tripYear) return dtStr;
-      return tripYear + "-" + String(dtStr).slice(5);
-    };
-
-    const transports = (parsed.transports || []).map((t) => ({
-      ...t,
-      departure_time: t.departure_time ? forceDtYear(t.departure_time) : null,
-      arrival_time: t.arrival_time ? forceDtYear(t.arrival_time) : null,
-    }));
-    const accommodations = (parsed.accommodations || []).map((a) => ({
-      ...a,
-      check_in: a.check_in ? forceYear(a.check_in) : null,
-      check_out: a.check_out ? forceYear(a.check_out) : null,
-    }));
-    const activities = (parsed.activities || []).map((a) => ({
-      ...a,
-      date: a.date ? forceYear(a.date) : null,
-    }));
-
-    sendJson(res, 200, { transports, accommodations, activities });
-  } catch {
-    sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
-  }
-});
-
-// ---------- Expenses ----------
-route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM expenses WHERE trip_id = $1 ORDER BY date ASC NULLS LAST, id ASC", [params.id]);
-  sendJson(res, 200, rows);
-});
-
-route("POST", "/api/trips/:id/expenses", async (req, res, params, body) => {
-  const { date, category, description, amount, paid_by } = body;
-  const { rows } = await query(
-    "INSERT INTO expenses (trip_id, date, category, description, amount, paid_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
-    [params.id, date||null, category||null, description, amount, paid_by||null]
-  );
-  sendJson(res, 201, rows[0]);
-});
-
-route("PUT", "/api/expenses/:id", async (req, res, params, body) => {
-  const { date, category, description, amount, paid_by } = body;
-  const { rows } = await query(
-    "UPDATE expenses SET date=$1, category=$2, description=$3, amount=$4, paid_by=$5 WHERE id=$6 RETURNING *",
-    [date||null, category||null, description, amount, paid_by||null, params.id]
-  );
-  sendJson(res, 200, rows[0]);
-});
-
-route("DELETE", "/api/expenses/:id", async (req, res, params) => {
-  await query("DELETE FROM expenses WHERE id = $1", [params.id]);
-  res.writeHead(204); res.end();
-});
-
-// ---------- Packing list ----------
-route("GET", "/api/trips/:id/packing", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM packing_items WHERE trip_id = $1 ORDER BY category, created_at ASC", [params.id]);
-  sendJson(res, 200, rows);
-});
-
-route("POST", "/api/trips/:id/packing", async (req, res, params, body) => {
-  const { category, item } = body;
-  if (!item) return sendError(res, 400, "Item is verplicht");
-  const { rows } = await query(
-    "INSERT INTO packing_items (trip_id, category, item) VALUES ($1,$2,$3) RETURNING *",
-    [params.id, category || "Overig", item]
-  );
-  sendJson(res, 201, rows[0]);
-});
-
-route("PUT", "/api/packing/:id", async (req, res, params, body) => {
-  const { category, item, checked } = body;
-  const { rows } = await query(
-    "UPDATE packing_items SET category=COALESCE($1,category), item=COALESCE($2,item), checked=COALESCE($3,checked) WHERE id=$4 RETURNING *",
-    [category ?? null, item ?? null, checked ?? null, params.id]
-  );
-  sendJson(res, 200, rows[0]);
-});
-
-route("DELETE", "/api/packing/:id", async (req, res, params) => {
-  await query("DELETE FROM packing_items WHERE id = $1", [params.id]);
-  res.writeHead(204); res.end();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="#7c2d12"/><text x="256" y="340" font-size="260" text-anchor="middle">🍷</text></svg>`;
+  res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg);
 });
 
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  const url = new URL(req.url, `http://localhost`);
+  const url = new URL(req.url, "http://localhost");
   const pathname = url.pathname;
 
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")) {
+  if (pathname.startsWith("/auth/")) {
     const match = matchRoute(req.method, pathname);
     if (!match) { res.writeHead(404); res.end(); return; }
     try {
@@ -964,8 +510,10 @@ const server = http.createServer(async (req, res) => {
         }
       }
       await match.handler(req, res, match.params, body);
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); }
     }
-    catch (err) { console.error(err); if (!res.headersSent) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); } }
     return;
   }
 
@@ -985,7 +533,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Static files
   if (pathname === "/login") { serveStatic(res, path.join(PUBLIC_DIR, "login.html")); return; }
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end(); return; }
@@ -995,7 +542,7 @@ const server = http.createServer(async (req, res) => {
 
 initDb()
   .then(() => {
-    server.listen(PORT, () => console.log(`Reisplanner draait op http://localhost:${PORT}`));
+    server.listen(PORT, () => console.log(`Wijnkelder draait op http://localhost:${PORT}`));
   })
   .catch((err) => {
     console.error("Database init failed:", err.message);

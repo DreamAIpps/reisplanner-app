@@ -19,24 +19,6 @@ async function query(text, params) {
 
 async function initDb() {
   await query(`
-    CREATE TABLE IF NOT EXISTS trips (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      destination TEXT,
-      start_date DATE,
-      end_date DATE,
-      budget NUMERIC(10,2),
-      currency TEXT DEFAULT 'EUR',
-      status TEXT DEFAULT 'planning',
-      notes TEXT,
-      cover_color TEXT DEFAULT '#7c3aed',
-      cover_image TEXT,
-      user_id INTEGER,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image TEXT;
-    ALTER TABLE trips ADD COLUMN IF NOT EXISTS user_id INTEGER;
-
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE,
@@ -49,6 +31,8 @@ async function initDb() {
       google_id TEXT UNIQUE,
       apple_id TEXT UNIQUE,
       is_admin BOOLEAN DEFAULT FALSE,
+      password_hash TEXT,
+      login_count INTEGER DEFAULT 0,
       last_login_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -67,87 +51,46 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS trip_members (
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS wines (
+      id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      PRIMARY KEY (trip_id, user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS trip_invites (
-      token TEXT PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      created_by INTEGER NOT NULL REFERENCES users(id),
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS days (
-      id SERIAL PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      date DATE NOT NULL,
-      title TEXT,
-      notes TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS activities (
-      id SERIAL PRIMARY KEY,
-      day_id INTEGER NOT NULL REFERENCES days(id) ON DELETE CASCADE,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      time TEXT,
-      title TEXT NOT NULL,
-      location TEXT,
-      notes TEXT,
-      category TEXT DEFAULT 'activity',
-      cost NUMERIC(10,2)
-    );
-
-    CREATE TABLE IF NOT EXISTS accommodations (
-      id SERIAL PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
-      check_in DATE,
-      check_out DATE,
-      address TEXT,
-      booking_ref TEXT,
-      cost NUMERIC(10,2),
-      notes TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS transports (
-      id SERIAL PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      from_location TEXT,
-      to_location TEXT,
-      departure_time TIMESTAMPTZ,
-      arrival_time TIMESTAMPTZ,
-      booking_ref TEXT,
-      cost NUMERIC(10,2),
+      producer TEXT,
+      vintage_year INTEGER,
+      region TEXT,
+      country TEXT,
+      grape_variety TEXT,
+      type TEXT DEFAULT 'Rood',
+      price NUMERIC(10,2),
+      purchase_date DATE,
+      bottles INTEGER DEFAULT 1,
+      rack TEXT,
       notes TEXT,
-      baggage_allowance TEXT
-    );
-    ALTER TABLE transports ADD COLUMN IF NOT EXISTS baggage_allowance TEXT;
-
-    CREATE TABLE IF NOT EXISTS expenses (
-      id SERIAL PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      date DATE,
-      category TEXT,
-      description TEXT NOT NULL,
-      amount NUMERIC(10,2) NOT NULL,
-      paid_by TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS packing_items (
-      id SERIAL PRIMARY KEY,
-      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-      category TEXT NOT NULL DEFAULT 'Overig',
-      item TEXT NOT NULL,
-      checked BOOLEAN DEFAULT FALSE,
+      label_image TEXT,
+      drink_from INTEGER,
+      drink_until INTEGER,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
-    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
-    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Overig';
-    ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS checked BOOLEAN DEFAULT FALSE;
+    ALTER TABLE wines ADD COLUMN IF NOT EXISTS label_image TEXT;
+    ALTER TABLE wines ADD COLUMN IF NOT EXISTS drink_from INTEGER;
+    ALTER TABLE wines ADD COLUMN IF NOT EXISTS drink_until INTEGER;
+    ALTER TABLE wines ADD COLUMN IF NOT EXISTS rack TEXT;
+
+    CREATE TABLE IF NOT EXISTS tastings (
+      id SERIAL PRIMARY KEY,
+      wine_id INTEGER NOT NULL REFERENCES wines(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tasting_date DATE,
+      rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+      notes TEXT,
+      nose TEXT,
+      palate TEXT,
+      finish TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE tastings ADD COLUMN IF NOT EXISTS nose TEXT;
+    ALTER TABLE tastings ADD COLUMN IF NOT EXISTS palate TEXT;
+    ALTER TABLE tastings ADD COLUMN IF NOT EXISTS finish TEXT;
   `);
 }
 

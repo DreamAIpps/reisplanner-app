@@ -1,4 +1,4 @@
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useRef } = React;
 
 // ---------- Error boundary ----------
 class ErrorBoundary extends React.Component {
@@ -6,12 +6,12 @@ class ErrorBoundary extends React.Component {
   static getDerivedStateFromError(e) { return { error: e }; }
   render() {
     if (this.state.error) return (
-      <div className="min-h-screen flex items-center justify-center p-8 bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center p-8" style={{ background: "#fdf6f0" }}>
         <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
           <div className="text-5xl mb-4">😕</div>
           <h2 className="text-lg font-bold text-gray-800 mb-2">Er ging iets mis</h2>
           <p className="text-sm text-gray-500 mb-4">{this.state.error.message}</p>
-          <button onClick={() => window.location.reload()} className="bg-sky-600 text-white rounded-xl px-6 py-2 text-sm font-medium hover:bg-sky-700">Pagina herladen</button>
+          <button onClick={() => window.location.reload()} className="px-6 py-2 rounded-xl text-white text-sm font-medium" style={{ background: "#7c2d12" }}>Pagina herladen</button>
         </div>
       </div>
     );
@@ -20,10 +20,15 @@ class ErrorBoundary extends React.Component {
 }
 
 // ---------- Constants ----------
-const TRANSPORT_TYPES = ["Vliegtuig", "Trein", "Bus", "Huurauto", "Taxi", "Boot", "Anders"];
-const EXPENSE_CATEGORIES = ["Vluchten", "Accommodatie", "Vervoer", "Eten & Drinken", "Activiteiten", "Winkelen", "Overig"];
-const ACTIVITY_CATEGORIES = ["Bezienswaardigheid", "Restaurant", "Museum", "Natuur", "Sport", "Shopping", "Anders"];
-const COVER_COLORS = ["#0369a1","#7c3aed","#b45309","#065f46","#9f1239","#1e40af","#92400e","#134e4a"];
+const WINE_TYPES = ["Rood", "Wit", "Rosé", "Mousseux", "Dessert", "Versterkt", "Oranje"];
+const WINE_TYPE_COLORS = {
+  "Rood": "#7c2d12", "Wit": "#a16207", "Rosé": "#be185d",
+  "Mousseux": "#7c3aed", "Dessert": "#92400e", "Versterkt": "#9a3412", "Oranje": "#c2410c",
+};
+const WINE_TYPE_ICONS = {
+  "Rood": "🍷", "Wit": "🥂", "Rosé": "🌸",
+  "Mousseux": "🍾", "Dessert": "🍯", "Versterkt": "🫙", "Oranje": "🍊",
+};
 
 // ---------- API ----------
 async function apiFetch(url, options = {}) {
@@ -37,207 +42,61 @@ async function apiFetch(url, options = {}) {
   return res.json();
 }
 
-// ---------- Guest Storage ----------
-const _GK = "rp_guest";
-function _gr() { try { return JSON.parse(localStorage.getItem(_GK) || "{}"); } catch { return {}; } }
-function _gw(d) { try { localStorage.setItem(_GK, JSON.stringify(d)); } catch {} }
-function _gid() { return "g" + Date.now() + Math.random().toString(36).slice(2, 5); }
-
-let _guestMode = false;
-function setGuestMode(v) { _guestMode = v; }
-
-const guestApi = {
-  getTrips() {
-    const d = _gr(); const acts = d.activities || [];
-    return Promise.resolve((d.trips || []).map(t => ({ ...t, is_owner: true, activity_count: acts.filter(a => a.trip_id === t.id).length })));
-  },
-  getTrip(id) {
-    const t = (_gr().trips || []).find(t => t.id === id);
-    return t ? Promise.resolve({ ...t, is_owner: true }) : Promise.reject(new Error("Reis niet gevonden"));
-  },
-  createTrip(data) {
-    const d = _gr(); const t = { ...data, id: _gid(), created_at: new Date().toISOString() };
-    d.trips = [...(d.trips || []), t]; _gw(d); return Promise.resolve(t);
-  },
-  updateTrip(id, data) {
-    const d = _gr(); let found;
-    d.trips = (d.trips || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
-  },
-  deleteTrip(id) {
-    const d = _gr();
-    d.trips = (d.trips || []).filter(t => t.id !== id);
-    const kept = new Set((d.days || []).filter(day => day.trip_id !== id).map(day => day.id));
-    d.days = (d.days || []).filter(day => day.trip_id !== id);
-    d.activities = (d.activities || []).filter(a => kept.has(a.day_id));
-    d.accommodations = (d.accommodations || []).filter(a => a.trip_id !== id);
-    d.transports = (d.transports || []).filter(t => t.trip_id !== id);
-    d.expenses = (d.expenses || []).filter(e => e.trip_id !== id);
-    _gw(d); return Promise.resolve(null);
-  },
-  getDays(tripId) {
-    const d = _gr();
-    const days = (d.days || []).filter(day => day.trip_id === tripId).sort((a, b) => (a.date || "") < (b.date || "") ? -1 : 1);
-    const acts = d.activities || [];
-    return Promise.resolve(days.map(day => ({ ...day, activities: acts.filter(a => a.day_id === day.id).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1) })));
-  },
-  addDay(tripId, data) {
-    const d = _gr(); const day = { ...data, id: _gid(), trip_id: tripId };
-    d.days = [...(d.days || []), day]; _gw(d); return Promise.resolve({ ...day, activities: [] });
-  },
-  updateDay(id, data) {
-    const d = _gr(); let found;
-    d.days = (d.days || []).map(day => day.id === id ? (found = { ...day, ...data }) : day); _gw(d); return Promise.resolve(found);
-  },
-  deleteDay(id) {
-    const d = _gr();
-    d.days = (d.days || []).filter(day => day.id !== id);
-    d.activities = (d.activities || []).filter(a => a.day_id !== id);
-    _gw(d); return Promise.resolve(null);
-  },
-  addActivity(dayId, data) {
-    const d = _gr(); const day = (d.days || []).find(day => day.id === dayId);
-    const act = { ...data, id: _gid(), day_id: dayId, trip_id: day && day.trip_id };
-    d.activities = [...(d.activities || []), act]; _gw(d); return Promise.resolve(act);
-  },
-  updateActivity(id, data) {
-    const d = _gr(); let found;
-    d.activities = (d.activities || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
-  },
-  deleteActivity(id) {
-    const d = _gr(); d.activities = (d.activities || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
-  },
-  getAccommodations(tripId) {
-    return Promise.resolve((_gr().accommodations || []).filter(a => a.trip_id === tripId));
-  },
-  addAccommodation(tripId, data) {
-    const d = _gr(); const acc = { ...data, id: _gid(), trip_id: tripId };
-    d.accommodations = [...(d.accommodations || []), acc]; _gw(d); return Promise.resolve(acc);
-  },
-  updateAccommodation(id, data) {
-    const d = _gr(); let found;
-    d.accommodations = (d.accommodations || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
-  },
-  deleteAccommodation(id) {
-    const d = _gr(); d.accommodations = (d.accommodations || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
-  },
-  getTransports(tripId) {
-    return Promise.resolve((_gr().transports || []).filter(t => t.trip_id === tripId));
-  },
-  addTransport(tripId, data) {
-    const d = _gr(); const tr = { ...data, id: _gid(), trip_id: tripId };
-    d.transports = [...(d.transports || []), tr]; _gw(d); return Promise.resolve(tr);
-  },
-  updateTransport(id, data) {
-    const d = _gr(); let found;
-    d.transports = (d.transports || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
-  },
-  deleteTransport(id) {
-    const d = _gr(); d.transports = (d.transports || []).filter(t => t.id !== id); _gw(d); return Promise.resolve(null);
-  },
-  getExpenses(tripId) {
-    return Promise.resolve((_gr().expenses || []).filter(e => e.trip_id === tripId));
-  },
-  addExpense(tripId, data) {
-    const d = _gr(); const exp = { ...data, id: _gid(), trip_id: tripId };
-    d.expenses = [...(d.expenses || []), exp]; _gw(d); return Promise.resolve(exp);
-  },
-  updateExpense(id, data) {
-    const d = _gr(); let found;
-    d.expenses = (d.expenses || []).map(e => e.id === id ? (found = { ...e, ...data }) : e); _gw(d); return Promise.resolve(found);
-  },
-  deleteExpense(id) {
-    const d = _gr(); d.expenses = (d.expenses || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
-  },
-  getPackingItems(tripId) {
-    return Promise.resolve((_gr().packing_items || []).filter(p => p.trip_id === tripId).sort((a, b) => (a.category < b.category ? -1 : 1)));
-  },
-  addPackingItem(tripId, data) {
-    const d = _gr(); const item = { ...data, id: _gid(), trip_id: tripId, checked: false, created_at: new Date().toISOString() };
-    d.packing_items = [...(d.packing_items || []), item]; _gw(d); return Promise.resolve(item);
-  },
-  updatePackingItem(id, data) {
-    const d = _gr(); let found;
-    d.packing_items = (d.packing_items || []).map(p => p.id === id ? (found = { ...p, ...data }) : p); _gw(d); return Promise.resolve(found);
-  },
-  deletePackingItem(id) {
-    const d = _gr(); d.packing_items = (d.packing_items || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
-  },
-  importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
-  createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
-  getAdminTrips() { return Promise.resolve([]); },
-  getAdminUsers() { return Promise.resolve([]); },
-  assignTrip() { return Promise.resolve(null); },
-  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
-};
-
 const api = {
-  getTrips: () => _guestMode ? guestApi.getTrips() : apiFetch("/api/trips"),
-  getTrip: (id) => _guestMode ? guestApi.getTrip(id) : apiFetch(`/api/trips/${id}`),
-  createTrip: (d) => _guestMode ? guestApi.createTrip(d) : apiFetch("/api/trips", { method: "POST", body: JSON.stringify(d) }),
-  updateTrip: (id, d) => _guestMode ? guestApi.updateTrip(id, d) : apiFetch(`/api/trips/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteTrip: (id) => _guestMode ? guestApi.deleteTrip(id) : apiFetch(`/api/trips/${id}`, { method: "DELETE" }),
-  getDays: (tripId) => _guestMode ? guestApi.getDays(tripId) : apiFetch(`/api/trips/${tripId}/days`),
-  addDay: (tripId, d) => _guestMode ? guestApi.addDay(tripId, d) : apiFetch(`/api/trips/${tripId}/days`, { method: "POST", body: JSON.stringify(d) }),
-  updateDay: (id, d) => _guestMode ? guestApi.updateDay(id, d) : apiFetch(`/api/days/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteDay: (id) => _guestMode ? guestApi.deleteDay(id) : apiFetch(`/api/days/${id}`, { method: "DELETE" }),
-  addActivity: (dayId, d) => _guestMode ? guestApi.addActivity(dayId, d) : apiFetch(`/api/days/${dayId}/activities`, { method: "POST", body: JSON.stringify(d) }),
-  updateActivity: (id, d) => _guestMode ? guestApi.updateActivity(id, d) : apiFetch(`/api/activities/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteActivity: (id) => _guestMode ? guestApi.deleteActivity(id) : apiFetch(`/api/activities/${id}`, { method: "DELETE" }),
-  getAccommodations: (tripId) => _guestMode ? guestApi.getAccommodations(tripId) : apiFetch(`/api/trips/${tripId}/accommodations`),
-  addAccommodation: (tripId, d) => _guestMode ? guestApi.addAccommodation(tripId, d) : apiFetch(`/api/trips/${tripId}/accommodations`, { method: "POST", body: JSON.stringify(d) }),
-  updateAccommodation: (id, d) => _guestMode ? guestApi.updateAccommodation(id, d) : apiFetch(`/api/accommodations/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteAccommodation: (id) => _guestMode ? guestApi.deleteAccommodation(id) : apiFetch(`/api/accommodations/${id}`, { method: "DELETE" }),
-  getTransports: (tripId) => _guestMode ? guestApi.getTransports(tripId) : apiFetch(`/api/trips/${tripId}/transports`),
-  addTransport: (tripId, d) => _guestMode ? guestApi.addTransport(tripId, d) : apiFetch(`/api/trips/${tripId}/transports`, { method: "POST", body: JSON.stringify(d) }),
-  updateTransport: (id, d) => _guestMode ? guestApi.updateTransport(id, d) : apiFetch(`/api/transports/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteTransport: (id) => _guestMode ? guestApi.deleteTransport(id) : apiFetch(`/api/transports/${id}`, { method: "DELETE" }),
-  getExpenses: (tripId) => _guestMode ? guestApi.getExpenses(tripId) : apiFetch(`/api/trips/${tripId}/expenses`),
-  addExpense: (tripId, d) => _guestMode ? guestApi.addExpense(tripId, d) : apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
-  updateExpense: (id, d) => _guestMode ? guestApi.updateExpense(id, d) : apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deleteExpense: (id) => _guestMode ? guestApi.deleteExpense(id) : apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
-  importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
-  createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
-  getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
-  getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
-  assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
-  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
-  getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
-  addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
-  updatePackingItem: (id, d) => _guestMode ? guestApi.updatePackingItem(id, d) : apiFetch(`/api/packing/${id}`, { method: "PUT", body: JSON.stringify(d) }),
-  deletePackingItem: (id) => _guestMode ? guestApi.deletePackingItem(id) : apiFetch(`/api/packing/${id}`, { method: "DELETE" }),
+  getWines: () => apiFetch("/api/wines"),
+  createWine: (d) => apiFetch("/api/wines", { method: "POST", body: JSON.stringify(d) }),
+  updateWine: (id, d) => apiFetch(`/api/wines/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteWine: (id) => apiFetch(`/api/wines/${id}`, { method: "DELETE" }),
+  getStats: () => apiFetch("/api/wines/stats"),
+  getTastings: (wineId) => apiFetch(`/api/wines/${wineId}/tastings`),
+  addTasting: (wineId, d) => apiFetch(`/api/wines/${wineId}/tastings`, { method: "POST", body: JSON.stringify(d) }),
+  updateTasting: (id, d) => apiFetch(`/api/tastings/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteTasting: (id) => apiFetch(`/api/tastings/${id}`, { method: "DELETE" }),
+  getAiTip: (wineId, type) => apiFetch(`/api/wines/${wineId}/ai-tip?type=${type}`),
 };
 
 // ---------- Helpers ----------
-function fmt(date) {
-  if (!date) return "—";
-  const d = new Date(String(date).slice(0, 10) + "T12:00:00Z");
-  if (isNaN(d)) return "—";
-  return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+function fmtMoney(n) {
+  if (n == null || n === "") return null;
+  return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
-function fmtDatetime(dt) {
-  if (!dt) return "—";
-  return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+function fmtDate(d) {
+  if (!d) return null;
+  return new Date(String(d).slice(0, 10) + "T12:00:00Z").toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
-function fmtMoney(n, currency = "EUR") {
-  if (n == null || n === "") return "—";
-  return new Intl.NumberFormat("nl-NL", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+function drinkWindowStatus(wine) {
+  const y = new Date().getFullYear();
+  if (!wine.drink_from && !wine.drink_until) return "unknown";
+  if (wine.drink_from && y < wine.drink_from) return "too-early";
+  if (wine.drink_until && y > wine.drink_until) return "past";
+  return "ready";
 }
-function tripDuration(start, end) {
-  if (!start || !end) return null;
-  const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
-  return `${days} dag${days === 1 ? "" : "en"}`;
+function drinkWindowLabel(wine) {
+  const s = drinkWindowStatus(wine);
+  if (s === "unknown") return null;
+  if (s === "too-early") return `Drinken vanaf ${wine.drink_from}`;
+  if (s === "past") return `Voorbij drinkvenster (t/m ${wine.drink_until})`;
+  if (wine.drink_from && wine.drink_until) return `Drinkbaar: ${wine.drink_from}–${wine.drink_until}`;
+  if (wine.drink_from) return `Drinkbaar vanaf ${wine.drink_from}`;
+  return null;
 }
-function daysUntilDeparture(startDate) {
-  if (!startDate) return null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const start = new Date(startDate); start.setHours(0, 0, 0, 0);
-  return Math.round((start - today) / 86400000);
-}
-function greeting(name) {
-  const h = new Date().getHours();
-  const first = name ? name.split(" ")[0] : "";
-  const prefix = h < 12 ? "Goedemorgen" : h < 18 ? "Goedemiddag" : "Goedenavond";
-  return first ? `${prefix}, ${first} 👋` : prefix;
+const STATUS_COLORS = { "too-early": "#6b7280", "ready": "#15803d", "past": "#dc2626", "unknown": "#9ca3af" };
+
+// ---------- Stars ----------
+function Stars({ rating, onChange, size = "base" }) {
+  const r = Math.round(rating) || 0;
+  return (
+    <div className="flex gap-0.5">
+      {[1,2,3,4,5].map(i => (
+        <button key={i} type={onChange ? "button" : undefined}
+          onClick={onChange ? () => onChange(r === i ? 0 : i) : undefined}
+          className={`${size === "lg" ? "text-2xl" : "text-base"} ${onChange ? "cursor-pointer hover:scale-110 transition-transform" : "pointer-events-none"}`}
+          style={{ color: i <= r ? "#f59e0b" : "#d1d5db" }}>
+          ★
+        </button>
+      ))}
+    </div>
+  );
 }
 
 // ---------- UI Components ----------
@@ -245,14 +104,17 @@ function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", h); document.body.style.overflow = ""; };
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[90vh] flex flex-col`}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full ${wide ? "sm:max-w-2xl" : "sm:max-w-md"} max-h-[92vh] flex flex-col`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <h2 className="text-lg font-semibold text-gray-800 truncate pr-4">{title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl leading-none w-8 h-8 flex items-center justify-center shrink-0">×</button>
         </div>
         <div className="overflow-y-auto px-6 py-5 flex-1">{children}</div>
       </div>
@@ -271,2507 +133,833 @@ function Field({ label, hint, children }) {
   );
 }
 
-function Input({ className = "", ...props }) {
-  return <input className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent ${className}`} {...props} />;
-}
+const Input = ({ className = "", ...props }) =>
+  <input className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:border-transparent ${className}`}
+    style={{ "--tw-ring-color": "#fca5a5" }} {...props} />;
 
-function Textarea({ className = "", ...props }) {
-  return <textarea className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent resize-none ${className}`} {...props} />;
-}
+const Textarea = ({ className = "", ...props }) =>
+  <textarea className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:border-transparent resize-none ${className}`} {...props} />;
 
-function Select({ className = "", children, ...props }) {
-  return <select className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white ${className}`} {...props}>{children}</select>;
-}
+const Select = ({ className = "", children, ...props }) =>
+  <select className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 bg-white ${className}`} {...props}>{children}</select>;
 
-function Button({ variant = "primary", className = "", children, ...props }) {
-  const base = "inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer";
+function Btn({ variant = "primary", className = "", children, ...props }) {
   const styles = {
-    primary: "bg-sky-600 text-white hover:bg-sky-700",
+    primary: "text-white hover:opacity-90",
     secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
     danger: "bg-red-50 text-red-600 hover:bg-red-100",
   };
-  return <button className={`${base} ${styles[variant]} ${className}`} {...props}>{children}</button>;
-}
-
-function Tabs({ tabs, active, onChange, accentColor }) {
-  const primary = tabs.filter((t) => t.primary);
-  const secondary = tabs.filter((t) => !t.primary);
   return (
-    <div className="mb-6 space-y-2">
-      {primary.map((t) => (
-        <button
-          key={t.key}
-          onClick={() => onChange(t.key)}
-          className="w-full py-3 px-4 rounded-xl text-base font-bold transition-all shadow-sm whitespace-nowrap"
-          style={active === t.key
-            ? { background: accentColor || "#0369a1", color: "#fff", boxShadow: `0 4px 14px ${accentColor}55` }
-            : { background: "#f1f5f9", color: "#374151" }}
-        >
-          {t.icon} {t.label}
-        </button>
-      ))}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 overflow-x-auto">
-        {secondary.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => onChange(t.key)}
-            className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-            style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
-          >
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
-    </div>
+    <button
+      className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 cursor-pointer active:scale-95 ${styles[variant]} ${className}`}
+      style={variant === "primary" ? { background: "#7c2d12" } : {}}
+      {...props}>
+      {children}
+    </button>
   );
 }
 
-// ---------- Trip form ----------
-const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#0369a1", cover_image: "" };
+// ---------- Wine Form ----------
+const EMPTY_WINE = {
+  name: "", producer: "", vintage_year: "", region: "", country: "",
+  grape_variety: "", type: "Rood", price: "", purchase_date: "",
+  bottles: "1", rack: "", notes: "", label_image: "", drink_from: "", drink_until: "",
+};
 
-function TripForm({ initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "" } : { ...EMPTY_TRIP });
+function WineForm({ initial, onSaved, onClose }) {
+  const [form, setForm] = useState(initial ? {
+    ...EMPTY_WINE, ...initial,
+    vintage_year: initial.vintage_year || "",
+    price: initial.price || "",
+    purchase_date: initial.purchase_date ? String(initial.purchase_date).slice(0, 10) : "",
+    bottles: initial.bottles ?? 1,
+    drink_from: initial.drink_from || "",
+    drink_until: initial.drink_until || "",
+    rack: initial.rack || "",
+    notes: initial.notes || "",
+    label_image: initial.label_image || "",
+    grape_variety: initial.grape_variety || "",
+    producer: initial.producer || "",
+    region: initial.region || "",
+    country: initial.country || "",
+  } : { ...EMPTY_WINE });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const [photoAuthor, setPhotoAuthor] = useState(null);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const accent = WINE_TYPE_COLORS[form.type] || "#7c2d12";
 
-  async function handleSuggestPhoto() {
-    if (!form.destination) return;
-    setPhotoLoading(true); setPhotoAuthor(null);
-    try {
-      const data = await api.suggestPhoto(form.destination);
-      setForm((f) => ({ ...f, cover_image: data.url }));
-      setPhotoAuthor({ name: data.author, link: data.author_link });
-    } catch (err) { alert("Kon geen foto vinden: " + err.message); }
-    finally { setPhotoLoading(false); }
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setSaving(true); setError(null);
-    try {
-      const saved = initial?.id ? await api.updateTrip(initial.id, form) : await api.createTrip(form);
-      onSaved(saved);
-    } catch (err) { setError(err.message); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <Modal title={initial?.id ? "Reis bewerken" : "Nieuwe reis"} onClose={onClose} wide>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
-        <Field label="Naam van de reis">
-          <Input required value={form.name} onChange={set("name")} placeholder="bijv. Zomervakantie Italië 2026" />
-        </Field>
-        <Field label="Bestemming">
-          <Input value={form.destination} onChange={set("destination")} placeholder="bijv. Rome, Italië" />
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Vertrekdatum"><Input type="date" value={form.start_date} onChange={set("start_date")} /></Field>
-          <Field label="Terugkomstdatum"><Input type="date" value={form.end_date} onChange={set("end_date")} /></Field>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Budget">
-            <Input type="number" min="0" step="0.01" value={form.budget} onChange={set("budget")} placeholder="0,00" />
-          </Field>
-          <Field label="Valuta">
-            <Select value={form.currency} onChange={set("currency")}>
-              {["EUR","USD","GBP","JPY","CHF","AUD","CAD"].map((c) => <option key={c}>{c}</option>)}
-            </Select>
-          </Field>
-        </div>
-        <Field label="Kleur">
-          <div className="flex gap-2 flex-wrap mt-1">
-            {COVER_COLORS.map((c) => (
-              <button key={c} type="button" onClick={() => setForm((f) => ({ ...f, cover_color: c }))}
-                className={`w-7 h-7 rounded-full border-2 transition-transform ${form.cover_color === c ? "border-gray-800 scale-110" : "border-transparent"}`}
-                style={{ background: c }} />
-            ))}
-          </div>
-        </Field>
-        <Field label="Omslagfoto">
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input value={form.cover_image} onChange={set("cover_image")} placeholder="Foto-URL, of zoek automatisch →" />
-              <Button type="button" variant="secondary" onClick={handleSuggestPhoto} disabled={photoLoading || !form.destination} className="shrink-0">
-                {photoLoading ? "..." : "🔍 Zoeken"}
-              </Button>
-            </div>
-            {form.cover_image && (
-              <div className="relative rounded-lg overflow-hidden h-32">
-                <img src={form.cover_image} alt="preview" className="w-full h-full object-cover" />
-                <button type="button" onClick={() => { setForm((f) => ({ ...f, cover_image: "" })); setPhotoAuthor(null); }}
-                  className="absolute top-1 right-1 bg-black/50 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-black/70">×</button>
-                {photoAuthor && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-white text-xs px-2 py-1">
-                    Foto door <a href={photoAuthor.link + "?utm_source=reisplanner&utm_medium=referral"} target="_blank" rel="noreferrer" className="underline">{photoAuthor.name}</a> via Unsplash
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Field>
-        <Field label="Notities"><Textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Bijzonderheden, wensen..." /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------- Trip card ----------
-function TripCard({ trip, onClick }) {
-  const dur = tripDuration(trip.start_date, trip.end_date);
-  const until = daysUntilDeparture(trip.start_date);
-  const accent = trip.cover_color || "#0369a1";
-
-  return (
-    <div onClick={onClick} className="bg-white rounded-2xl shadow-sm active:scale-98 transition-all duration-150 cursor-pointer overflow-hidden border border-gray-100 group" style={{ WebkitTapHighlightColor: "transparent" }}>
-      {/* Cover */}
-      <div className="relative overflow-hidden" style={{ height: 190 }}>
-        {trip.cover_image
-          ? <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-          : <div className="w-full h-full" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}bb)` }} />
-        }
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-        {/* Badges top */}
-        <div className="absolute top-3 left-3 right-3 flex justify-between items-start">
-          {until !== null && until >= 0 && (
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/95 text-sky-700 shadow">
-              {until === 0 ? "Vandaag! 🎉" : until === 1 ? "Morgen ✈️" : `${until} dagen`}
-            </span>
-          )}
-          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-purple-500/80 text-white backdrop-blur-sm ml-auto">Gedeeld</span>}
-        </div>
-        {/* Title */}
-        <div className="absolute bottom-0 left-0 right-0 p-4">
-          <h3 className="font-bold text-white text-lg leading-tight drop-shadow-sm">{trip.name}</h3>
-          {trip.destination && <div className="text-sm text-white/80 mt-0.5">📍 {trip.destination}</div>}
-        </div>
-      </div>
-
-      <div className="px-4 py-3">
-        <div className="flex items-center justify-between text-xs text-gray-400">
-          <div className="font-medium">{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</div>
-          <div className="flex gap-3 items-center">
-            {trip.activity_count > 0 && <span>🗓 {trip.activity_count}</span>}
-            {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
-          </div>
-        </div>
-        {until !== null && until > 0 && (
-          <div className="mt-2 text-xs font-semibold rounded-lg px-2 py-1.5 text-center" style={{ background: accent + "18", color: accent }}>
-            Nog {until} dag{until === 1 ? "" : "en"} tot vertrek ✈️
-          </div>
-        )}
-        {until === 0 && (
-          <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 rounded-lg px-2 py-1.5 text-center">
-            Vandaag vertrek! 🎉
-          </div>
-        )}
-        {until !== null && until < 0 && trip.end_date && new Date(trip.end_date) >= new Date() && (
-          <div className="mt-2 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5 text-center">
-            Onderweg — dag {Math.abs(until) + 1} 🌍
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete }) {
-  const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
     e.preventDefault(); setSaving(true); setError(null);
     try {
-      const saved = initial?.id
-        ? await api.updateActivity(initial.id, form)
-        : await api.addActivity(dayId, { ...form, trip_id: tripId });
+      const data = {
+        ...form,
+        vintage_year: form.vintage_year ? parseInt(form.vintage_year) : null,
+        bottles: form.bottles !== "" ? parseInt(form.bottles) : 1,
+        price: form.price !== "" ? parseFloat(form.price) : null,
+        drink_from: form.drink_from ? parseInt(form.drink_from) : null,
+        drink_until: form.drink_until ? parseInt(form.drink_until) : null,
+        purchase_date: form.purchase_date || null,
+      };
+      const saved = initial?.id ? await api.updateWine(initial.id, data) : await api.createWine(data);
       onSaved(saved);
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   }
+
   return (
-    <Modal title={initial?.id ? "Activiteit bewerken" : "Activiteit toevoegen"} onClose={onClose}>
-      {!initial && onImport && (
-        <>
-          <button type="button" onClick={onImport}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
-          </button>
-          <div className="relative my-3">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
-            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
-          </div>
-        </>
-      )}
+    <Modal title={initial?.id ? "Wijn bewerken" : "Wijn toevoegen"} onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Tijd"><Input type="time" value={form.time} onChange={set("time")} /></Field>
-          <Field label="Categorie">
-            <Select value={form.category} onChange={set("category")}>
-              {ACTIVITY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-            </Select>
-          </Field>
-        </div>
-        <Field label="Titel"><Input required value={form.title} onChange={set("title")} placeholder="bijv. Colosseum bezoek" /></Field>
-        <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
-        <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-between items-center pt-2">
-          {onDelete ? (
-            <button type="button" onClick={onDelete}
-              className="text-sm text-red-500 hover:text-red-700 px-2 py-1">
-              🗑 Verwijderen
-            </button>
-          ) : <span />}
-          <div className="flex gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-          </div>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
-// ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
-  const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
-  const [saving, setSaving] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  async function handleSubmit(e) {
-    e.preventDefault(); setSaving(true);
-    try {
-      const saved = initial?.id ? await api.updateAccommodation(initial.id, form) : await api.addAccommodation(tripId, form);
-      onSaved(saved);
-    } finally { setSaving(false); }
-  }
-  return (
-    <Modal title={initial?.id ? "Verblijf bewerken" : "Verblijf toevoegen"} onClose={onClose} wide>
-      {!initial && onImport && (
-        <>
-          <button type="button" onClick={onImport}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
-          </button>
-          <div className="relative my-3">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
-            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
-          </div>
-        </>
-      )}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Naam"><Input required value={form.name} onChange={set("name")} placeholder="bijv. Hotel Roma Centrale" /></Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Check-in"><Input type="date" value={form.check_in} onChange={set("check_in")} /></Field>
-          <Field label="Check-out"><Input type="date" value={form.check_out} onChange={set("check_out")} /></Field>
-        </div>
-        <Field label="Adres"><Input value={form.address} onChange={set("address")} placeholder="Straat, stad" /></Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} /></Field>
-          <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
-        </div>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
-  const [form, setForm] = useState(initial ? {
-    ...initial,
-    departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
-    arrival_time: initial.arrival_time ? new Date(initial.arrival_time).toISOString().slice(0,16) : "",
-    cost: initial.cost ?? "",
-    booking_ref: initial.booking_ref ?? "",
-    notes: initial.notes ?? "",
-  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "" });
-  const [saving, setSaving] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  async function handleSubmit(e) {
-    e.preventDefault(); setSaving(true);
-    try {
-      const saved = initial?.id ? await api.updateTransport(initial.id, form) : await api.addTransport(tripId, form);
-      onSaved(saved);
-    } finally { setSaving(false); }
-  }
-  return (
-    <Modal title={initial?.id ? "Vervoer bewerken" : "Vervoer toevoegen"} onClose={onClose} wide>
-      {!initial && onImport && (
-        <>
-          <button type="button" onClick={onImport}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
-          </button>
-          <div className="relative my-3">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
-            <div className="relative text-center"><span className="bg-white px-3 text-xs text-gray-400">of handmatig invullen</span></div>
-          </div>
-        </>
-      )}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Type">
-          <Select value={form.type} onChange={set("type")}>
-            {TRANSPORT_TYPES.map((t) => <option key={t}>{t}</option>)}
-          </Select>
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Van"><Input value={form.from_location} onChange={set("from_location")} placeholder="Vertrekpunt" /></Field>
-          <Field label="Naar"><Input value={form.to_location} onChange={set("to_location")} placeholder="Bestemming" /></Field>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Vertrek"><Input type="datetime-local" value={form.departure_time} onChange={set("departure_time")} /></Field>
-          <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} /></Field>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} /></Field>
-          <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
-        </div>
-        <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" /></Field>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
-        <div className="flex items-center justify-between pt-2">
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-          </div>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------- Expense form ----------
-function ExpenseForm({ tripId, initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...initial, date: initial.date?.slice(0,10)||"" } : { date: new Date().toISOString().slice(0,10), category: "Overig", description: "", amount: "", paid_by: "" });
-  const [saving, setSaving] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  async function handleSubmit(e) {
-    e.preventDefault(); setSaving(true);
-    try {
-      const saved = initial?.id ? await api.updateExpense(initial.id, form) : await api.addExpense(tripId, form);
-      onSaved(saved);
-    } finally { setSaving(false); }
-  }
-  return (
-    <Modal title={initial?.id ? "Uitgave bewerken" : "Uitgave toevoegen"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Datum"><Input type="date" value={form.date} onChange={set("date")} /></Field>
-          <Field label="Categorie">
-            <Select value={form.category} onChange={set("category")}>
-              {EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-            </Select>
-          </Field>
-        </div>
-        <Field label="Omschrijving"><Input required value={form.description} onChange={set("description")} placeholder="bijv. Lunch Trattoria Roma" /></Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Bedrag (€)"><Input required type="number" min="0" step="0.01" value={form.amount} onChange={set("amount")} placeholder="0,00" /></Field>
-          <Field label="Betaald door"><Input value={form.paid_by} onChange={set("paid_by")} placeholder="bijv. Emiel" /></Field>
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------- Day planning tab ----------
-const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
-const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
-const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
-const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
-
-function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
-  const [showActivityForm, setShowActivityForm] = useState(null);
-  const [editingActivity, setEditingActivity] = useState(null);
-  const [editingTransport, setEditingTransport] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [editingAccommodation, setEditingAccommodation] = useState(null);
-  const [addingDay, setAddingDay] = useState(false);
-  const [newDayDate, setNewDayDate] = useState("");
-  const [photos, setPhotos] = useState({});
-  const [tipsLocation, setTipsLocation] = useState(null);
-  const fetchedRef = useRef(new Set());
-  const accent = trip.cover_color || "#0369a1";
-
-  useEffect(() => {
-    const locs = new Set();
-    days.forEach((day) => (day.activities || []).forEach((a) => { if (a.location) locs.add(a.location); }));
-    [...locs].slice(0, 10).forEach(async (loc) => {
-      if (fetchedRef.current.has(loc)) return;
-      fetchedRef.current.add(loc);
-      try {
-        const d = await api.suggestPhoto(loc);
-        setPhotos((p) => ({ ...p, [loc]: d.thumb }));
-      } catch {}
-    });
-  }, [days]);
-
-  async function handleDeleteActivity(id) {
-    if (!confirm("Activiteit verwijderen?")) return;
-    await api.deleteActivity(id); onRefresh();
-  }
-  async function handleAddDay(e) {
-    e.preventDefault();
-    if (!newDayDate) return;
-    await api.addDay(trip.id, { date: newDayDate });
-    setAddingDay(false); setNewDayDate(""); onRefresh();
-  }
-  async function handleDeleteDay(id) {
-    if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
-    await api.deleteDay(id); onRefresh();
-  }
-
-  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="font-semibold text-gray-700">Dagplanning</h3>
-        <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
-      </div>
-
-      {addingDay && (
-        <form onSubmit={handleAddDay} className="rounded-xl p-4 mb-6 flex gap-3 items-end border" style={{ background: accent + "10", borderColor: accent + "33" }}>
-          <Field label="Datum">
-            <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} required />
-          </Field>
-          <Button type="submit">Toevoegen</Button>
-          <Button type="button" variant="secondary" onClick={() => setAddingDay(false)}>Annuleren</Button>
-        </form>
-      )}
-
-      {days.length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <div className="text-5xl mb-3">🗓</div>
-          <div className="font-medium">Nog geen dagen gepland</div>
-          <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
-        </div>
-      )}
-
-      {/* Timeline */}
-      <div className="relative">
-        {days.length > 1 && (
-          <div className="absolute top-6 bottom-6 w-0.5 rounded-full" style={{ left: "2.6rem", background: `linear-gradient(to bottom, ${accent}, ${accent}33)` }} />
-        )}
-
-        <div className="space-y-2">
-          {days.map((day, dayIndex) => {
-            const dayStr = day.date ? day.date.slice(0, 10) : null;
-            const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
-            const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
-
-            const d = day.date ? new Date(day.date) : null;
-            const dayNum = d ? d.getDate() : "?";
-            const dayName = d ? DAY_NAMES[d.getDay()] : "";
-            const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
-            const totalItems = dayTransports.length + dayAccommodations.length + day.activities.length;
-            const nightAccommodation = dayStr ? accommodations.find(a => {
-              if (!a.check_in || !a.check_out) return false;
-              return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
-            }) : null;
-
-            return (
-              <div key={day.id} className="relative flex gap-4 pb-6">
-                {/* Day node */}
-                <div className="flex flex-col items-center shrink-0 z-10" style={{ width: "5.2rem" }}>
-                  <div className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white shadow-md font-bold"
-                    style={{ background: accent }}>
-                    <span className="text-[10px] leading-none opacity-75 uppercase tracking-wide">{dayName}</span>
-                    <span className="text-lg leading-none font-extrabold">{dayNum}</span>
-                    <span className="text-[10px] leading-none opacity-75">{monthName}</span>
-                  </div>
-                  {dayIndex === 0 && days.length > 1 && (
-                    <span className="text-[10px] text-gray-400 mt-1 font-medium">Dag 1</span>
-                  )}
-                </div>
-
-                {/* Day content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-2 pt-1.5">
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
-                        {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
-                      </div>
-                      {nightAccommodation && (
-                        <span className="text-xs text-amber-700 flex items-center gap-1">
-                          <span>🏨</span>
-                          <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                        className="text-xs font-medium px-2.5 py-1 rounded-lg hover:opacity-80 transition-opacity text-white"
-                        style={{ background: accent }}>
-                        + Activiteit
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {/* Transport cards */}
-                    {dayTransports.map((t) => {
-                      const isArrival = isoDate(t.arrival_time) === dayStr && isoDate(t.departure_time) !== dayStr;
-                      const time = isArrival ? t.arrival_time : t.departure_time;
-                      return (
-                        <div key={t.id + (isArrival ? "-a" : "-d")}
-                          onClick={() => setEditingTransport(t)}
-                          className="flex items-center gap-2 rounded-xl px-3 py-2.5 border cursor-pointer hover:shadow-md transition-shadow"
-                          style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}>
-                          <div className="text-xl shrink-0">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#1d4ed8" }}>
-                                {isArrival ? "Aankomst" : "Vertrek"}
-                              </span>
-                              {time && <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>
-                                {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
-                              </span>}
-                              {t.booking_ref && <span className="font-mono bg-blue-100 text-blue-600 px-1 py-0.5 rounded text-xs hidden sm:inline">#{t.booking_ref}</span>}
-                              {t.cost && <span className="font-medium text-blue-700 text-xs ml-auto shrink-0">{fmtMoney(t.cost, trip.currency)}</span>}
-                            </div>
-                            <div className="text-sm font-medium text-gray-700 truncate">{t.from_location} → {t.to_location}</div>
-                            {t.booking_ref && <div className="text-xs text-gray-400 font-mono sm:hidden">#{t.booking_ref}</div>}
-                            {t.baggage_allowance && <div className="text-xs text-blue-600 truncate">🧳 {t.baggage_allowance}</div>}
-                          </div>
-                          {t.to_location && (
-                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
-                              className="shrink-0 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
-                              title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">💡 Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">💡</span>
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Accommodation cards */}
-                    {dayAccommodations.map((a) => {
-                      const isCheckIn = isoDate(a.check_in) === dayStr;
-                      const isCheckOut = isoDate(a.check_out) === dayStr;
-                      return (
-                        <div key={a.id}
-                          onClick={() => setEditingAccommodation(a)}
-                          className="rounded-xl border cursor-pointer hover:shadow-md transition-shadow"
-                          style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-                          <div className="flex items-center gap-2 px-3 py-2.5">
-                            <div className="text-xl shrink-0">🏨</div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#b45309" }}>
-                                  {isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}
-                                </span>
-                                {a.cost && <span className="text-xs font-medium text-amber-700 ml-auto shrink-0">{fmtMoney(a.cost, trip.currency)}</span>}
-                              </div>
-                              <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
-                              {a.address && <div className="text-xs text-gray-400 truncate">📍 {a.address}</div>}
-                            </div>
-                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
-                              className="shrink-0 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors"
-                              title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">🗺 Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">🗺</span>
-                            </button>
-                          </div>
-                          <div className="px-3 pb-2.5" onClick={(e) => e.stopPropagation()}>
-                            <HotelAiTip accommodationId={a.id} />
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Activity cards */}
-                    {day.activities.map((act) => {
-                      const photo = act.location ? photos[act.location] : null;
-                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
-                      return (
-                        <div key={act.id}
-                          onClick={() => setEditingActivity(act)}
-                          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow cursor-pointer">
-                          {photo && (
-                            <div className="h-32 overflow-hidden relative">
-                              <img src={photo} alt={act.location} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                              {act.location && (
-                                <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
-                              )}
-                            </div>
-                          )}
-                          <div className="flex items-start gap-3 px-4 py-3">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0 mt-0.5"
-                              style={{ background: catColor + "18" }}>
-                              {CATEGORY_ICONS[act.category] || "📌"}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {act.time && (
-                                  <span className="text-xs font-mono font-semibold text-white px-2 py-0.5 rounded-md" style={{ background: catColor }}>
-                                    {act.time}
-                                  </span>
-                                )}
-                                <span className="font-semibold text-gray-800 text-sm">{act.title}</span>
-                              </div>
-                              {!photo && act.location && <div className="text-xs text-gray-400 mt-0.5">📍 {act.location}</div>}
-                              {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
-                              {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
-                            </div>
-                            <div className="flex gap-1 shrink-0">
-                              <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1">🗑</button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {totalItems === 0 && (
-                      <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                        className="w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
-                        + Activiteit toevoegen
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {showActivityForm && (
-        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
-          onSaved={() => { setShowActivityForm(null); onRefresh(); }}
-          onClose={() => setShowActivityForm(null)}
-          onImport={() => { setShowActivityForm(null); setImporting(true); }} />
-      )}
-      {editingActivity && (
-        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
-          onSaved={() => { setEditingActivity(null); onRefresh(); }}
-          onClose={() => setEditingActivity(null)}
-          onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
-      )}
-      {editingTransport && (
-        <TransportForm tripId={trip.id} initial={editingTransport}
-          onSaved={() => { setEditingTransport(null); onRefresh(); }}
-          onClose={() => setEditingTransport(null)} />
-      )}
-      {editingAccommodation && (
-        <AccommodationForm tripId={trip.id} initial={editingAccommodation}
-          onSaved={() => { setEditingAccommodation(null); onRefresh(); }}
-          onClose={() => setEditingAccommodation(null)} />
-      )}
-      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
-      {tipsLocation && (
-        <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
-      )}
-    </div>
-  );
-}
-
-// ---------- Accommodation tab ----------
-function AccommodationTab({ trip, accommodations, onRefresh }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [importing, setImporting] = useState(false);
-
-  async function handleDelete(id) {
-    if (!confirm("Verblijf verwijderen?")) return;
-    await api.deleteAccommodation(id);
-    onRefresh();
-  }
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Accommodaties</h3>
-        <Button onClick={() => setShowForm(true)} variant="secondary">+ Verblijf toevoegen</Button>
-      </div>
-
-      {accommodations.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">🏨</div>
-          <div>Nog geen verblijven toegevoegd</div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {accommodations.map((acc) => {
-            const nights = (acc.check_in && acc.check_out)
-              ? Math.round((new Date(acc.check_out) - new Date(acc.check_in)) / 86400000)
-              : null;
-            const perNight = nights > 0 && acc.cost ? Number(acc.cost) / nights : null;
-            return (
-            <div key={acc.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
-              <div className="flex gap-4 items-start">
-                <div className="text-2xl">🏨</div>
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-800">{acc.name}</div>
-                  {acc.address && <div className="text-sm text-gray-500">📍 {acc.address}</div>}
-                  <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
-                    {acc.check_in && <span>Check-in: {fmt(acc.check_in)}</span>}
-                    {acc.check_out && <span>Check-out: {fmt(acc.check_out)}</span>}
-                    {acc.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{acc.booking_ref}</span>}
-                  </div>
-                  {acc.cost && (
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span className="text-sky-700 font-medium text-sm">{fmtMoney(acc.cost, trip.currency)}</span>
-                      {perNight && nights && (
-                        <span className="text-xs text-gray-400">· {nights} {nights === 1 ? "nacht" : "nachten"} · <span className="text-gray-500 font-medium">{fmtMoney(perNight, trip.currency)}/nacht</span></span>
-                      )}
-                    </div>
-                  )}
-                  {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">✏️</button>
-                  <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>
-                </div>
-              </div>
-              <div className="mt-2 ml-10">
-                <HotelAiTip accommodationId={acc.id} />
-              </div>
-            </div>
-            );
-          })}
-        </div>
-      )}
-
-      {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
-      {editing && <AccommodationForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
-      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
-    </div>
-  );
-}
-
-// ---------- Transport tab ----------
-const TRANSPORT_ICONS = { Vliegtuig: "✈️", Trein: "🚆", Bus: "🚌", Huurauto: "🚗", Taxi: "🚕", Boot: "⛴️", Anders: "🚀" };
-
-function TransportTab({ trip, transports, onRefresh }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [importing, setImporting] = useState(false);
-
-  async function handleDelete(id) {
-    if (!confirm("Vervoer verwijderen?")) return;
-    await api.deleteTransport(id);
-    onRefresh();
-  }
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Vervoer</h3>
-        <Button onClick={() => setShowForm(true)} variant="secondary">+ Vervoer toevoegen</Button>
-      </div>
-
-      {transports.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">✈️</div>
-          <div>Nog geen vervoer toegevoegd</div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {transports.map((t) => (
-            <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
-              <div className="flex items-start gap-3">
-                <div className="text-2xl">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
-                  <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
-                    {t.departure_time && <span>Vertrek: {fmtDatetime(t.departure_time)}</span>}
-                    {t.arrival_time && <span>Aankomst: {fmtDatetime(t.arrival_time)}</span>}
-                    {t.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
-                    {t.cost && <span className="text-sky-700 font-medium">{fmtMoney(t.cost)}</span>}
-                  </div>
-                  {t.baggage_allowance && <div className="text-sm text-blue-600 mt-1">🧳 {t.baggage_allowance}</div>}
-                  {t.notes && <div className="text-sm text-gray-500 mt-1">{t.notes}</div>}
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600">✏️</button>
-                  <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500">🗑</button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
-      {editing && <TransportForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
-      {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
-    </div>
-  );
-}
-
-// ---------- Budget tab ----------
-function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState(null);
-
-  async function handleDelete(id) {
-    if (!confirm("Uitgave verwijderen?")) return;
-    await api.deleteExpense(id);
-    onRefresh();
-  }
-
-  const activities = days.flatMap((d) => d.activities || []);
-
-  const transportTotal = transports.filter((t) => t.cost).reduce((s, t) => s + Number(t.cost), 0);
-  const accommodationTotal = accommodations.filter((a) => a.cost).reduce((s, a) => s + Number(a.cost), 0);
-  const activityTotal = activities.filter((a) => a.cost).reduce((s, a) => s + Number(a.cost), 0);
-  const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const total = expenseTotal + transportTotal + accommodationTotal + activityTotal;
-
-  const budget = Number(trip.budget) || 0;
-  const pct = budget > 0 ? Math.min(100, (total / budget) * 100) : null;
-
-  const byCategory = EXPENSE_CATEGORIES.map((cat) => ({
-    cat,
-    total: expenses.filter((e) => e.category === cat).reduce((s, e) => s + Number(e.amount), 0),
-  })).filter((x) => x.total > 0);
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Budget & uitgaven</h3>
-        <Button onClick={() => setShowForm(true)} variant="secondary">+ Uitgave toevoegen</Button>
-      </div>
-
-      {/* Summary */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
-        <div className="flex justify-between items-end mb-3">
-          <div>
-            <div className="text-2xl font-bold text-gray-900">{fmtMoney(total, trip.currency)}</div>
-            <div className="text-sm text-gray-500">van {budget > 0 ? fmtMoney(budget, trip.currency) : "geen budget ingesteld"}</div>
-          </div>
-          {pct !== null && (
-            <div className={`text-lg font-bold ${pct > 90 ? "text-red-500" : pct > 70 ? "text-yellow-500" : "text-green-600"}`}>
-              {Math.round(pct)}%
-            </div>
-          )}
-        </div>
-        {pct !== null && (
-          <div className="w-full bg-gray-100 rounded-full h-2.5">
-            <div className={`h-2.5 rounded-full transition-all ${pct > 90 ? "bg-red-500" : pct > 70 ? "bg-yellow-400" : "bg-green-500"}`} style={{ width: `${pct}%` }} />
-          </div>
-        )}
-        {byCategory.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">
-            {byCategory.map(({ cat, total: t }) => (
-              <div key={cat} className="bg-gray-50 rounded-lg px-3 py-2">
-                <div className="text-xs text-gray-500">{cat}</div>
-                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(t, trip.currency)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Expense list */}
-      {expenses.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">💰</div>
-          <div>Nog geen uitgaven geregistreerd</div>
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="divide-y divide-gray-50">
-            {expenses.map((exp) => (
-              <div key={exp.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-800 text-sm">{exp.description}</span>
-                    <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{exp.category}</span>
-                  </div>
-                  <div className="text-xs text-gray-400 mt-0.5">
-                    {fmt(exp.date)}{exp.paid_by ? ` · ${exp.paid_by}` : ""}
-                  </div>
-                </div>
-                <div className="font-semibold text-gray-800">{fmtMoney(exp.amount, trip.currency)}</div>
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(exp)} className="text-gray-400 hover:text-sky-600 text-xs">✏️</button>
-                  <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Transports with cost */}
-      {transports.some((t) => t.cost) && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">✈️ Vervoer</span>
-            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(transportTotal, trip.currency)}</span>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {transports.filter((t) => t.cost).map((t) => (
-              <div key={t.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex-1 text-sm text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
-                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(t.cost, trip.currency)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Accommodations with cost */}
-      {accommodations.some((a) => a.cost) && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">🏨 Verblijf</span>
-            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(accommodationTotal, trip.currency)}</span>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {accommodations.filter((a) => a.cost).map((a) => {
-              const nights = (a.check_in && a.check_out)
-                ? Math.round((new Date(a.check_out) - new Date(a.check_in)) / 86400000)
-                : null;
-              const perNight = nights > 0 ? Number(a.cost) / nights : null;
-              return (
-                <div key={a.id} className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 text-sm text-gray-800">
-                    {a.name}
-                    {nights > 0 && <span className="ml-2 text-xs text-gray-400">{nights} nacht{nights !== 1 ? "en" : ""}</span>}
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
-                    {perNight && <div className="text-xs text-gray-400">{fmtMoney(perNight, trip.currency)} / nacht</div>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Activities with cost */}
-      {activities.some((a) => a.cost) && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">🗓 Activiteiten</span>
-            <span className="font-semibold text-gray-800 text-sm">{fmtMoney(activityTotal, trip.currency)}</span>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {activities.filter((a) => a.cost).map((a) => (
-              <div key={a.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex-1 text-sm text-gray-800">{a.title}</div>
-                <div className="font-semibold text-gray-800 text-sm">{fmtMoney(a.cost, trip.currency)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {showForm && <ExpenseForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} />}
-      {editing && <ExpenseForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
-    </div>
-  );
-}
-
-// ---------- Tips accordion ----------
-const TIP_CATEGORIES = [
-  { category: "Lokaal vervoer", icon: "🚇" },
-  { category: "Taxi & apps", icon: "🚕" },
-  { category: "Restaurants", icon: "🍽" },
-  { category: "Activiteiten", icon: "🎯" },
-  { category: "Met kinderen", icon: "👨‍👩‍👧" },
-  { category: "Evenementen & agenda", icon: "🎉" },
-];
-
-function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyPrefix }) {
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const cacheKey = `${cacheKeyPrefix}_cat_${category}`;
-
-  function load() {
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) { setItems(data); return; }
-      }
-    } catch {}
-    setLoading(true); setError(null);
-    const params = new URLSearchParams({ category });
-    if (location) params.set("location", location);
-    apiFetch(`/api/trips/${tripId}/tips?${params}`)
-      .then((d) => {
-        setItems(d.items || []);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ data: d.items || [], ts: Date.now() })); } catch {}
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }
-
-  function handleClick() {
-    if (!open) { setOpen(true); if (!items) load(); }
-    else setOpen(false);
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      <button onClick={handleClick} className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors">
-        <span className="text-lg">{icon}</span>
-        <span className="font-semibold text-gray-800 text-sm flex-1">{category}</span>
-        <span className="text-gray-400 text-xs" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", transition: "transform .2s" }}>▾</span>
-      </button>
-      {open && (
-        <div className="border-t border-gray-100">
-          {loading ? (
-            <div className="px-4 py-3 text-sm text-gray-400">Laden...</div>
-          ) : error ? (
-            <div className="px-4 py-3 text-sm text-red-500">{error} <button onClick={load} className="underline">Opnieuw</button></div>
-          ) : items?.length ? (
-            <ul className="divide-y divide-gray-50">
-              {items.map((tip, j) => {
-                const tipText = typeof tip === "string" ? tip : tip.text;
-                const tipUrl = typeof tip === "object" ? tip.url : null;
-                return (
-                  <li key={j} className="flex items-start gap-3 px-4 py-2.5">
-                    <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: accentColor }} />
-                    <span className="text-sm text-gray-700 leading-relaxed">
-                      {tipText}
-                      {tipUrl && <a href={tipUrl} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline text-xs whitespace-nowrap">↗ website</a>}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : items ? (
-            <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
-          ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------- Hotel AI Tip ----------
-function HotelAiTip({ accommodationId }) {
-  const [tip, setTip] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const cacheKey = `hotel_ai_tip_${accommodationId}`;
-
-  function load() {
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setTip(data); return; } }
-    } catch {}
-    setLoading(true);
-    apiFetch(`/api/accommodations/${accommodationId}/ai-tip`)
-      .then((d) => { setTip(d); try { localStorage.setItem(cacheKey, JSON.stringify({ data: d, ts: Date.now() })); } catch {} })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }
-
-  function handleClick(e) {
-    e.stopPropagation();
-    if (!open) { setOpen(true); if (!tip) load(); }
-    else setOpen(false);
-  }
-
-  return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <button onClick={handleClick}
-        className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors shrink-0 whitespace-nowrap"
-        style={{ background: open ? "#fef3c7" : "#fef9c3", color: "#b45309" }}>
-        🏨 Hotel tips {open ? "▴" : "▾"}
-      </button>
-      {open && (
-        <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm">
-          {loading ? (
-            <div className="space-y-2 animate-pulse">
-              <div className="h-3 bg-amber-200 rounded w-3/4" />
-              <div className="h-3 bg-amber-100 rounded w-full" />
-            </div>
-          ) : tip ? (
-            <div className="space-y-2">
-              {tip.location_tip && (
-                <div className="text-gray-700 leading-relaxed text-sm">
-                  📍 {tip.location_tip}
-                  {tip.location_url && <a href={tip.location_url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline text-xs whitespace-nowrap">↗ bekijk</a>}
-                </div>
-              )}
-              {tip.alternatives?.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-amber-700 mt-2 mb-1">Vergelijkbare hotels:</div>
-                  {tip.alternatives.map((alt, i) => (
-                    <div key={i} className="text-gray-600 text-xs leading-relaxed mb-1">
-                      • <span className="font-medium">{alt.name}</span> — {alt.reason}
-                      {alt.url && <a href={alt.url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline whitespace-nowrap">↗ boeken</a>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-gray-400">Tip kon niet worden geladen.</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------- Tips modal (per locatie) ----------
-function TipsModal({ tripId, trip, location, onClose }) {
-  const [didYouKnow, setDidYouKnow] = useState(null);
-  const [dykLoading, setDykLoading] = useState(true);
-  const tripMonth = trip?.start_date ? String(trip.start_date).slice(0, 7) : "";
-  const cacheKeyPrefix = `tips_loc_${location}_${tripMonth}`;
-  const dykKey = `${cacheKeyPrefix}_dyk`;
-
-  useEffect(() => {
-    try {
-      const cached = localStorage.getItem(dykKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
-    } catch {}
-    apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
-      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
-      .catch(() => {})
-      .finally(() => setDykLoading(false));
-  }, [location]);
-
-  return (
-    <Modal title={`Tips voor ${location}`} onClose={onClose} wide>
-      <div className="space-y-2">
-        {dykLoading ? (
-          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100 mb-1 animate-pulse">
-            <div className="h-3 w-20 bg-sky-200 rounded mb-2" />
-            <div className="h-4 w-full bg-sky-100 rounded" />
-          </div>
-        ) : didYouKnow ? (
-          <div className="rounded-xl p-4 bg-sky-50 border border-sky-100 mb-1">
-            <div className="text-xs font-bold uppercase tracking-wide text-sky-700 mb-1">Wist je dat?</div>
-            <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
-          </div>
-        ) : null}
-        <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
-        {TIP_CATEGORIES.map(({ category, icon }) => (
-          <TipAccordion key={category} tripId={tripId} category={category} icon={icon}
-            accentColor="#0369a1" location={location} cacheKeyPrefix={cacheKeyPrefix} />
-        ))}
-      </div>
-    </Modal>
-  );
-}
-
-// ---------- Tips tab ----------
-function TipsTab({ trip }) {
-  const [didYouKnow, setDidYouKnow] = useState(null);
-  const [dykLoading, setDykLoading] = useState(true);
-  const accent = trip.cover_color || "#0369a1";
-  const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
-  const cacheKeyPrefix = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
-  const dykKey = `${cacheKeyPrefix}_dyk`;
-
-  useEffect(() => {
-    if (!trip.destination) { setDykLoading(false); return; }
-    try {
-      const cached = localStorage.getItem(dykKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
-    } catch {}
-    apiFetch(`/api/trips/${trip.id}/tips`)
-      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
-      .catch(() => {})
-      .finally(() => setDykLoading(false));
-  }, [trip.id, trip.destination]);
-
-  if (!trip.destination) return (
-    <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">💡</div>
-      <div className="font-medium">Geen bestemming ingesteld</div>
-      <div className="text-sm mt-1">Voeg een bestemming toe aan je reis voor AI-tips</div>
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-gray-700">Tips voor {trip.destination}</h3>
-        <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
-      </div>
-
-      {dykLoading ? (
-        <div className="rounded-xl p-4 mb-4 border animate-pulse" style={{ background: accent + "10", borderColor: accent + "30" }}>
-          <div className="h-3 w-20 rounded mb-2" style={{ background: accent + "40" }} />
-          <div className="h-4 w-full rounded" style={{ background: accent + "20" }} />
-        </div>
-      ) : didYouKnow ? (
-        <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
-          <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: accent }}>Wist je dat?</div>
-          <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
-        </div>
-      ) : null}
-
-      <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
-
-      <div className="space-y-2">
-        {TIP_CATEGORIES.map(({ category, icon }) => (
-          <TipAccordion key={category} tripId={trip.id} category={category} icon={icon}
-            accentColor={accent} cacheKeyPrefix={cacheKeyPrefix} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------- Kaart tab ----------
-async function geocode(query) {
-  const key = `geocode_${query}`;
-  try {
-    const c = localStorage.getItem(key);
-    if (c) return JSON.parse(c);
-  } catch {}
-  await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
-  const res = await fetch(url, { headers: { "Accept-Language": "nl", "User-Agent": "ReisplannerApp/1.0" } });
-  const data = await res.json();
-  const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name } : null;
-  if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
-  return result;
-}
-
-function MapTab({ trip, accommodations, transports, days }) {
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const [status, setStatus] = useState("loading"); // loading | ready | error
-  const [progress, setProgress] = useState(0);
-  const [total, setTotal] = useState(0);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    let cancelled = false;
-
-    async function buildMap() {
-      // Collect unique locations to geocode
-      const items = []; // {label, sublabel, type, query}
-
-      accommodations.forEach((a) => {
-        const q = a.address || a.name;
-        if (q) items.push({ label: a.name, sublabel: a.address || "", type: "hotel", query: q });
-      });
-
-      days.forEach((day) => {
-        (day.activities || []).forEach((act) => {
-          if (act.location) items.push({ label: act.name || act.location, sublabel: act.location, type: "activity", query: act.location + (trip.destination ? `, ${trip.destination}` : "") });
-        });
-      });
-
-      // Transport: unique cities from origin/destination
-      // Use airport codes or city names — append country context from trip destination if short
-      const transportPairs = [];
-      transports.forEach((t) => {
-        if (t.origin && t.destination) {
-          const fromQ = t.origin;
-          const toQ = t.destination;
-          transportPairs.push({ from: fromQ, to: toQ, type: t.transport_type });
-          if (!items.find((i) => i.query === fromQ)) items.push({ label: t.origin, sublabel: "", type: "transport", query: fromQ });
-          if (!items.find((i) => i.query === toQ)) items.push({ label: t.destination, sublabel: "", type: "transport", query: toQ });
-        }
-      });
-
-      if (items.length === 0) { setStatus("empty"); return; }
-      setTotal(items.length);
-
-      // Geocode sequentially (Nominatim rate limit)
-      const coordMap = {};
-      for (let i = 0; i < items.length; i++) {
-        if (cancelled) return;
-        const item = items[i];
-        if (coordMap[item.query] === undefined) {
-          const geo = await geocode(item.query);
-          coordMap[item.query] = geo;
-        }
-        setProgress(i + 1);
-      }
-
-      if (cancelled) return;
-
-      const validItems = items.filter((item) => coordMap[item.query]);
-      if (validItems.length === 0) { setStatus("error"); return; }
-
-      // Init Leaflet map
-      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
-      const L = window.L;
-      const map = L.map(mapRef.current);
-      mapInstanceRef.current = map;
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
-        maxZoom: 19,
-      }).addTo(map);
-
-      const bounds = [];
-
-      // Draw transport lines first (below markers)
-      transportPairs.forEach((pair) => {
-        const fromGeo = coordMap[pair.from];
-        const toGeo = coordMap[pair.to];
-        if (!fromGeo || !toGeo) return;
-        const isAir = (pair.type || "").toLowerCase().includes("vlieg") || (pair.type || "").toLowerCase().includes("fly") || (pair.type || "").toLowerCase().includes("air") || !pair.type;
-        if (isAir) {
-          // Great-circle arc approximation
-          const steps = 40;
-          const latlngs = [];
-          for (let s = 0; s <= steps; s++) {
-            const t2 = s / steps;
-            const lat = fromGeo.lat + (toGeo.lat - fromGeo.lat) * t2;
-            const lon = fromGeo.lon + (toGeo.lon - fromGeo.lon) * t2;
-            // Bulge perpendicular to route (northward arc)
-            const bulge = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lat - fromGeo.lat) + Math.abs(toGeo.lon - fromGeo.lon)) * 0.08;
-            latlngs.push([lat + bulge, lon]);
-          }
-          L.polyline(latlngs, { color: "#0369a1", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
-        } else {
-          L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#059669", weight: 2, opacity: 0.6 }).addTo(map);
-        }
-      });
-
-      // Add markers
-      const iconSvg = (emoji, color) => L.divIcon({
-        className: "leaflet-reisplanner-icon",
-        html: `<div style="background:${color};border:2.5px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center"><span style="transform:rotate(45deg);font-size:15px;line-height:1;display:block">${emoji}</span></div>`,
-        iconSize: [34, 34],
-        iconAnchor: [17, 34],
-        popupAnchor: [0, -36],
-      });
-
-      const typeConfig = {
-        hotel: { emoji: "🏨", color: "#b45309" },
-        activity: { emoji: "🎯", color: "#0369a1" },
-        transport: { emoji: "✈️", color: "#6d28d9" },
-      };
-
-      // Deduplicate markers by query
-      const seen = new Set();
-      validItems.forEach((item) => {
-        if (seen.has(item.query)) return;
-        seen.add(item.query);
-        const geo = coordMap[item.query];
-        const cfg = typeConfig[item.type] || typeConfig.activity;
-        const marker = L.marker([geo.lat, geo.lon], { icon: iconSvg(cfg.emoji, cfg.color) }).addTo(map);
-        const popup = `<div style="font-family:system-ui;min-width:140px">
-          <div style="font-weight:600;font-size:13px;color:#1f2937">${item.label}</div>
-          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">${item.sublabel}</div>` : ""}
-        </div>`;
-        marker.bindPopup(popup);
-        bounds.push([geo.lat, geo.lon]);
-      });
-
-      if (bounds.length > 0) map.fitBounds(bounds, { padding: [40, 40] });
-      setStatus("ready");
-    }
-
-    buildMap().catch(() => setStatus("error"));
-    return () => { cancelled = true; };
-  }, [trip.id]);
-
-  useEffect(() => {
-    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
-  }, []);
-
-  const hasLocations = accommodations.some((a) => a.address || a.name) ||
-    transports.some((t) => t.origin && t.destination) ||
-    days.some((d) => (d.activities || []).some((a) => a.location));
-
-  if (!hasLocations) return (
-    <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">🗺</div>
-      <div className="font-medium">Geen locaties om te tonen</div>
-      <div className="text-sm mt-1">Voeg hotels, activiteiten of vervoer toe met locatiegegevens</div>
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-700">Reiskaart</h3>
-        <div className="flex gap-3 text-xs text-gray-500">
-          <span>🏨 Hotel</span>
-          <span>🎯 Activiteit</span>
-          <span>✈️ Vervoer</span>
-        </div>
-      </div>
-      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
-        {status === "loading" && (
-          <div className="absolute inset-0 bg-white/90 z-[1000] flex flex-col items-center justify-center gap-3">
-            <div className="text-3xl animate-pulse">🗺</div>
-            <div className="text-sm text-gray-600 font-medium">Locaties ophalen…</div>
-            {total > 0 && (
-              <div className="w-48">
-                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-sky-500 rounded-full transition-all" style={{ width: `${(progress / total) * 100}%` }} />
-                </div>
-                <div className="text-xs text-gray-400 text-center mt-1">{progress} / {total}</div>
-              </div>
-            )}
-          </div>
-        )}
-        {status === "error" && (
-          <div className="absolute inset-0 bg-white/90 z-[1000] flex items-center justify-center">
-            <div className="text-center text-gray-400">
-              <div className="text-3xl mb-2">😕</div>
-              <div className="text-sm">Kaart kon niet worden geladen</div>
-            </div>
-          </div>
-        )}
-        <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
-      </div>
-      <div className="text-xs text-gray-400 text-center mt-2">© OpenStreetMap contributors</div>
-    </div>
-  );
-}
-
-// ---------- Import modal ----------
-function ImportModal({ tripId, onImported, onClose }) {
-  const [mode, setMode] = useState("text"); // "text" | "image"
-  const [text, setText] = useState("");
-  const [imagePreview, setImagePreview] = useState(null);
-  const [imageData, setImageData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState({ transports: [], accommodations: [], activities: [] });
-  const [days, setDays] = useState([]);
-  const [activityDays, setActivityDays] = useState({});
-  const [existing, setExisting] = useState({ transports: [], accommodations: [] });
-  const [confirmReplace, setConfirmReplace] = useState(null); // { type, item, idx, conflicts }
-  const fileRef = useRef(null);
-
-  useEffect(() => {
-    api.getDays(tripId).then(setDays);
-    Promise.all([
-      api.getTransports(tripId),
-      api.getAccommodations(tripId),
-    ]).then(([t, a]) => setExisting({ transports: t, accommodations: a })).catch(() => {});
-  }, [tripId]);
-
-  function conflictsForTransport(t) {
-    const dates = [t.departure_time, t.arrival_time].filter(Boolean).map((d) => String(d).slice(0, 10));
-    return existing.transports.filter((e) =>
-      [e.departure_time, e.arrival_time].filter(Boolean).some((d) => dates.includes(String(d).slice(0, 10)))
-    );
-  }
-
-  function conflictsForAccommodation(a) {
-    if (!a.check_in && !a.check_out) return [];
-    return existing.accommodations.filter((e) =>
-      (a.check_in && (String(e.check_in).slice(0, 10) === String(a.check_in).slice(0, 10) ||
-                      String(e.check_out).slice(0, 10) === String(a.check_in).slice(0, 10))) ||
-      (a.check_out && (String(e.check_in).slice(0, 10) === String(a.check_out).slice(0, 10) ||
-                       String(e.check_out).slice(0, 10) === String(a.check_out).slice(0, 10)))
-    );
-  }
-
-  function handleImageSelect(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { setError("Afbeelding is te groot (max 10 MB)"); return; }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      setImagePreview(dataUrl);
-      const base64 = dataUrl.split(",")[1];
-      setImageData({ data: base64, mediaType: file.type });
-      setError(null);
-    };
-    reader.readAsDataURL(file);
-  }
-
-  async function handleAnalyze(e) {
-    e.preventDefault();
-    if (_guestMode) {
-      setError("De importfunctie vereist een account. Log in of maak een account aan om deze functie te gebruiken.");
-      return;
-    }
-    setLoading(true); setError(null); setResult(null);
-    try {
-      const body = mode === "image" ? { image: imageData } : { text };
-      const data = await apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify(body) });
-      setResult(data);
-      const defaults = {};
-      (data.activities || []).forEach((act, i) => {
-        if (act.date) {
-          const match = days.find((d) => d.date && d.date.slice(0, 10) === act.date);
-          if (match) defaults[i] = match.id;
-        }
-      });
-      setActivityDays(defaults);
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function doSaveTransport(t, idx, replace) {
-    setSaving(true);
-    try {
-      if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/transports/${e.id}`, { method: "DELETE" })));
-      await api.addTransport(tripId, t);
-      setSaved((s) => ({ ...s, transports: [...s.transports, idx] }));
-    } catch (err) { alert(err.message); }
-    finally { setSaving(false); setConfirmReplace(null); }
-  }
-
-  async function saveTransport(t, idx) {
-    const conflicts = conflictsForTransport(t);
-    if (conflicts.length) { setConfirmReplace({ type: "transport", item: t, idx, conflicts }); return; }
-    await doSaveTransport(t, idx, []);
-  }
-
-  async function doSaveAccommodation(a, idx, replace) {
-    setSaving(true);
-    try {
-      if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/accommodations/${e.id}`, { method: "DELETE" })));
-      await api.addAccommodation(tripId, a);
-      setSaved((s) => ({ ...s, accommodations: [...s.accommodations, idx] }));
-    } catch (err) { alert(err.message); }
-    finally { setSaving(false); setConfirmReplace(null); }
-  }
-
-  async function saveAccommodation(a, idx) {
-    const conflicts = conflictsForAccommodation(a);
-    if (conflicts.length) { setConfirmReplace({ type: "accommodation", item: a, idx, conflicts }); return; }
-    await doSaveAccommodation(a, idx, []);
-  }
-
-  async function saveActivity(act, idx) {
-    const dayId = activityDays[idx];
-    if (!dayId) { alert("Selecteer eerst een dag voor deze activiteit."); return; }
-    setSaving(true);
-    try {
-      await api.addActivity(dayId, { ...act, trip_id: tripId });
-      setSaved((s) => ({ ...s, activities: [...s.activities, idx] }));
-    } catch (err) { alert(err.message); }
-    finally { setSaving(false); }
-  }
-
-  async function saveAll() {
-    setSaving(true);
-    try {
-      for (let i = 0; i < (result.transports || []).length; i++) {
-        if (!saved.transports.includes(i)) await api.addTransport(tripId, result.transports[i]);
-      }
-      for (let i = 0; i < (result.accommodations || []).length; i++) {
-        if (!saved.accommodations.includes(i)) await api.addAccommodation(tripId, result.accommodations[i]);
-      }
-      for (let i = 0; i < (result.activities || []).length; i++) {
-        if (!saved.activities.includes(i) && activityDays[i]) {
-          await api.addActivity(activityDays[i], { ...result.activities[i], trip_id: tripId });
-        }
-      }
-      onImported();
-      onClose();
-    } catch (err) { alert(err.message); }
-    finally { setSaving(false); }
-  }
-
-  const totalFound = result ? (result.transports.length + result.accommodations.length + result.activities.length) : 0;
-  const totalSaved = saved.transports.length + saved.accommodations.length + saved.activities.length;
-
-  if (confirmReplace) {
-    const { type, item, idx, conflicts } = confirmReplace;
-    return (
-      <Modal title="Bestaande items vervangen?" onClose={() => setConfirmReplace(null)} wide>
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Op deze datum{conflicts.length > 1 ? "s zijn" : " is"} al {conflicts.length === 1 ? "een item" : `${conflicts.length} items`} aanwezig:
-          </p>
-          <ul className="space-y-1">
-            {conflicts.map((c) => (
-              <li key={c.id} className="text-sm bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-gray-700">
-                {type === "transport" ? `${c.type}: ${c.from_location} → ${c.to_location}` : c.name}
-              </li>
-            ))}
-          </ul>
-          <p className="text-sm text-gray-600">Wil je {conflicts.length === 1 ? "dit item" : "deze items"} vervangen door de nieuwe import?</p>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={() => {
-              setConfirmReplace(null);
-              if (type === "transport") doSaveTransport(item, idx, []);
-              else doSaveAccommodation(item, idx, []);
-            }}>Naast elkaar bewaren</Button>
-            <Button onClick={() => {
-              if (type === "transport") doSaveTransport(item, idx, conflicts);
-              else doSaveAccommodation(item, idx, conflicts);
-            }} disabled={saving}>{saving ? "Bezig..." : "Vervangen"}</Button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal title="Bevestiging importeren" onClose={onClose} wide>
-      {!result ? (
-        <form onSubmit={handleAnalyze} className="space-y-4">
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-            <button type="button" onClick={() => setMode("text")}
-              className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "text" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-              📋 Tekst plakken
-            </button>
-            <button type="button" onClick={() => setMode("image")}
-              className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "image" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-              📷 Foto uploaden
-            </button>
-          </div>
-
-          {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
-
-          {mode === "text" ? (
-            <Field label="Tekst van de bevestiging">
-              <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Plak hier de volledige tekst van je boekingsbevestiging..." />
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <Field label="Naam *">
+              <Input required value={form.name} onChange={set("name")} placeholder="bijv. Château Margaux" />
             </Field>
-          ) : (
-            <div>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-              {imagePreview ? (
-                <div className="relative rounded-xl overflow-hidden">
-                  <img src={imagePreview} alt="preview" className="w-full max-h-72 object-contain bg-gray-50" />
-                  <button type="button" onClick={() => { setImagePreview(null); setImageData(null); }}
-                    className="absolute top-2 right-2 bg-black/50 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-black/70">×</button>
-                </div>
-              ) : (
-                <div onClick={() => fileRef.current.click()}
-                  className="border-2 border-dashed border-gray-200 rounded-xl p-10 text-center cursor-pointer hover:border-sky-400 hover:bg-sky-50 transition-colors">
-                  <div className="text-4xl mb-2">📷</div>
-                  <div className="text-sm font-medium text-gray-600">Klik om een foto of screenshot te kiezen</div>
-                  <div className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP — max 10 MB</div>
-                </div>
-              )}
-            </div>
+          </div>
+          <Field label="Type">
+            <Select value={form.type} onChange={set("type")} style={{ borderColor: accent + "66" }}>
+              {WINE_TYPES.map(t => <option key={t}>{t}</option>)}
+            </Select>
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Producent / wijnhuis">
+            <Input value={form.producer} onChange={set("producer")} placeholder="bijv. Château Margaux" />
+          </Field>
+          <Field label="Jaargang">
+            <Input type="number" min="1900" max={new Date().getFullYear()} value={form.vintage_year} onChange={set("vintage_year")} placeholder={new Date().getFullYear()} />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Regio / appellation">
+            <Input value={form.region} onChange={set("region")} placeholder="bijv. Margaux, Bordeaux" />
+          </Field>
+          <Field label="Land">
+            <Input value={form.country} onChange={set("country")} placeholder="bijv. Frankrijk" />
+          </Field>
+        </div>
+
+        <Field label="Druivenras(sen)">
+          <Input value={form.grape_variety} onChange={set("grape_variety")} placeholder="bijv. Cabernet Sauvignon, Merlot" />
+        </Field>
+
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Flessen">
+            <Input type="number" min="0" value={form.bottles} onChange={set("bottles")} />
+          </Field>
+          <Field label="Prijs per fles (€)">
+            <Input type="number" min="0" step="0.01" value={form.price} onChange={set("price")} placeholder="0" />
+          </Field>
+          <Field label="Aankoopdatum">
+            <Input type="date" value={form.purchase_date} onChange={set("purchase_date")} />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Drinken vanaf (jaar)">
+            <Input type="number" min="2000" max="2100" value={form.drink_from} onChange={set("drink_from")} placeholder="bijv. 2025" />
+          </Field>
+          <Field label="Drinken voor (jaar)">
+            <Input type="number" min="2000" max="2100" value={form.drink_until} onChange={set("drink_until")} placeholder="bijv. 2035" />
+          </Field>
+        </div>
+
+        <Field label="Kelderlocatie" hint="bijv. rek, rij, positie">
+          <Input value={form.rack} onChange={set("rack")} placeholder="bijv. Rek A, rij 3, positie 7" />
+        </Field>
+
+        <Field label="Persoonlijke notities">
+          <Textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Indrukken, aankoopomstandigheden..." />
+        </Field>
+
+        <Field label="Etiketfoto (URL)" hint="optioneel">
+          <Input value={form.label_image} onChange={set("label_image")} placeholder="https://..." />
+          {form.label_image && (
+            <img src={form.label_image} alt="preview" className="mt-2 h-24 w-auto rounded-lg object-contain border border-gray-100" onError={e => e.target.style.display = "none"} />
           )}
+        </Field>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={loading || (mode === "text" ? !text.trim() : !imageData)}>
-              {loading ? "Toevoegen..." : "✨ Toevoegen"}
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <div className="space-y-5">
-          {totalFound === 0 ? (
-            <div className="text-center py-8 text-gray-400">
-              <div className="text-4xl mb-2">🤔</div>
-              <div>Niets gevonden in deze tekst.</div>
-              <div className="text-sm mt-1">Probeer het met een andere bevestiging.</div>
-            </div>
-          ) : (
-            <>
-              <p className="text-sm text-gray-500">{totalFound} item{totalFound !== 1 ? "s" : ""} gevonden. Voeg toe aan je reis:</p>
-
-              {result.transports.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">✈️ Vervoer ({result.transports.length})</h3>
-                  <div className="space-y-2">
-                    {result.transports.map((t, i) => (
-                      <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.transports.includes(i) ? "opacity-50" : ""}`}>
-                        <div className="flex-1">
-                          <div className="font-medium text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
-                          <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
-                            {t.departure_time && <span>Vertrek: {fmtDatetime(t.departure_time)}</span>}
-                            {t.arrival_time && <span>Aankomst: {fmtDatetime(t.arrival_time)}</span>}
-                            {t.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
-                            {t.cost != null && <span>{fmtMoney(t.cost)}</span>}
-                          </div>
-                          {t.notes && <div className="text-xs text-gray-500 mt-1">{t.notes}</div>}
-                        </div>
-                        {saved.transports.includes(i)
-                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
-                          : <Button variant="secondary" onClick={() => saveTransport(t, i)} disabled={saving}>Toevoegen</Button>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {result.accommodations.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">🏨 Verblijf ({result.accommodations.length})</h3>
-                  <div className="space-y-2">
-                    {result.accommodations.map((a, i) => (
-                      <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.accommodations.includes(i) ? "opacity-50" : ""}`}>
-                        <div className="flex-1">
-                          <div className="font-medium text-gray-800">{a.name}</div>
-                          <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
-                            {a.check_in && <span>Check-in: {fmt(a.check_in)}</span>}
-                            {a.check_out && <span>Check-out: {fmt(a.check_out)}</span>}
-                            {a.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{a.booking_ref}</span>}
-                            {a.cost != null && <span>{fmtMoney(a.cost)}</span>}
-                          </div>
-                          {a.address && <div className="text-xs text-gray-500 mt-1">📍 {a.address}</div>}
-                          {a.notes && <div className="text-xs text-gray-500 mt-1">{a.notes}</div>}
-                        </div>
-                        {saved.accommodations.includes(i)
-                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
-                          : <Button variant="secondary" onClick={() => saveAccommodation(a, i)} disabled={saving}>Toevoegen</Button>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {result.activities.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">🗓 Activiteiten ({result.activities.length})</h3>
-                  <div className="space-y-2">
-                    {result.activities.map((act, i) => (
-                      <div key={i} className={`bg-gray-50 rounded-xl p-4 ${saved.activities.includes(i) ? "opacity-50" : ""}`}>
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="font-medium text-gray-800">{act.title}</div>
-                            <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
-                              {act.date && <span>📅 {fmt(act.date)}</span>}
-                              {act.time && <span>🕐 {act.time}</span>}
-                              {act.location && <span>📍 {act.location}</span>}
-                              {act.cost != null && <span>{fmtMoney(act.cost)}</span>}
-                            </div>
-                            {act.notes && <div className="text-xs text-gray-500 mt-1">{act.notes}</div>}
-                          </div>
-                          {saved.activities.includes(i)
-                            ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
-                            : <Button variant="secondary" onClick={() => saveActivity(act, i)} disabled={saving || !activityDays[i]}>Toevoegen</Button>}
-                        </div>
-                        {!saved.activities.includes(i) && (
-                          <div className="mt-3">
-                            <Select
-                              value={activityDays[i] || ""}
-                              onChange={(e) => setActivityDays((d) => ({ ...d, [i]: e.target.value }))}
-                            >
-                              <option value="">— Kies een dag —</option>
-                              {days.map((d) => (
-                                <option key={d.id} value={d.id}>{fmt(d.date)}{d.title ? ` — ${d.title}` : ""}</option>
-                              ))}
-                            </Select>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
-            <Button variant="secondary" onClick={onClose}>Sluiten</Button>
-            {totalFound > 0 && totalSaved < totalFound && (
-              <Button onClick={saveAll} disabled={saving}>{saving ? "Opslaan..." : "Alles toevoegen"}</Button>
-            )}
-          </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Btn type="button" variant="secondary" onClick={onClose}>Annuleren</Btn>
+          <Btn type="submit" disabled={saving} style={{ background: accent }}>{saving ? "Opslaan..." : "Opslaan"}</Btn>
         </div>
-      )}
-    </Modal>
-  );
-}
-
-// ---------- Share modal ----------
-function ShareModal({ tripId, onClose }) {
-  const [link, setLink] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    api.createInvite(tripId)
-      .then((d) => setLink(d.link))
-      .finally(() => setLoading(false));
-  }, [tripId]);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <Modal title="Reis delen" onClose={onClose} wide>
-      <div className="space-y-4">
-        <p className="text-sm text-gray-500">
-          Deel de link hieronder. De ontvanger kan inloggen via Google of Apple en krijgt direct toegang tot deze reis.
-        </p>
-        {loading ? (
-          <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
-        ) : (
-          <>
-            <div className="flex gap-2">
-              <input
-                readOnly
-                value={link}
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-gray-50 focus:outline-none"
-                onClick={(e) => e.target.select()}
-              />
-              <Button onClick={handleCopy} variant={copied ? "secondary" : "primary"}>
-                {copied ? "✓ Gekopieerd" : "Kopiëren"}
-              </Button>
-            </div>
-            <a
-              href={`mailto:?subject=${encodeURIComponent("Uitnodiging: bekijk onze reis")}&body=${encodeURIComponent(`Hoi!\n\nIk wil deze reis met je delen via Reisplanner.\n\nKlik op de link hieronder om toegang te krijgen:\n${link}\n\nTot snel!`)}`}
-              className="flex items-center justify-center gap-2 w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              ✉️ Verstuur via Mail
-            </a>
-          </>
-        )}
-        <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
-        <div className="flex justify-end pt-2">
-          <Button variant="secondary" onClick={onClose}>Sluiten</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ---------- Packing tab ----------
-const PACKING_CATEGORIES = ["📄 Documenten", "👕 Kleding", "🔌 Elektronica", "🧴 Toilettas", "💊 Medicijnen", "🎒 Overig"];
-const PACKING_SUGGESTIONS = {
-  "📄 Documenten": ["Paspoort", "Vliegtickets", "Reisverzekering", "Rijbewijs", "Hotelvouchers", "Visabewijzen"],
-  "👕 Kleding": ["T-shirts", "Broeken", "Ondergoed", "Sokken", "Trui/vest", "Regenjas", "Zwemkleding", "Pyjama", "Schoenen", "Slippers"],
-  "🔌 Elektronica": ["Telefoon oplader", "Reisstekker adapter", "Powerbank", "Oordopjes", "Camera", "Laptop"],
-  "🧴 Toilettas": ["Tandenborstel", "Tandpasta", "Shampoo", "Douchegel", "Zonnebrandcrème", "Deodorant", "Scheerspullen"],
-  "💊 Medicijnen": ["Paracetamol", "Reizigersdiarree tabletten", "Pleisters", "Antihistamine", "Persoonlijke medicatie"],
-  "🎒 Overig": ["Reiskussen", "Slaapmasker", "Hangslot", "Paraplu", "Waterfles", "Snacks voor onderweg"],
-};
-
-function PackingTab({ tripId }) {
-  const [items, setItems] = useState([]);
-  const [newItem, setNewItem] = useState("");
-  const [newCategory, setNewCategory] = useState(PACKING_CATEGORIES[0]);
-  const [openCategory, setOpenCategory] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = React.useCallback(() => {
-    api.getPackingItems(tripId).then(data => { setItems(data); setLoading(false); });
-  }, [tripId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function handleAdd(e) {
-    e.preventDefault();
-    if (!newItem.trim()) return;
-    await api.addPackingItem(tripId, { category: newCategory, item: newItem.trim() });
-    setNewItem("");
-    load();
-  }
-
-  async function handleToggle(item) {
-    await api.updatePackingItem(item.id, { checked: !item.checked });
-    setItems(prev => prev.map(p => p.id === item.id ? { ...p, checked: !p.checked } : p));
-  }
-
-  async function handleDelete(id) {
-    await api.deletePackingItem(id);
-    setItems(prev => prev.filter(p => p.id !== id));
-  }
-
-  async function handleSuggest(cat, suggestion) {
-    if (items.some(p => p.category === cat && p.item === suggestion)) return;
-    await api.addPackingItem(tripId, { category: cat, item: suggestion });
-    load();
-  }
-
-  async function handleUncheckAll() {
-    await Promise.all(items.filter(p => p.checked).map(p => api.updatePackingItem(p.id, { checked: false })));
-    load();
-  }
-
-  const grouped = PACKING_CATEGORIES.reduce((acc, cat) => {
-    acc[cat] = items.filter(p => p.category === cat);
-    return acc;
-  }, {});
-  const checkedCount = items.filter(p => p.checked).length;
-
-  if (loading) return <div className="text-center py-12 text-gray-400">Laden...</div>;
-
-  return (
-    <div className="space-y-4">
-      {/* Progress bar */}
-      {items.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium text-gray-700">{checkedCount} / {items.length} ingepakt</span>
-            {checkedCount > 0 && (
-              <button onClick={handleUncheckAll} className="text-xs text-gray-400 hover:text-gray-600">Alles uitvinken</button>
-            )}
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${items.length ? (checkedCount / items.length) * 100 : 0}%` }} />
-          </div>
-        </div>
-      )}
-
-      {/* Add item */}
-      <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex gap-2">
-        <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
-          className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-400 shrink-0">
-          {PACKING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Item toevoegen..."
-          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 min-w-0" />
-        <button type="submit" className="bg-sky-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-sky-700 shrink-0">+</button>
       </form>
-
-      {/* Categories */}
-      {PACKING_CATEGORIES.map(cat => {
-        const catItems = grouped[cat] || [];
-        const catChecked = catItems.filter(p => p.checked).length;
-        const isOpen = openCategory === cat;
-        const suggestions = (PACKING_SUGGESTIONS[cat] || []).filter(s => !catItems.some(p => p.item === s));
-        return (
-          <div key={cat} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <button onClick={() => setOpenCategory(isOpen ? null : cat)}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-800 text-sm">{cat}</span>
-                {catItems.length > 0 && (
-                  <span className="text-xs text-gray-400">{catChecked}/{catItems.length}</span>
-                )}
-              </div>
-              <span className="text-gray-400 text-xs">{isOpen ? "▲" : "▼"}</span>
-            </button>
-
-            {isOpen && (
-              <div className="border-t border-gray-50 px-4 pb-3">
-                {catItems.length === 0 && (
-                  <p className="text-xs text-gray-400 italic py-2">Nog geen items in deze categorie</p>
-                )}
-                <div className="divide-y divide-gray-50">
-                  {catItems.map(item => (
-                    <div key={item.id} className="flex items-center gap-3 py-2 group">
-                      <input type="checkbox" checked={item.checked} onChange={() => handleToggle(item)}
-                        className="w-4 h-4 rounded accent-sky-600 cursor-pointer shrink-0" />
-                      <span className={`flex-1 text-sm ${item.checked ? "line-through text-gray-400" : "text-gray-800"}`}>{item.item}</span>
-                      <button onClick={() => handleDelete(item.id)}
-                        className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑</button>
-                    </div>
-                  ))}
-                </div>
-                {suggestions.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-gray-50">
-                    <p className="text-xs text-gray-400 mb-1.5">Suggesties:</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {suggestions.slice(0, 6).map(s => (
-                        <button key={s} onClick={() => handleSuggest(cat, s)}
-                          className="text-xs px-2 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700 transition-colors">
-                          + {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {items.length === 0 && (
-        <div className="text-center py-10 text-gray-400">
-          <div className="text-4xl mb-2">🎒</div>
-          <div className="text-sm">Nog niets op de paklijst</div>
-          <div className="text-xs mt-1">Voeg items toe of kies suggesties per categorie</div>
-        </div>
-      )}
-    </div>
+    </Modal>
   );
 }
 
-// ---------- Trip detail ----------
-function TripDetail({ tripId, onBack, onChanged }) {
-  const [trip, setTrip] = useState(null);
-  const [days, setDays] = useState([]);
-  const [accommodations, setAccommodations] = useState([]);
-  const [transports, setTransports] = useState([]);
-  const [expenses, setExpenses] = useState([]);
-  const [tab, setTab] = useState("days");
-  const [editing, setEditing] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [sharing, setSharing] = useState(false);
+// ---------- Tasting Form ----------
+function TastingForm({ wineId, initial, onSaved, onClose, wineColor }) {
+  const [form, setForm] = useState(initial ? {
+    tasting_date: initial.tasting_date ? String(initial.tasting_date).slice(0, 10) : "",
+    rating: initial.rating || 0,
+    nose: initial.nose || "",
+    palate: initial.palate || "",
+    finish: initial.finish || "",
+    notes: initial.notes || "",
+  } : { tasting_date: new Date().toISOString().slice(0, 10), rating: 0, nose: "", palate: "", finish: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const accent = wineColor || "#7c2d12";
 
-  const load = useCallback(async () => {
-    const [t, d, a, tr, ex] = await Promise.all([
-      api.getTrip(tripId),
-      api.getDays(tripId),
-      api.getAccommodations(tripId),
-      api.getTransports(tripId),
-      api.getExpenses(tripId),
-    ]);
-    setTrip(t); setDays(d); setAccommodations(a); setTransports(tr); setExpenses(ex);
-  }, [tripId]);
-
-  useEffect(() => { load(); }, [load]);
+  async function handleSubmit(e) {
+    e.preventDefault(); setSaving(true);
+    try {
+      const data = { ...form, rating: form.rating || null };
+      const saved = initial?.id ? await api.updateTasting(initial.id, data) : await api.addTasting(wineId, data);
+      onSaved(saved);
+    } finally { setSaving(false); }
+  }
 
   async function handleDelete() {
-    if (!confirm(`"${trip.name}" definitief verwijderen?`)) return;
-    await api.deleteTrip(tripId);
-    onBack(); onChanged();
+    if (!confirm("Proefnotitie verwijderen?")) return;
+    await api.deleteTasting(initial.id);
+    onSaved(null, true);
   }
 
-  if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+  return (
+    <Modal title={initial?.id ? "Proefnotitie bewerken" : "Proefnotitie toevoegen"} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Datum">
+            <Input type="date" value={form.tasting_date} onChange={set("tasting_date")} />
+          </Field>
+          <Field label="Beoordeling">
+            <div className="pt-1">
+              <Stars rating={form.rating} onChange={(r) => setForm(f => ({ ...f, rating: r }))} size="lg" />
+            </div>
+          </Field>
+        </div>
+        <Field label="Neus (geur & aroma)">
+          <Input value={form.nose} onChange={set("nose")} placeholder="Fruitig, kruidig, bloemig..." />
+        </Field>
+        <Field label="Smaak (palate)">
+          <Input value={form.palate} onChange={set("palate")} placeholder="Structuur, tannines, zuurgraad..." />
+        </Field>
+        <Field label="Afdronk (finish)">
+          <Input value={form.finish} onChange={set("finish")} placeholder="Lang, kort, zacht, droog..." />
+        </Field>
+        <Field label="Algemene notities">
+          <Textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Totaalindruk, combinatie, gelegenheid..." />
+        </Field>
+        <div className="flex justify-between items-center pt-2">
+          {initial?.id
+            ? <Btn type="button" variant="danger" onClick={handleDelete}>🗑 Verwijderen</Btn>
+            : <span />}
+          <div className="flex gap-2">
+            <Btn type="button" variant="secondary" onClick={onClose}>Annuleren</Btn>
+            <Btn type="submit" disabled={saving} style={{ background: accent }}>{saving ? "Opslaan..." : "Opslaan"}</Btn>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
-  const accent = trip.cover_color || "#0369a1";
+// ---------- AI Tip Panel ----------
+function AiTipPanel({ wine }) {
+  const [activeType, setActiveType] = useState(null);
+  const [tips, setTips] = useState({});
+  const [loading, setLoading] = useState(null);
+  const color = WINE_TYPE_COLORS[wine.type] || "#7c2d12";
 
-  const tabs = [
-    { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
-    { key: "accommodation", label: "Verblijf", icon: "🏨" },
-    { key: "transport", label: "Vervoer", icon: "✈️" },
-    { key: "map", label: "Kaart", icon: "🗺" },
-    { key: "packing", label: "Paklijst", icon: "🎒" },
-  ];
+  async function loadTip(type) {
+    if (activeType === type) { setActiveType(null); return; }
+    setActiveType(type);
+    if (tips[type]) return;
+    setLoading(type);
+    try {
+      const data = await api.getAiTip(wine.id, type);
+      setTips(t => ({ ...t, [type]: data }));
+    } catch { setTips(t => ({ ...t, [type]: { error: true } })); }
+    finally { setLoading(null); }
+  }
 
-  // Bottom nav tabs for mobile
-  const bottomNavItems = [
-    { key: "days", icon: "🗓", label: "Planning" },
-    { key: "accommodation", icon: "🏨", label: "Verblijf" },
-    { key: "transport", icon: "✈️", label: "Vervoer" },
-    { key: "map", icon: "🗺", label: "Kaart" },
-    { key: "packing", icon: "🎒", label: "Paklijst" },
-    { key: "budget", icon: "💰", label: "Budget" },
+  const tipButtons = [
+    { type: "pairing", icon: "🍽", label: "Spijscombinaties" },
+    { type: "window", icon: "📅", label: "Drinkmoment" },
+    { type: "similar", icon: "🔍", label: "Vergelijkbare wijnen" },
   ];
 
   return (
-    <div className="pb-2">
-      {/* Back button — only on desktop */}
-      <button onClick={onBack} className="hidden sm:inline-flex mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
-        ← Alle reizen
-      </button>
-
-      {/* Header */}
-      <div className="rounded-2xl shadow-md overflow-hidden mb-6" style={{ border: `1px solid ${accent}22` }}>
-        {trip.cover_image ? (
-          <>
-            <div className="relative h-48 sm:h-64 w-full overflow-hidden">
-              <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
-                <div className="flex items-start gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
-                </div>
-                <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
-                {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
-                <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
-                  {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
-                </div>
-                {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
-              </div>
-            </div>
-            <div className="bg-white px-3 py-2.5 border-t border-gray-100">
-              <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
-                📧 Toevoegen
-              </button>
-              <div className="flex gap-2 overflow-x-auto">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="relative h-28 w-full flex items-end px-6 pb-4" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
-              <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
-              <div className="relative flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">Gedeeld</span>}
-                </div>
-                <h2 className="text-2xl font-bold text-white drop-shadow">{trip.name}</h2>
-                {trip.destination && <div className="text-white/80 text-sm mt-0.5">📍 {trip.destination}</div>}
-              </div>
-            </div>
-            <div className="bg-white px-4 py-3">
-              <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
-                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
-              </div>
-              <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
-                📧 Toevoegen
-              </button>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
-              </div>
-              {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Desktop tabs / mobile: alleen de grote Dagplanning knop */}
-      <div className="hidden sm:block">
-        <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
-      </div>
-      <div className="sm:hidden mb-4">
-        <button onClick={() => setTab("days")}
-          className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
-          style={tab === "days"
-            ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-            : { background: "#f1f5f9", color: "#374151" }}>
-          🗓 Dagplanning
-        </button>
-      </div>
-
-      {/* Budget balk */}
-      {trip.budget && (() => {
-        const transportTotal = transports.reduce((s, t) => s + Number(t.cost || 0), 0);
-        const accommodationTotal = accommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
-        const activityTotal = days.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
-        const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
-        const total = Number(trip.budget);
-        const spent = transportTotal + accommodationTotal + activityTotal + expenseTotal;
-        const pct = (v) => Math.min((v / total) * 100, 100);
-        const tPct = pct(transportTotal);
-        const aPct = pct(accommodationTotal);
-        const acPct = pct(activityTotal);
-        const ePct = pct(expenseTotal);
-        const overBudget = spent > total;
-        return (
-          <button onClick={() => setTab("budget")} className="w-full mb-5 bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 text-left hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-baseline mb-2">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Budget</span>
-              <span className={`text-xs font-semibold ${overBudget ? "text-red-500" : "text-gray-600"}`}>
-                {fmtMoney(spent, trip.currency)} <span className="text-gray-400 font-normal">/ {fmtMoney(total, trip.currency)}</span>
-              </span>
-            </div>
-            <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
-              <div style={{ width: `${tPct}%`, background: "#0369a1" }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
-              <div style={{ width: `${aPct}%`, background: "#b45309" }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
-              <div style={{ width: `${acPct}%`, background: "#059669" }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
-              <div style={{ width: `${ePct}%`, background: "#7c3aed" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
-            </div>
-            <div className="flex gap-3 mt-2 flex-wrap">
-              {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#0369a1"}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
-              {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#b45309"}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
-              {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#059669"}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
-              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#7c3aed"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
-            </div>
+    <div className="space-y-2">
+      <div className="text-xs text-gray-400 text-center pb-1">✨ Gegenereerd door Claude AI</div>
+      {tipButtons.map(({ type, icon, label }) => (
+        <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <button onClick={() => loadTip(type)}
+            className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors">
+            <span className="text-lg">{icon}</span>
+            <span className="font-medium text-gray-800 text-sm flex-1">{label}</span>
+            <span className="text-gray-400 text-xs transition-transform" style={{ display: "inline-block", transform: activeType === type ? "rotate(180deg)" : "none" }}>▾</span>
           </button>
-        );
-      })()}
-
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
-      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
-      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
-      {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
-      {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
-      {tab === "packing" && <PackingTab tripId={trip.id} />}
-
-      {/* Mobile bottom nav */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="flex">
-          <button onClick={onBack} className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-gray-400 hover:text-sky-600 transition-colors min-w-0" style={{ minHeight: 56 }}>
-            <span className="text-xl">←</span>
-            <span className="text-xs font-medium leading-none">Terug</span>
-          </button>
-          <div className="w-px bg-gray-100 my-2" />
-          {bottomNavItems.map((item) => (
-            <button key={item.key} onClick={() => setTab(item.key)}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0"
-              style={{ color: tab === item.key ? accent : "#9ca3af", minHeight: 56 }}>
-              <span className="text-xl leading-none">{item.icon}</span>
-              <span className="text-xs font-medium leading-none mt-0.5">{item.label}</span>
-              {tab === item.key && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
-            </button>
-          ))}
+          {activeType === type && (
+            <div className="border-t border-gray-100 px-4 py-3">
+              {loading === type ? (
+                <div className="space-y-2 animate-pulse">
+                  <div className="h-3 bg-gray-200 rounded w-3/4" />
+                  <div className="h-3 bg-gray-100 rounded w-full" />
+                  <div className="h-3 bg-gray-100 rounded w-2/3" />
+                </div>
+              ) : tips[type]?.error ? (
+                <div className="text-sm text-red-500">Kon tips niet laden. <button onClick={() => { setTips(t => { const n = {...t}; delete n[type]; return n; }); loadTip(type); }} className="underline">Opnieuw</button></div>
+              ) : tips[type] ? (
+                <div className="space-y-3">
+                  {type === "pairing" && (tips[type].pairings || []).map((p, i) => (
+                    <div key={i} className="flex gap-2">
+                      <div className="w-5 h-5 rounded-full text-white text-xs flex items-center justify-center shrink-0 mt-0.5" style={{ background: color }}>{i+1}</div>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-800">{p.dish}</div>
+                        {p.reason && <div className="text-xs text-gray-500 mt-0.5">{p.reason}</div>}
+                      </div>
+                    </div>
+                  ))}
+                  {type === "window" && (
+                    <div className="space-y-2">
+                      {tips[type].advice && <p className="text-sm text-gray-700 leading-relaxed">{tips[type].advice}</p>}
+                      {tips[type].optimal_year && <div className="text-xs font-medium px-3 py-1.5 rounded-lg inline-block" style={{ background: color + "15", color }}>🎯 Optimaal: {tips[type].optimal_year}</div>}
+                      {tips[type].peak && <div className="text-xs text-gray-500">⭐ Piek: {tips[type].peak}</div>}
+                    </div>
+                  )}
+                  {type === "similar" && (tips[type].wines || []).map((w, i) => (
+                    <div key={i} className="bg-gray-50 rounded-lg p-3">
+                      <div className="text-sm font-semibold text-gray-800">{w.producer ? `${w.producer} ` : ""}{w.name}</div>
+                      {w.region && <div className="text-xs text-gray-500">📍 {w.region}</div>}
+                      {w.reason && <div className="text-xs text-gray-600 mt-1">{w.reason}</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
-      </div>
-
-      {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
-      {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
-      {sharing && <ShareModal tripId={tripId} onClose={() => setSharing(false)} />}
+      ))}
     </div>
   );
 }
 
-// ---------- Admin view ----------
-function AdminView({ onBack }) {
-  const [trips, setTrips] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("trips");
+// ---------- Wine Detail Modal ----------
+function WineDetail({ wine: initialWine, onClose, onUpdated, onDeleted }) {
+  const [wine, setWine] = useState(initialWine);
+  const [tastings, setTastings] = useState([]);
+  const [loadingTastings, setLoadingTastings] = useState(true);
+  const [activeTab, setActiveTab] = useState("info");
+  const [showEditForm, setShowEditForm] = useState(false);
+  const [showTastingForm, setShowTastingForm] = useState(false);
+  const [editingTasting, setEditingTasting] = useState(null);
+  const color = WINE_TYPE_COLORS[wine.type] || "#7c2d12";
+  const icon = WINE_TYPE_ICONS[wine.type] || "🍷";
 
-  const reload = () => {
-    Promise.all([api.getAdminTrips(), api.getAdminUsers()])
-      .then(([t, u]) => { setTrips(t); setUsers(u); })
-      .finally(() => setLoading(false));
-  };
+  useEffect(() => {
+    api.getTastings(wine.id).then(t => { setTastings(t); setLoadingTastings(false); }).catch(() => setLoadingTastings(false));
+  }, [wine.id]);
+
+  async function handleDelete() {
+    if (!confirm(`"${wine.name}" definitief verwijderen uit je kelder?`)) return;
+    try { await api.deleteWine(wine.id); onDeleted(wine.id); onClose(); }
+    catch (err) { alert(err.message); }
+  }
+
+  const status = drinkWindowStatus(wine);
+  const statusLabel = drinkWindowLabel(wine);
+  const avgRating = wine.avg_rating ? parseFloat(wine.avg_rating) : null;
+
+  const infoItems = [
+    wine.grape_variety && { icon: "🍇", label: "Druivenras", value: wine.grape_variety },
+    (wine.drink_from || wine.drink_until) && { icon: "📅", label: "Drinkvenster", value: [wine.drink_from, wine.drink_until].filter(Boolean).join(" – ") },
+    wine.rack && { icon: "📦", label: "Kelderlocatie", value: wine.rack },
+    wine.price && { icon: "💶", label: "Prijs per fles", value: fmtMoney(wine.price) },
+    wine.purchase_date && { icon: "🗓", label: "Aankoopdatum", value: fmtDate(wine.purchase_date) },
+    wine.notes && { icon: "📝", label: "Notities", value: wine.notes },
+  ].filter(Boolean);
+
+  return (
+    <>
+      <Modal title="" onClose={onClose} wide>
+        {/* Header */}
+        <div className="flex items-start gap-4 mb-5">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shrink-0 overflow-hidden" style={{ background: color + "18" }}>
+            {wine.label_image
+              ? <img src={wine.label_image} alt={wine.name} className="w-16 h-16 object-cover" onError={e => { e.target.style.display="none"; e.target.nextSibling.style.display="flex"; }} />
+              : null}
+            <span style={wine.label_image ? { display: "none" } : {}}>{icon}</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start gap-2 flex-wrap mb-1">
+              <h2 className="text-xl font-bold text-gray-900 leading-tight">{wine.name}</h2>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white shrink-0 mt-0.5" style={{ background: color }}>{wine.type}</span>
+            </div>
+            {wine.producer && <div className="text-sm font-medium text-gray-600">{wine.producer}</div>}
+            <div className="flex items-center gap-3 mt-1 flex-wrap">
+              {wine.vintage_year && <span className="text-sm font-bold text-gray-800">{wine.vintage_year}</span>}
+              {wine.region && <span className="text-xs text-gray-500">📍 {wine.region}{wine.country ? `, ${wine.country}` : ""}</span>}
+            </div>
+            {avgRating && <div className="mt-1.5"><Stars rating={avgRating} /></div>}
+          </div>
+          <div className="flex gap-1 shrink-0">
+            <button onClick={() => setShowEditForm(true)} className="p-2 text-gray-400 hover:text-gray-700 rounded-xl hover:bg-gray-100 transition-colors">✏️</button>
+            <button onClick={handleDelete} className="p-2 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors">🗑</button>
+          </div>
+        </div>
+
+        {/* Quick stats */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="rounded-xl p-3 text-center border" style={{ background: color + "08", borderColor: color + "25" }}>
+            <div className="text-2xl font-bold" style={{ color: wine.bottles === 0 ? "#9ca3af" : color }}>{wine.bottles}</div>
+            <div className="text-xs text-gray-500">{wine.bottles === 1 ? "fles" : "flessen"}</div>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3 text-center border border-gray-100">
+            <div className="text-2xl font-bold text-gray-800">{tastings.length}</div>
+            <div className="text-xs text-gray-500">{tastings.length === 1 ? "proefnotitie" : "proefnotities"}</div>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3 text-center border border-gray-100">
+            {avgRating ? (
+              <>
+                <div className="text-2xl font-bold text-amber-500">{avgRating.toFixed(1)}</div>
+                <div className="text-xs text-gray-500">gem. score</div>
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-gray-300">—</div>
+                <div className="text-xs text-gray-400">geen score</div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Drink window badge */}
+        {statusLabel && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl mb-4 text-sm font-medium" style={{ background: STATUS_COLORS[status] + "15", color: STATUS_COLORS[status] }}>
+            <span>●</span><span>{statusLabel}</span>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5">
+          {[
+            { key: "info", label: "📋 Info" },
+            { key: "tastings", label: `🍷 Proeven (${tastings.length})` },
+            { key: "ai", label: "✨ AI Tips" },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+              className="flex-1 py-2 px-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+              style={activeTab === tab.key ? { background: "white", color, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" } : { color: "#6b7280" }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Info tab */}
+        {activeTab === "info" && (
+          <div>
+            {infoItems.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <div className="text-3xl mb-2">📋</div>
+                <div className="text-sm">Geen extra details ingevuld</div>
+                <button onClick={() => setShowEditForm(true)} className="mt-2 text-xs underline" style={{ color }}>Details toevoegen</button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {infoItems.map(({ icon: ic, label, value }) => (
+                  <div key={label} className="bg-gray-50 rounded-xl px-4 py-3">
+                    <div className="text-xs text-gray-500 mb-0.5">{ic} {label}</div>
+                    <div className="text-sm text-gray-800">{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tastings tab */}
+        {activeTab === "tastings" && (
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold text-gray-700">Proefnotities</h3>
+              <Btn variant="secondary" onClick={() => setShowTastingForm(true)}>+ Toevoegen</Btn>
+            </div>
+            {loadingTastings ? (
+              <div className="space-y-2">
+                {[1,2].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />)}
+              </div>
+            ) : tastings.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <div className="text-4xl mb-2">🍷</div>
+                <div className="text-sm">Nog geen proefnotities</div>
+                <button onClick={() => setShowTastingForm(true)} className="mt-2 text-xs underline" style={{ color }}>Eerste notitie toevoegen</button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {tastings.map(t => (
+                  <div key={t.id}
+                    onClick={() => setEditingTasting(t)}
+                    className="bg-gray-50 rounded-xl p-4 cursor-pointer hover:bg-gray-100 transition-colors border border-gray-100">
+                    <div className="flex items-center justify-between mb-2">
+                      {t.tasting_date && <div className="text-xs font-medium text-gray-600">{fmtDate(t.tasting_date)}</div>}
+                      {t.rating ? <Stars rating={t.rating} /> : <span className="text-xs text-gray-400">Geen beoordeling</span>}
+                    </div>
+                    {t.nose && <div className="text-xs text-gray-600 mb-1"><span className="font-semibold text-gray-700">Neus:</span> {t.nose}</div>}
+                    {t.palate && <div className="text-xs text-gray-600 mb-1"><span className="font-semibold text-gray-700">Smaak:</span> {t.palate}</div>}
+                    {t.finish && <div className="text-xs text-gray-600 mb-1"><span className="font-semibold text-gray-700">Afdronk:</span> {t.finish}</div>}
+                    {t.notes && <div className="text-sm text-gray-700 mt-1.5 leading-relaxed">{t.notes}</div>}
+                    <div className="text-xs text-gray-400 mt-2 text-right">Klik om te bewerken →</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AI tab */}
+        {activeTab === "ai" && <AiTipPanel wine={wine} />}
+      </Modal>
+
+      {showEditForm && (
+        <WineForm initial={wine}
+          onSaved={(w) => { const updated = { ...wine, ...w }; setWine(updated); setShowEditForm(false); onUpdated(updated); }}
+          onClose={() => setShowEditForm(false)} />
+      )}
+      {(showTastingForm || editingTasting) && (
+        <TastingForm
+          wineId={wine.id}
+          initial={editingTasting || null}
+          wineColor={color}
+          onSaved={(t, deleted) => {
+            if (deleted) {
+              setTastings(prev => prev.filter(x => x.id !== editingTasting?.id));
+            } else if (editingTasting) {
+              setTastings(prev => prev.map(x => x.id === t.id ? t : x));
+            } else {
+              setTastings(prev => [t, ...prev]);
+            }
+            setWine(w => ({ ...w, tasting_count: deleted ? Math.max(0, (w.tasting_count||1)-1) : (editingTasting ? w.tasting_count : (w.tasting_count||0)+1) }));
+            setShowTastingForm(false); setEditingTasting(null);
+          }}
+          onClose={() => { setShowTastingForm(false); setEditingTasting(null); }}
+        />
+      )}
+    </>
+  );
+}
+
+// ---------- Wine Card ----------
+function WineCard({ wine, onClick }) {
+  const color = WINE_TYPE_COLORS[wine.type] || "#7c2d12";
+  const icon = WINE_TYPE_ICONS[wine.type] || "🍷";
+  const status = drinkWindowStatus(wine);
+  const statusColor = STATUS_COLORS[status];
+  const isEmpty = wine.bottles === 0;
+
+  return (
+    <div onClick={onClick}
+      className={`bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-all active:scale-[0.99] ${isEmpty ? "opacity-60" : ""}`}
+      style={{ WebkitTapHighlightColor: "transparent" }}>
+      <div className="flex items-center gap-3 p-4">
+        <div className="w-1.5 self-stretch rounded-full shrink-0" style={{ background: color }} />
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0 overflow-hidden" style={{ background: color + "12" }}>
+          {wine.label_image
+            ? <img src={wine.label_image} alt="" className="w-11 h-11 object-cover" onError={e => { e.target.style.display="none"; }} />
+            : icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-gray-900 text-sm truncate">{wine.name}</div>
+              {wine.producer && <div className="text-xs text-gray-500 truncate">{wine.producer}</div>}
+            </div>
+            {wine.avg_rating && (
+              <div className="shrink-0 flex items-center gap-0.5 mt-0.5">
+                <span className="text-sm" style={{ color: "#f59e0b" }}>★</span>
+                <span className="text-xs font-bold text-gray-700">{parseFloat(wine.avg_rating).toFixed(1)}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            {wine.vintage_year && (
+              <span className="text-xs font-semibold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">{wine.vintage_year}</span>
+            )}
+            {wine.region && <span className="text-xs text-gray-400 truncate max-w-[140px]">{wine.region}</span>}
+            {status !== "unknown" && <span className="text-xs font-bold" style={{ color: statusColor }}>●</span>}
+          </div>
+        </div>
+        <div className="shrink-0 text-right pl-1">
+          <div className="text-xl font-bold" style={{ color: isEmpty ? "#9ca3af" : color }}>{wine.bottles}</div>
+          <div className="text-xs text-gray-400 leading-tight">{isEmpty ? "leeg" : wine.bottles === 1 ? "fles" : "flessen"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Stats Bar ----------
+function StatsBar({ stats }) {
+  if (!stats) return (
+    <div className="grid grid-cols-3 gap-2 mb-5">
+      {[1,2,3].map(i => <div key={i} className="h-16 bg-white rounded-xl animate-pulse border border-gray-100" />)}
+    </div>
+  );
+  const items = [
+    { value: Number(stats.total_bottles), label: "flessen" },
+    { value: Number(stats.total_labels), label: "labels" },
+    { value: stats.ready_to_drink?.length || 0, label: "drink nu", highlight: stats.ready_to_drink?.length > 0 },
+    Number(stats.total_value) > 0 && { value: fmtMoney(stats.total_value), label: "waarde" },
+  ].filter(Boolean);
+
+  return (
+    <div className={`grid gap-2 mb-5`} style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
+      {items.map(({ value, label, highlight }) => (
+        <div key={label} className="bg-white rounded-xl p-3 text-center border border-gray-100 shadow-sm">
+          <div className="font-bold text-lg leading-tight" style={{ color: highlight ? "#15803d" : "#111827" }}>{value}</div>
+          <div className="text-xs text-gray-500 mt-0.5 leading-tight">{label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Ready To Drink Strip ----------
+function ReadyToDrink({ wines, allWines, onSelect }) {
+  if (!wines || wines.length === 0) return null;
+  const color = "#15803d";
+  return (
+    <div className="mb-5">
+      <div className="text-xs font-bold text-green-700 uppercase tracking-wide mb-2">🟢 Klaar om te drinken</div>
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+        {wines.map(w => {
+          const c = WINE_TYPE_COLORS[w.type] || "#7c2d12";
+          const full = allWines.find(x => x.id === w.id) || w;
+          return (
+            <div key={w.id} onClick={() => onSelect(full)}
+              className="shrink-0 bg-white rounded-2xl border border-green-100 shadow-sm p-3 cursor-pointer hover:shadow-md transition-shadow"
+              style={{ minWidth: "130px", maxWidth: "150px" }}>
+              <div className="text-2xl mb-1.5">{WINE_TYPE_ICONS[w.type] || "🍷"}</div>
+              <div className="text-xs font-bold text-gray-900 line-clamp-2 leading-tight">{w.name}</div>
+              {w.producer && <div className="text-xs text-gray-400 truncate mt-0.5">{w.producer}</div>}
+              {w.vintage_year && <div className="text-xs font-semibold mt-1" style={{ color: c }}>{w.vintage_year}</div>}
+              <div className="text-xs font-bold text-green-700 mt-1">{w.bottles} fles{w.bottles !== 1 ? "sen" : ""}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main WineCellar ----------
+function WineCellar({ user, onLogout }) {
+  const [wines, setWines] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [selectedWine, setSelectedWine] = useState(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
+  async function reload() {
+    try {
+      const [w, s] = await Promise.all([api.getWines(), api.getStats()]);
+      setWines(w); setStats(s);
+    } catch {}
+    finally { setLoading(false); }
+  }
 
   useEffect(() => { reload(); }, []);
 
-  async function handleAssign(tripId, userId) {
-    await api.assignTrip(tripId, userId || null);
-    reload();
-  }
+  const filtered = wines.filter(w =>
+    (!filterType || w.type === filterType) &&
+    (!search || [w.name, w.producer, w.region, w.country, w.grape_variety]
+      .filter(Boolean).some(s => s.toLowerCase().includes(search.toLowerCase())))
+  );
 
-  const byUser = trips.reduce((acc, t) => {
-    const key = t.user_id || "unassigned";
-    if (!acc[key]) acc[key] = { name: t.user_name, email: t.user_email, avatar: t.user_avatar, trips: [] };
-    acc[key].trips.push(t);
-    return acc;
-  }, {});
-
-  const groups = [
-    ...(byUser["unassigned"] ? [{ key: "unassigned", name: "Niet gekoppeld", email: null, avatar: null, trips: byUser["unassigned"].trips }] : []),
-    ...Object.entries(byUser).filter(([k]) => k !== "unassigned").map(([, v]) => v),
-  ];
-
-  const LOGIN_METHOD = (u) => {
-    const methods = [];
-    if (u.google_id) methods.push("Google");
-    if (u.apple_id) methods.push("Apple");
-    if (u.has_password) methods.push("E-mail");
-    return methods.join(" · ") || "—";
-  };
+  const accent = "#7c2d12";
+  const initial = (user.name || user.email || "?")[0].toUpperCase();
 
   return (
-    <div>
-      <button onClick={onBack} className="text-sky-600 hover:text-sky-800 mb-4 inline-flex items-center gap-1 text-sm">← Mijn reizen</button>
-
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-gray-800">Beheer</h2>
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-          <button onClick={() => setTab("trips")}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "trips" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-            ✈️ Reizen ({trips.length})
-          </button>
-          <button onClick={() => setTab("users")}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "users" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-            👥 Gebruikers ({users.length})
-          </button>
+    <div className="min-h-screen" style={{ background: "#fdf6f0" }}>
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-gray-100 shadow-sm">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl">🍷</span>
+            <div>
+              <div className="font-bold text-gray-900 text-base leading-tight">Mijn Wijnkelder</div>
+              <div className="text-xs text-gray-400 leading-tight">{wines.length} {wines.length === 1 ? "wijn" : "wijnen"}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowAddForm(true)}
+              className="text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm hover:opacity-90 active:scale-95 transition-all"
+              style={{ background: accent }}>
+              + Wijn
+            </button>
+            <div className="relative">
+              <button onClick={() => setShowUserMenu(v => !v)}
+                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold hover:opacity-90 transition-opacity"
+                style={{ background: user.avatar ? "transparent" : accent }}>
+                {user.avatar
+                  ? <img src={user.avatar} alt="" className="w-9 h-9 rounded-full" />
+                  : initial}
+              </button>
+              {showUserMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowUserMenu(false)} />
+                  <div className="absolute right-0 mt-1 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-40">
+                    <div className="px-4 py-2 border-b border-gray-100 mb-1">
+                      <div className="text-sm font-semibold text-gray-800 truncate">{user.name || "Gebruiker"}</div>
+                      {user.email && <div className="text-xs text-gray-400 truncate">{user.email}</div>}
+                    </div>
+                    <button
+                      onClick={async () => { await apiFetch("/auth/logout", { method: "POST" }); onLogout(); }}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">
+                      Uitloggen
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : tab === "trips" ? (
-        <div className="space-y-8">
-          {groups.map((group) => (
-            <div key={group.email || "unassigned"}>
-              <div className="flex items-center gap-2 mb-3">
-                {group.avatar && <img src={group.avatar} className="w-7 h-7 rounded-full" />}
-                <span className="font-semibold text-gray-700">{group.name || group.email || "Niet gekoppeld"}</span>
-                <span className="text-xs text-gray-400">{group.trips.length} rei{group.trips.length !== 1 ? "zen" : "s"}</span>
-              </div>
-              <div className="space-y-2">
-                {group.trips.map((t) => (
-                  <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
-                    {t.cover_image
-                      ? <img src={t.cover_image} className="w-14 h-14 rounded-lg object-cover shrink-0" />
-                      : <div className="w-14 h-14 rounded-lg shrink-0" style={{ background: t.cover_color || "#0369a1" }} />}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-800">{t.name}</div>
-                      {t.destination && <div className="text-sm text-gray-500">📍 {t.destination}</div>}
-                      {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
-                    </div>
-                    <div className="shrink-0">
-                      <Select value={t.user_id || ""} onChange={(e) => handleAssign(t.id, e.target.value || null)} className="text-xs">
-                        <option value="">— Niet gekoppeld —</option>
-                        {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
-                      </Select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+      <main className="max-w-2xl mx-auto px-4 pt-5 pb-24">
+        <StatsBar stats={stats} />
+
+        {stats?.ready_to_drink?.length > 0 && !search && !filterType && (
+          <ReadyToDrink wines={stats.ready_to_drink} allWines={wines} onSelect={setSelectedWine} />
+        )}
+
+        {/* Search */}
+        <div className="relative mb-3">
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Zoeken op naam, producent, regio..."
+            className="w-full pl-4 pr-9 py-3 border border-gray-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-2 shadow-sm"
+            style={{ "--tw-ring-color": "rgba(124,45,18,0.25)" }} />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-lg">×</button>
+          )}
         </div>
-      ) : (
-        <div className="space-y-2">
-          {users.map((u) => (
-            <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
-              {u.avatar
-                ? <img src={u.avatar} className="w-10 h-10 rounded-full shrink-0" />
-                : <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm shrink-0">
-                    {(u.name || u.email || "?")[0].toUpperCase()}
-                  </div>}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-gray-800">{u.name || "—"}</span>
-                  {u.is_admin && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Admin</span>}
-                </div>
-                <div className="text-sm text-gray-500">{u.email}</div>
-                <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
-                  <span>🔑 {LOGIN_METHOD(u)}</span>
-                  {u.last_login_at && <span>Laatst: {fmt(u.last_login_at)}</span>}
-                  <span>Lid sinds: {fmt(u.created_at)}</span>
-                </div>
-                <div className="flex gap-3 mt-1 text-xs flex-wrap">
-                  <span className="font-medium text-gray-600">🔓 {u.login_count} x ingelogd</span>
-                  {Number(u.logins_24h) > 0
-                    ? <span className="font-semibold text-green-600">● {u.logins_24h}x afgelopen 24u</span>
-                    : <span className="text-gray-300">● niet actief vandaag</span>}
-                </div>
-              </div>
-              <div className="text-xs text-gray-400 shrink-0 text-right">
-                {(byUser[u.id]?.trips.length || 0)} rei{(byUser[u.id]?.trips.length || 0) !== 1 ? "zen" : "s"}
-              </div>
-            </div>
-          ))}
-          {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}
-        </div>
-      )}
-    </div>
-  );
-}
 
-// ---------- App ----------
-function App() {
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [trips, setTrips] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState({ name: "list" });
-  const [showTripForm, setShowTripForm] = useState(false);
-
-  useEffect(() => {
-    fetch("/auth/me")
-      .then((r) => r.ok ? r.json() : null)
-      .then((u) => { setUser(u); setAuthLoading(false); })
-      .catch(() => { setUser(null); setAuthLoading(false); });
-  }, []);
-
-  const loadTrips = useCallback(async () => {
-    setLoading(true);
-    try { setTrips(await api.getTrips()); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => {
-    if (authLoading) return;
-    setGuestMode(!user);
-    loadTrips();
-    const params = new URLSearchParams(location.search);
-    const tripId = params.get("trip");
-    if (tripId) {
-      setView({ name: "detail", id: tripId });
-      window.history.replaceState({}, "", "/");
-    }
-  }, [user, authLoading, loadTrips]);
-
-  async function handleLogout() {
-    await fetch("/auth/logout", { method: "POST" });
-    window.location.href = "/login";
-  }
-
-  if (authLoading) return (
-    <div className="min-h-screen flex items-center justify-center text-gray-400">Laden...</div>
-  );
-
-  const tripStats = trips.length > 0 ? `${trips.length} rei${trips.length === 1 ? "s" : "zen"}` : null;
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Sticky compact header */}
-      <header className="sticky top-0 z-40 bg-sky-800 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
-          <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2 font-bold text-lg leading-none min-w-0">
-            ✈️ <span className="truncate">Reisplanner</span>
+        {/* Type filter chips */}
+        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
+          <button onClick={() => setFilterType("")}
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all"
+            style={!filterType ? { background: accent, borderColor: accent, color: "white" } : { background: "white", borderColor: "#e5e7eb", color: "#6b7280" }}>
+            Alle
           </button>
-          <div className="flex items-center gap-2 shrink-0">
-            {user ? (
+          {WINE_TYPES.map(type => {
+            const c = WINE_TYPE_COLORS[type];
+            const active = filterType === type;
+            const count = wines.filter(w => w.type === type).length;
+            if (count === 0 && !active) return null;
+            return (
+              <button key={type} onClick={() => setFilterType(active ? "" : type)}
+                className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all"
+                style={active ? { background: c, borderColor: c, color: "white" } : { background: "white", borderColor: "#e5e7eb", color: c }}>
+                {WINE_TYPE_ICONS[type]} {type} {count > 0 && <span className="ml-0.5 opacity-70">({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Wine list */}
+        {loading ? (
+          <div className="space-y-2">
+            {[1,2,3,4].map(i => <div key={i} className="h-[72px] bg-white rounded-2xl animate-pulse border border-gray-100" />)}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            {wines.length === 0 ? (
               <>
-                {user.is_admin && view.name !== "admin" && (
-                  <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
-                    👁
-                  </button>
-                )}
-                <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
-                  Uitloggen
+                <div className="text-6xl mb-4">🍷</div>
+                <div className="font-bold text-gray-700 text-xl mb-2">Welkom in je wijnkelder!</div>
+                <div className="text-sm text-gray-400 mb-6">Voeg je eerste wijn toe om te beginnen.</div>
+                <button onClick={() => setShowAddForm(true)}
+                  className="px-8 py-3 rounded-2xl text-white text-sm font-bold shadow-lg hover:opacity-90 active:scale-95 transition-all"
+                  style={{ background: accent }}>
+                  🍷 Eerste wijn toevoegen
                 </button>
-                {user.avatar
-                  ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 shrink-0" />
-                  : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
-                }
               </>
             ) : (
               <>
-                <a href="/login" className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">Inloggen</a>
-                <a href="/login?tab=register" className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-sky-500 text-white hover:bg-sky-400 transition-colors whitespace-nowrap">Account aanmaken</a>
+                <div className="text-4xl mb-3">🔍</div>
+                <div className="font-medium text-gray-600">Geen wijnen gevonden</div>
+                <div className="text-sm mt-1">Pas je zoekterm of filter aan</div>
               </>
             )}
           </div>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-3 sm:px-8 pb-28 pt-4">
-        {view.name === "list" ? (
-          <>
-            {/* Greeting / guest notice */}
-            <div className="mb-5 px-1">
-              {user ? (
-                <>
-                  <div className="text-2xl font-bold text-gray-800">{greeting(user.given_name || user.name)}</div>
-                  {tripStats && <div className="text-sm text-gray-500 mt-0.5">{tripStats}</div>}
-                </>
-              ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
-                  <span className="text-xl shrink-0">👤</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-amber-800 text-sm">Je gebruikt de app als gast</div>
-                    <div className="text-xs text-amber-700 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in</a> of <a href="/login?tab=register" className="underline font-medium">maak een account</a> om ze overal beschikbaar te hebben.</div>
-                  </div>
-                </div>
-              )}
-            </div>
-            {loading ? (
-              <div className="text-center py-16 text-gray-400">Laden...</div>
-            ) : trips.length === 0 ? (
-              <div className="text-center py-24 text-gray-400">
-                <div className="text-6xl mb-4">🗺️</div>
-                <div className="text-xl font-semibold text-gray-600 mb-2">Nog geen reizen</div>
-                <div className="mb-6 text-sm">Maak je eerste reis aan om te beginnen</div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {trips.map((t) => (
-                  <TripCard key={t.id} trip={t} onClick={() => setView({ name: "detail", id: t.id })} />
-                ))}
+        ) : (
+          <div className="space-y-2">
+            {filtered.map(wine => (
+              <WineCard key={wine.id} wine={wine} onClick={() => setSelectedWine(wine)} />
+            ))}
+            {filtered.length > 0 && (
+              <div className="text-center text-xs text-gray-400 pt-3">
+                {filtered.length} {filtered.length === 1 ? "wijn" : "wijnen"} {filterType || search ? "gevonden" : "in je kelder"}
               </div>
             )}
-            {/* FAB */}
-            <button
-              onClick={() => setShowTripForm(true)}
-              className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-5 py-4 rounded-2xl text-white font-bold text-base shadow-xl active:scale-95 transition-all"
-              style={{ background: "linear-gradient(135deg,#0369a1,#0ea5e9)", boxShadow: "0 8px 24px rgba(3,105,161,0.45)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
-            >
-              + Nieuwe reis
-            </button>
-          </>
-        ) : view.name === "admin" ? (
-          <AdminView onBack={() => setView({ name: "list" })} />
-        ) : (
-          <TripDetail tripId={view.id} onBack={() => setView({ name: "list" })} onChanged={loadTrips} />
+          </div>
         )}
       </main>
 
-      {showTripForm && (
-        <TripForm
-          onSaved={(trip) => { setShowTripForm(false); loadTrips(); setView({ name: "detail", id: trip.id }); }}
-          onClose={() => setShowTripForm(false)}
+      {/* Modals */}
+      {showAddForm && (
+        <WineForm
+          onSaved={(w) => { setWines(prev => [{ ...w, tasting_count: 0, avg_rating: null }, ...prev]); setShowAddForm(false); reload(); }}
+          onClose={() => setShowAddForm(false)} />
+      )}
+      {selectedWine && (
+        <WineDetail
+          wine={selectedWine}
+          onClose={() => setSelectedWine(null)}
+          onUpdated={(w) => { setWines(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x)); setSelectedWine(prev => ({ ...prev, ...w })); reload(); }}
+          onDeleted={(id) => { setWines(prev => prev.filter(x => x.id !== id)); setSelectedWine(null); reload(); }}
         />
       )}
     </div>
   );
+}
+
+// ---------- Login screen ----------
+function LoginScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "#fdf6f0" }}>
+      <div className="bg-white rounded-3xl shadow-xl p-8 max-w-sm w-full text-center">
+        <div className="text-6xl mb-4">🍷</div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Mijn Wijnkelder</h1>
+        <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+          Beheer je wijnverzameling, schrijf proefnotities en krijg slimme AI-aanbevelingen.
+        </p>
+        <a href="/login"
+          className="block w-full py-3 rounded-xl text-white font-bold text-sm hover:opacity-90 transition-opacity shadow-sm"
+          style={{ background: "#7c2d12" }}>
+          Inloggen of registreren
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Root App ----------
+function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/auth/me")
+      .then(u => { setUser(u); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: "#fdf6f0" }}>
+      <div className="text-5xl animate-pulse">🍷</div>
+    </div>
+  );
+  if (!user) return <LoginScreen />;
+  return <WineCellar user={user} onLogout={() => setUser(null)} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(

@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reisplanner</title>
+  <title>Mijn Wijnkelder</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Reisplanner" />
-  <meta name="theme-color" content="#0369a1" />
-  <meta property="og:title" content="Reisplanner" />
-  <meta property="og:description" content="Jouw reizen, overzichtelijk gepland" />
+  <meta name="apple-mobile-web-app-title" content="Wijnkelder" />
+  <meta name="theme-color" content="#7c2d12" />
+  <meta property="og:title" content="Mijn Wijnkelder" />
+  <meta property="og:description" content="Beheer jouw wijnkelder" />
   <meta property="og:image" content="/icon-512.png" />
   <meta property="og:type" content="website" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -30,8 +30,6 @@
       }
     };
   </script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.23.3/babel.min.js"></script>
@@ -46,9 +44,8 @@
     });
   </script>
   <style>
-    .leaflet-reisplanner-icon { background: none !important; border: none !important; }
     * { box-sizing: border-box; }
-    body { background: #f0f9ff; font-family: system-ui, sans-serif; margin: 0; }
+    body { background: #fdf6f0; font-family: system-ui, sans-serif; margin: 0; }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #bae6fd; border-radius: 3px; }
   </style>
@@ -63,6 +60,6 @@
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=32"></script>
+  <script type="text/babel" src="app.js?v=33"></script>
 </body>
 </html>
