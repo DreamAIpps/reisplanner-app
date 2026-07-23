@@ -204,7 +204,10 @@ function serveStatic(res, filePath) {
   const ext = path.extname(filePath);
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end("Not found"); return; }
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+    // Never let the browser (esp. iOS standalone PWAs) cache the app shell —
+    // without this, a device can silently keep serving an old index.html/app.js
+    // after a fresh deploy.
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache, must-revalidate" });
     res.end(data);
   });
 }
