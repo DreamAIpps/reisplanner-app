@@ -3277,7 +3277,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
             </div>
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
               <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
-                📧 Toevoegen
+                📧 Activiteiten toevoegen
               </button>
               <div className="flex gap-2 overflow-x-auto">
                 {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
@@ -3304,7 +3304,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
                 {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
               </div>
               <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
-                📧 Toevoegen
+                📧 Activiteiten toevoegen
               </button>
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
