@@ -2918,6 +2918,14 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const h = (e) => e.key === "Escape" && setShowMoreMenu(false);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [showMoreMenu]);
 
   const load = useCallback(async () => {
     const [t, d, a, tr, ex] = await Promise.all([
@@ -2955,12 +2963,16 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const bottomNavItems = [
     { key: "days", icon: "🗓", label: "Planning" },
     { key: "journal", icon: "📖", label: "Dagboek" },
-    { key: "accommodation", icon: "🏨", label: "Verblijf" },
-    { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "map", icon: "🗺", label: "Kaart" },
-    { key: "packing", icon: "🎒", label: "Paklijst" },
     { key: "budget", icon: "💰", label: "Budget" },
   ];
+  // Reachable only via the "Meer" dropdown on mobile
+  const moreMenuItems = [
+    { key: "accommodation", icon: "🏨", label: "Verblijf" },
+    { key: "transport", icon: "✈️", label: "Vervoer" },
+    { key: "packing", icon: "🎒", label: "Paklijst" },
+  ];
+  const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
   return (
     <div className="pb-2">
@@ -3091,6 +3103,24 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
       {tab === "packing" && <PackingTab tripId={trip.id} />}
 
+      {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
+      {showMoreMenu && (
+        <>
+          <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
+          <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
+            style={{ right: 12, bottom: "calc(56px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
+            {moreMenuItems.map((item) => (
+              <button key={item.key} onClick={() => { setTab(item.key); setShowMoreMenu(false); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left"
+                style={{ color: tab === item.key ? accent : "#374151" }}>
+                <span className="text-lg leading-none">{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Mobile bottom nav */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="flex">
@@ -3108,6 +3138,13 @@ function TripDetail({ tripId, onBack, onChanged }) {
               {tab === item.key && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
             </button>
           ))}
+          <button onClick={() => setShowMoreMenu((v) => !v)}
+            className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0 relative"
+            style={{ color: isMoreActive || showMoreMenu ? accent : "#9ca3af", minHeight: 56 }}>
+            <span className="text-xl leading-none">⋯</span>
+            <span className="text-xs font-medium leading-none mt-0.5">Meer</span>
+            {isMoreActive && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
+          </button>
         </div>
       </div>
 
