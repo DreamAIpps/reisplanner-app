@@ -538,7 +538,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntry, onJournalChange }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -586,6 +586,13 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
             <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
           </Field>
         )}
+        {initial?.id && (
+          <Field label="Dagboek">
+            <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
+              onSave={(text) => api.saveJournalEntry(tripId, { activity_id: initial.id, body: text }).then(onJournalChange)}
+              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null} />
+          </Field>
+        )}
         <div className="flex justify-between items-center pt-2">
           {onDelete ? (
             <button type="button" onClick={onDelete}
@@ -604,7 +611,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -641,6 +648,13 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
           <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        {initial?.id && (
+          <Field label="Dagboek">
+            <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
+              onSave={(text) => api.saveJournalEntry(tripId, { accommodation_id: initial.id, body: text }).then(onJournalChange)}
+              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null} />
+          </Field>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
           <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
@@ -651,7 +665,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport }) {
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -703,6 +717,13 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport }) {
         </div>
         <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        {initial?.id && (
+          <Field label="Dagboek">
+            <JournalEntryBox entry={journalEntry} placeholder="Vertel over deze reis..."
+              onSave={(text) => api.saveJournalEntry(tripId, { transport_id: initial.id, body: text }).then(onJournalChange)}
+              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null} />
+          </Field>
+        )}
         <div className="flex items-center justify-between pt-2">
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
@@ -1023,6 +1044,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [newDayDate, setNewDayDate] = useState("");
   const [locationPhotos, setLocationPhotos] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
+  const [tripJournal, setTripJournal] = useState([]);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
@@ -1032,6 +1054,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
     try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
+
+  const loadJournal = useCallback(async () => {
+    try { setTripJournal(await api.getJournal(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadJournal(); }, [loadJournal]);
 
   useEffect(() => {
     const locs = new Set();
@@ -1316,6 +1343,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           photos={tripPhotos} onPhotosChange={loadPhotos}
+          journalEntry={tripJournal.find((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
           onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
@@ -1507,6 +1535,12 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [journal, setJournal] = useState([]);
+
+  const loadJournal = useCallback(async () => {
+    try { setJournal(await api.getJournal(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadJournal(); }, [loadJournal]);
 
   async function handleDelete(id) {
     if (!confirm("Verblijf verwijderen?")) return;
@@ -1570,7 +1604,11 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
       )}
 
       {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
-      {editing && <AccommodationForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
+      {editing && (
+        <AccommodationForm tripId={trip.id} initial={editing}
+          journalEntry={journal.find((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal}
+          onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
+      )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
     </div>
   );
@@ -1583,6 +1621,12 @@ function TransportTab({ trip, transports, onRefresh }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [journal, setJournal] = useState([]);
+
+  const loadJournal = useCallback(async () => {
+    try { setJournal(await api.getJournal(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadJournal(); }, [loadJournal]);
 
   async function handleDelete(id) {
     if (!confirm("Vervoer verwijderen?")) return;
@@ -1630,7 +1674,11 @@ function TransportTab({ trip, transports, onRefresh }) {
       )}
 
       {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
-      {editing && <TransportForm tripId={trip.id} initial={editing} onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />}
+      {editing && (
+        <TransportForm tripId={trip.id} initial={editing}
+          journalEntry={journal.find((e) => e.transport_id === editing.id)} onJournalChange={loadJournal}
+          onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
+      )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
     </div>
   );
