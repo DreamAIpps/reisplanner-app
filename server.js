@@ -499,22 +499,22 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
 route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   const { rows } = await query(
-    "SELECT id, trip_id, day_id, activity_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
+    "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
     [params.id]
   );
   sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw` })));
 });
 
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
-  const { day_id, activity_id, image, caption, taken_at, latitude, longitude } = body;
+  const { day_id, activity_id, transport_id, accommodation_id, image, caption, taken_at, latitude, longitude } = body;
   if (!image?.data || !image?.mediaType) return sendError(res, 400, "Geen afbeelding opgegeven");
   const buffer = Buffer.from(image.data, "base64");
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
   const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
   const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
   const { rows } = await query(
-    "INSERT INTO photos (trip_id, day_id, activity_id, mime_type, data, caption, taken_at, latitude, longitude) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, trip_id, day_id, activity_id, mime_type, caption, taken_at, latitude, longitude, created_at",
-    [params.id, day_id || null, activity_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon]
+    "INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at",
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon]
   );
   sendJson(res, 201, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
 });
