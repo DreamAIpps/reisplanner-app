@@ -129,6 +129,7 @@ const guestApi = {
     const d = _gr();
     d.accommodations = (d.accommodations || []).filter(a => a.id !== id);
     d.journal_entries = (d.journal_entries || []).filter(e => e.accommodation_id !== id);
+    d.photos = (d.photos || []).filter(p => p.accommodation_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getTransports(tripId) {
@@ -146,6 +147,7 @@ const guestApi = {
     const d = _gr();
     d.transports = (d.transports || []).filter(t => t.id !== id);
     d.journal_entries = (d.journal_entries || []).filter(e => e.transport_id !== id);
+    d.photos = (d.photos || []).filter(p => p.transport_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getExpenses(tripId) {
@@ -182,7 +184,7 @@ const guestApi = {
   addPhoto(tripId, data) {
     const d = _gr();
     const url = `data:${data.image.mediaType};base64,${data.image.data}`;
-    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, caption: data.caption || null, taken_at: data.taken_at || null, latitude: data.latitude ?? null, longitude: data.longitude ?? null, url, created_at: new Date().toISOString() };
+    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null, caption: data.caption || null, taken_at: data.taken_at || null, latitude: data.latitude ?? null, longitude: data.longitude ?? null, url, created_at: new Date().toISOString() };
     d.photos = [...(d.photos || []), p]; _gw(d); return Promise.resolve(p);
   },
   deletePhoto(id) {
@@ -611,7 +613,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -649,6 +651,11 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
         {initial?.id && (
+          <Field label="Foto's">
+            <PhotoStrip photos={(photos || []).filter((p) => p.accommodation_id === initial.id)} tripId={tripId} accommodationId={initial.id} onChange={onPhotosChange} />
+          </Field>
+        )}
+        {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
               onSave={(text) => api.saveJournalEntry(tripId, { accommodation_id: initial.id, body: text }).then(onJournalChange)}
@@ -665,7 +672,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -717,6 +724,11 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
         </div>
         <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        {initial?.id && (
+          <Field label="Foto's">
+            <PhotoStrip photos={(photos || []).filter((p) => p.transport_id === initial.id)} tripId={tripId} transportId={initial.id} onChange={onPhotosChange} />
+          </Field>
+        )}
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entry={journalEntry} placeholder="Vertel over deze reis..."
@@ -805,7 +817,7 @@ function readExif(file) {
   });
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -860,7 +872,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
         const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
         const base64 = dataUrl.split(",")[1];
         await api.addPhoto(tripId, {
-          day_id: dayId || null, activity_id: activityId || null,
+          day_id: dayId || null, activity_id: activityId || null, transport_id: transportId || null, accommodation_id: accommodationId || null,
           image: { data: base64, mediaType: file.type },
           taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
         });
@@ -1164,10 +1176,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         </div>
       )}
 
-      {tripPhotos.some((p) => !p.day_id && !p.activity_id) && (
+      {tripPhotos.some((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id) && (
         <div className="mb-6">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overige foto's (geen dag gekoppeld)</h4>
-          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id)} tripId={trip.id} onChange={loadPhotos} />
+          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id)} tripId={trip.id} onChange={loadPhotos} />
         </div>
       )}
 
@@ -1582,11 +1594,17 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
   const [journal, setJournal] = useState([]);
+  const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
     try { setJournal(await api.getJournal(trip.id)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
+
+  const loadPhotos = useCallback(async () => {
+    try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   async function handleDelete(id) {
     if (!confirm("Verblijf verwijderen?")) return;
@@ -1653,6 +1671,7 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
       {editing && (
         <AccommodationForm tripId={trip.id} initial={editing}
           journalEntry={journal.find((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal}
+          photos={tripPhotos} onPhotosChange={loadPhotos}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
@@ -1668,11 +1687,17 @@ function TransportTab({ trip, transports, onRefresh }) {
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
   const [journal, setJournal] = useState([]);
+  const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
     try { setJournal(await api.getJournal(trip.id)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
+
+  const loadPhotos = useCallback(async () => {
+    try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   async function handleDelete(id) {
     if (!confirm("Vervoer verwijderen?")) return;
@@ -1723,6 +1748,7 @@ function TransportTab({ trip, transports, onRefresh }) {
       {editing && (
         <TransportForm tripId={trip.id} initial={editing}
           journalEntry={journal.find((e) => e.transport_id === editing.id)} onJournalChange={loadJournal}
+          photos={tripPhotos} onPhotosChange={loadPhotos}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
