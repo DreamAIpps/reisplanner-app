@@ -190,6 +190,11 @@ const guestApi = {
   deletePhoto(id) {
     const d = _gr(); d.photos = (d.photos || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
   },
+  updatePhoto(id, data) {
+    const d = _gr(); let found;
+    d.photos = (d.photos || []).map(p => p.id === id ? (found = { ...p, day_id: data.day_id || null, activity_id: data.activity_id || null, transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null }) : p);
+    _gw(d); return Promise.resolve(found);
+  },
   getJournal(tripId) {
     return Promise.resolve((_gr().journal_entries || []).filter(e => e.trip_id === tripId));
   },
@@ -249,6 +254,7 @@ const api = {
   getPhotos: (tripId) => _guestMode ? guestApi.getPhotos(tripId) : apiFetch(`/api/trips/${tripId}/photos`),
   addPhoto: (tripId, d) => _guestMode ? guestApi.addPhoto(tripId, d) : apiFetch(`/api/trips/${tripId}/photos`, { method: "POST", body: JSON.stringify(d) }),
   deletePhoto: (id) => _guestMode ? guestApi.deletePhoto(id) : apiFetch(`/api/photos/${id}`, { method: "DELETE" }),
+  updatePhoto: (id, d) => _guestMode ? guestApi.updatePhoto(id, d) : apiFetch(`/api/photos/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   getJournal: (tripId) => _guestMode ? guestApi.getJournal(tripId) : apiFetch(`/api/trips/${tripId}/journal`),
   saveJournalEntry: (tripId, d) => _guestMode ? guestApi.saveJournalEntry(tripId, d) : apiFetch(`/api/trips/${tripId}/journal`, { method: "POST", body: JSON.stringify(d) }),
   deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
@@ -586,6 +592,8 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
         {initial?.id && (
           <Field label="Foto's">
             <PhotoStrip photos={(photos || []).filter((p) => p.activity_id === initial.id)} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
+            <ExistingPhotoPicker candidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
+              onAssign={(photo) => api.updatePhoto(photo.id, { day_id: dayId || null, activity_id: initial.id }).then(onPhotosChange)} />
           </Field>
         )}
         {initial?.id && (
@@ -653,6 +661,8 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
         {initial?.id && (
           <Field label="Foto's">
             <PhotoStrip photos={(photos || []).filter((p) => p.accommodation_id === initial.id)} tripId={tripId} accommodationId={initial.id} onChange={onPhotosChange} />
+            <ExistingPhotoPicker candidates={(photos || []).filter((p) => p.accommodation_id !== initial.id)}
+              onAssign={(photo) => api.updatePhoto(photo.id, { accommodation_id: initial.id }).then(onPhotosChange)} />
           </Field>
         )}
         {initial?.id && (
@@ -727,6 +737,8 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
         {initial?.id && (
           <Field label="Foto's">
             <PhotoStrip photos={(photos || []).filter((p) => p.transport_id === initial.id)} tripId={tripId} transportId={initial.id} onChange={onPhotosChange} />
+            <ExistingPhotoPicker candidates={(photos || []).filter((p) => p.transport_id !== initial.id)}
+              onAssign={(photo) => api.updatePhoto(photo.id, { transport_id: initial.id }).then(onPhotosChange)} />
           </Field>
         )}
         {initial?.id && (
@@ -940,6 +952,38 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
               </div>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Link an existing trip photo to an activity/transport/accommodation ----------
+function ExistingPhotoPicker({ candidates, onAssign }) {
+  const [open, setOpen] = useState(false);
+  const [assigning, setAssigning] = useState(null);
+  if (!candidates.length) return null;
+
+  async function handlePick(photo) {
+    setAssigning(photo.id);
+    try { await onAssign(photo); setOpen(false); }
+    finally { setAssigning(null); }
+  }
+
+  return (
+    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="text-xs font-medium text-sky-600 hover:text-sky-700 transition-colors">
+        {open ? "Sluiten" : "+ Bestaande foto koppelen"}
+      </button>
+      {open && (
+        <div className="flex gap-2 overflow-x-auto pt-2 pb-1">
+          {candidates.map((p) => (
+            <button key={p.id} type="button" disabled={assigning === p.id} onClick={() => handlePick(p)}
+              className="shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-gray-100 hover:ring-2 hover:ring-sky-400 transition-all disabled:opacity-50">
+              <img src={p.url} alt="" className="w-full h-full object-cover" />
+            </button>
+          ))}
         </div>
       )}
     </div>

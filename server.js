@@ -526,6 +526,16 @@ route("GET", "/api/photos/:id/raw", async (req, res, params) => {
   res.end(rows[0].data);
 });
 
+route("PUT", "/api/photos/:id", async (req, res, params, body) => {
+  const { day_id, activity_id, transport_id, accommodation_id } = body;
+  const { rows } = await query(
+    "UPDATE photos SET day_id=$1, activity_id=$2, transport_id=$3, accommodation_id=$4 WHERE id=$5 RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at",
+    [day_id || null, activity_id || null, transport_id || null, accommodation_id || null, params.id]
+  );
+  if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
+  sendJson(res, 200, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
+});
+
 route("DELETE", "/api/photos/:id", async (req, res, params) => {
   await query("DELETE FROM photos WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
