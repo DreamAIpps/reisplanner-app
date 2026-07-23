@@ -72,6 +72,7 @@ const guestApi = {
     d.accommodations = (d.accommodations || []).filter(a => a.trip_id !== id);
     d.transports = (d.transports || []).filter(t => t.trip_id !== id);
     d.expenses = (d.expenses || []).filter(e => e.trip_id !== id);
+    d.photos = (d.photos || []).filter(p => p.trip_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getDays(tripId) {
@@ -92,6 +93,7 @@ const guestApi = {
     const d = _gr();
     d.days = (d.days || []).filter(day => day.id !== id);
     d.activities = (d.activities || []).filter(a => a.day_id !== id);
+    d.photos = (d.photos || []).filter(p => p.day_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   addActivity(dayId, data) {
@@ -104,7 +106,10 @@ const guestApi = {
     d.activities = (d.activities || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
   },
   deleteActivity(id) {
-    const d = _gr(); d.activities = (d.activities || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.activities = (d.activities || []).filter(a => a.id !== id);
+    d.photos = (d.photos || []).filter(p => p.activity_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getAccommodations(tripId) {
     return Promise.resolve((_gr().accommodations || []).filter(a => a.trip_id === tripId));
@@ -162,6 +167,18 @@ const guestApi = {
   deletePackingItem(id) {
     const d = _gr(); d.packing_items = (d.packing_items || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
   },
+  getPhotos(tripId) {
+    return Promise.resolve((_gr().photos || []).filter(p => p.trip_id === tripId));
+  },
+  addPhoto(tripId, data) {
+    const d = _gr();
+    const url = `data:${data.image.mediaType};base64,${data.image.data}`;
+    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, caption: data.caption || null, url, created_at: new Date().toISOString() };
+    d.photos = [...(d.photos || []), p]; _gw(d); return Promise.resolve(p);
+  },
+  deletePhoto(id) {
+    const d = _gr(); d.photos = (d.photos || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
+  },
   importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
   createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
   getAdminTrips() { return Promise.resolve([]); },
@@ -195,6 +212,9 @@ const api = {
   addExpense: (tripId, d) => _guestMode ? guestApi.addExpense(tripId, d) : apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
   updateExpense: (id, d) => _guestMode ? guestApi.updateExpense(id, d) : apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => _guestMode ? guestApi.deleteExpense(id) : apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
+  getPhotos: (tripId) => _guestMode ? guestApi.getPhotos(tripId) : apiFetch(`/api/trips/${tripId}/photos`),
+  addPhoto: (tripId, d) => _guestMode ? guestApi.addPhoto(tripId, d) : apiFetch(`/api/trips/${tripId}/photos`, { method: "POST", body: JSON.stringify(d) }),
+  deletePhoto: (id) => _guestMode ? guestApi.deletePhoto(id) : apiFetch(`/api/photos/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
@@ -483,7 +503,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -526,6 +546,11 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
         <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        {initial?.id && (
+          <Field label="Foto's">
+            <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
+          </Field>
+        )}
         <div className="flex justify-between items-center pt-2">
           {onDelete ? (
             <button type="button" onClick={onDelete}
@@ -691,6 +716,72 @@ function ExpenseForm({ tripId, initial, onSaved, onClose }) {
   );
 }
 
+// ---------- Photo gallery / uploader ----------
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [viewing, setViewing] = useState(null);
+
+  function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        if (file.size > MAX_PHOTO_BYTES) { alert(`"${file.name}" is te groot (max 8 MB)`); continue; }
+        const dataUrl = await readAsDataUrl(file);
+        const base64 = dataUrl.split(",")[1];
+        await api.addPhoto(tripId, { day_id: dayId || null, activity_id: activityId || null, image: { data: base64, mediaType: file.type } });
+      }
+      onChange();
+    } catch (err) { alert(err.message || "Uploaden mislukt"); }
+    finally { setUploading(false); }
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("Foto verwijderen?")) return;
+    await api.deletePhoto(id);
+    onChange();
+  }
+
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1" onClick={(e) => e.stopPropagation()}>
+      {photos.map((p) => (
+        <div key={p.id} className="relative shrink-0 group">
+          <img src={p.url} alt="" onClick={() => setViewing(p)}
+            className="w-16 h-16 rounded-lg object-cover cursor-pointer border border-gray-100" />
+          <button type="button" onClick={() => handleDelete(p.id)}
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white shadow text-red-500 text-xs leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+        className="shrink-0 w-16 h-16 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-xl transition-colors">
+        {uploading ? "…" : "＋"}
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+      {viewing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewing(null)}>
+          <img src={viewing.url} alt="" className="max-w-full max-h-full rounded-lg" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Day planning tab ----------
 const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
 const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
@@ -705,10 +796,16 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [editingAccommodation, setEditingAccommodation] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
-  const [photos, setPhotos] = useState({});
+  const [locationPhotos, setLocationPhotos] = useState({});
+  const [tripPhotos, setTripPhotos] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#0369a1";
+
+  const loadPhotos = useCallback(async () => {
+    try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   useEffect(() => {
     const locs = new Set();
@@ -718,7 +815,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       fetchedRef.current.add(loc);
       try {
         const d = await api.suggestPhoto(loc);
-        setPhotos((p) => ({ ...p, [loc]: d.thumb }));
+        setLocationPhotos((p) => ({ ...p, [loc]: d.thumb }));
       } catch {}
     });
   }, [days]);
@@ -901,7 +998,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 
                     {/* Activity cards */}
                     {day.activities.map((act) => {
-                      const photo = act.location ? photos[act.location] : null;
+                      const actPhotos = tripPhotos.filter((p) => p.activity_id === act.id);
+                      const photo = actPhotos[0]?.url || (act.location ? locationPhotos[act.location] : null);
                       const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={act.id}
@@ -913,6 +1011,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                               {act.location && (
                                 <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
+                              )}
+                              {actPhotos.length > 0 && (
+                                <div className="absolute top-2 right-2 bg-black/50 text-white text-xs font-medium px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  📷 {actPhotos.length}
+                                </div>
                               )}
                             </div>
                           )}
@@ -948,6 +1051,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                         + Activiteit toevoegen
                       </button>
                     )}
+
+                    {/* Day photos (not linked to a specific activity) */}
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <PhotoStrip
+                        photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id)}
+                        tripId={trip.id} dayId={day.id} onChange={loadPhotos} />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -964,6 +1074,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       )}
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
+          photos={tripPhotos} onPhotosChange={loadPhotos}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
           onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
