@@ -157,8 +157,14 @@ async function initDb() {
       mime_type TEXT NOT NULL,
       data BYTEA NOT NULL,
       caption TEXT,
+      taken_at TIMESTAMPTZ,
+      latitude NUMERIC(9,6),
+      longitude NUMERIC(9,6),
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS taken_at TIMESTAMPTZ;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6);
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
   `);
 }
 
