@@ -832,6 +832,146 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
   );
 }
 
+// ---------- Bulk photo upload with automatic day allocation ----------
+function dayOptionLabel(day) {
+  if (!day.date) return "Dag zonder datum";
+  return new Date(day.date).toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
+  const [items, setItems] = useState([]);
+  const [processing, setProcessing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const fileRef = useRef(null);
+
+  function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function matchDay(takenAt) {
+    if (!takenAt) return "";
+    const dateStr = takenAt.slice(0, 10);
+    const match = days.find((d) => d.date && d.date.slice(0, 10) === dateStr);
+    return match ? String(match.id) : "";
+  }
+
+  async function handleSelectFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setProcessing(true);
+    const newItems = [];
+    for (const file of files) {
+      const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
+      if (file.size > MAX_PHOTO_BYTES) { newItems.push({ key, name: file.name, error: "Te groot (max 8 MB)" }); continue; }
+      try {
+        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
+        newItems.push({ key, name: file.name, dataUrl, mediaType: file.type, exif, dayId: matchDay(exif.taken_at) });
+      } catch {
+        newItems.push({ key, name: file.name, error: "Kon foto niet lezen" });
+      }
+    }
+    setItems((prev) => [...prev, ...newItems]);
+    setProcessing(false);
+  }
+
+  function setItemDay(key, dayId) {
+    setItems((prev) => prev.map((it) => it.key === key ? { ...it, dayId } : it));
+  }
+  function removeItem(key) {
+    setItems((prev) => prev.filter((it) => it.key !== key));
+  }
+
+  const uploadable = items.filter((it) => !it.error);
+  const matchedCount = uploadable.filter((it) => it.dayId).length;
+
+  async function handleUploadAll() {
+    if (!uploadable.length) return;
+    setUploading(true); setProgress(0);
+    for (const it of uploadable) {
+      const base64 = it.dataUrl.split(",")[1];
+      try {
+        await api.addPhoto(tripId, {
+          day_id: it.dayId || null, activity_id: null,
+          image: { data: base64, mediaType: it.mediaType },
+          taken_at: it.exif.taken_at || null, latitude: it.exif.latitude ?? null, longitude: it.exif.longitude ?? null,
+        });
+      } catch {}
+      setProgress((p) => p + 1);
+    }
+    setUploading(false);
+    onUploaded();
+    onClose();
+  }
+
+  return (
+    <Modal title="Foto's uploaden" onClose={onClose} wide>
+      {items.length === 0 ? (
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Selecteer meerdere foto's tegelijk. Ze worden automatisch aan de juiste reisdag gekoppeld op basis van de datum waarop de foto is gemaakt.
+          </p>
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={processing}
+            className="w-full border-2 border-dashed border-gray-200 rounded-xl py-10 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
+            {processing ? "Foto's verwerken..." : "📷 Klik om foto's te kiezen"}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-sm text-gray-500">
+              {matchedCount} van de {uploadable.length} foto's automatisch gekoppeld aan een dag.
+            </p>
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={processing || uploading}
+              className="text-xs font-medium text-sky-600 hover:text-sky-700 disabled:opacity-50">+ Meer foto's</button>
+            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
+          </div>
+          {processing && <div className="text-xs text-gray-400">Nieuwe foto's verwerken...</div>}
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {items.map((it) => (
+              <div key={it.key} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
+                {it.dataUrl ? (
+                  <img src={it.dataUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-red-50 flex items-center justify-center text-red-400 text-lg shrink-0">⚠</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-700 truncate">{it.name}</div>
+                  {it.error ? (
+                    <div className="text-xs text-red-500">{it.error}</div>
+                  ) : (
+                    <div className="text-xs text-gray-400">{it.exif?.taken_at ? fmtDatetime(it.exif.taken_at) : "Geen datum gevonden"}</div>
+                  )}
+                </div>
+                {!it.error && (
+                  <Select value={it.dayId} onChange={(e) => setItemDay(it.key, e.target.value)} className="!w-40 shrink-0">
+                    <option value="">Geen dag</option>
+                    {days.map((d) => <option key={d.id} value={d.id}>{dayOptionLabel(d)}</option>)}
+                  </Select>
+                )}
+                <button type="button" onClick={() => removeItem(it.key)} className="text-gray-300 hover:text-red-400 text-sm p-1 shrink-0">🗑</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose} disabled={uploading}>Annuleren</Button>
+            <Button type="button" onClick={handleUploadAll} disabled={uploading || !uploadable.length}>
+              {uploading ? `Uploaden... ${progress}/${uploadable.length}` : `Uploaden (${uploadable.length})`}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ---------- Day planning tab ----------
 const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
 const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
@@ -848,6 +988,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [newDayDate, setNewDayDate] = useState("");
   const [locationPhotos, setLocationPhotos] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
+  const [bulkUploading, setBulkUploading] = useState(false);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#0369a1";
@@ -889,9 +1030,12 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
-        <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>
+          <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
+        </div>
       </div>
 
       {addingDay && (
@@ -909,6 +1053,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
           <div className="text-5xl mb-3">🗓</div>
           <div className="font-medium">Nog geen dagen gepland</div>
           <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
+        </div>
+      )}
+
+      {tripPhotos.some((p) => !p.day_id && !p.activity_id) && (
+        <div className="mb-6">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overige foto's (geen dag gekoppeld)</h4>
+          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id)} tripId={trip.id} onChange={loadPhotos} />
         </div>
       )}
 
@@ -1116,6 +1267,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         </div>
       </div>
 
+      {bulkUploading && (
+        <BulkPhotoUpload tripId={trip.id} days={days}
+          onClose={() => setBulkUploading(false)}
+          onUploaded={loadPhotos} />
+      )}
       {showActivityForm && (
         <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
