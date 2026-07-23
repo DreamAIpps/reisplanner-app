@@ -3383,7 +3383,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
         <>
           <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
           <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
-            style={{ right: 12, bottom: "calc(56px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
+            style={{ right: 12, bottom: "calc(68px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
             <button onClick={() => { setShowMoreMenu(false); onBack(); }}
               className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left text-gray-700 border-b border-gray-100">
               <span className="text-lg leading-none">←</span>
@@ -3406,18 +3406,18 @@ function TripDetail({ tripId, onBack, onChanged }) {
         <div className="flex">
           {bottomNavItems.map((item) => (
             <button key={item.key} onClick={() => setTab(item.key)}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0"
-              style={{ color: tab === item.key ? accent : "#9ca3af", minHeight: 56 }}>
-              <span className="text-xl leading-none">{item.icon}</span>
-              <span className="text-xs font-medium leading-none mt-0.5">{item.label}</span>
+              className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-colors min-w-0"
+              style={{ color: tab === item.key ? accent : "#9ca3af", minHeight: 68 }}>
+              <span className="text-2xl leading-none">{item.icon}</span>
+              <span className="text-sm font-medium leading-none mt-0.5">{item.label}</span>
               {tab === item.key && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
             </button>
           ))}
           <button onClick={() => setShowMoreMenu((v) => !v)}
-            className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0 relative"
-            style={{ color: isMoreActive || showMoreMenu ? accent : "#9ca3af", minHeight: 56 }}>
-            <span className="text-xl leading-none">⋯</span>
-            <span className="text-xs font-medium leading-none mt-0.5">Meer</span>
+            className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-colors min-w-0 relative"
+            style={{ color: isMoreActive || showMoreMenu ? accent : "#9ca3af", minHeight: 68 }}>
+            <span className="text-2xl leading-none">⋯</span>
+            <span className="text-sm font-medium leading-none mt-0.5">Meer</span>
             {isMoreActive && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
           </button>
         </div>
