@@ -2823,6 +2823,195 @@ function ShareModal({ tripId, onClose }) {
   );
 }
 
+// ---------- Photo gallery tab ----------
+function photoAssignmentInfo(photo, days, transports, accommodations) {
+  if (photo.activity_id) {
+    for (const day of days) {
+      const act = (day.activities || []).find((a) => a.id === photo.activity_id);
+      if (act) return { icon: CATEGORY_ICONS[act.category] || "📌", text: act.title };
+    }
+    return { icon: "📌", text: "Activiteit" };
+  }
+  if (photo.transport_id) {
+    const t = transports.find((t) => t.id === photo.transport_id);
+    return { icon: TRANSPORT_ICONS[t?.type] || "🚀", text: t ? `${t.from_location} → ${t.to_location}` : "Vervoer" };
+  }
+  if (photo.accommodation_id) {
+    const a = accommodations.find((a) => a.id === photo.accommodation_id);
+    return { icon: "🏨", text: a ? a.name : "Verblijf" };
+  }
+  if (photo.day_id) {
+    const day = days.find((d) => d.id === photo.day_id);
+    return { icon: "📅", text: day ? dayOptionLabel(day) : "Dag" };
+  }
+  return null;
+}
+
+function photoTargetValue(photo) {
+  if (photo.activity_id) return `activity:${photo.activity_id}`;
+  if (photo.transport_id) return `transport:${photo.transport_id}`;
+  if (photo.accommodation_id) return `accommodation:${photo.accommodation_id}`;
+  if (photo.day_id) return `day:${photo.day_id}`;
+  return "";
+}
+
+function PhotoGalleryTab({ trip, days, transports, accommodations }) {
+  const [photos, setPhotos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [viewingIndex, setViewingIndex] = useState(null);
+  const touchStart = useRef(null);
+
+  const loadPhotos = useCallback(async () => {
+    try { setPhotos(await api.getPhotos(trip.id)); } catch {} finally { setLoading(false); }
+  }, [trip.id]);
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
+
+  const viewing = viewingIndex != null ? photos[viewingIndex] : null;
+  function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
+  function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
+
+  function handleTouchStart(e) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+  function handleTouchEnd(e) {
+    if (!touchStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    touchStart.current = null;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) showNext(); else showPrev();
+  }
+
+  useEffect(() => {
+    if (viewingIndex == null) return;
+    function handleKey(e) {
+      if (e.key === "ArrowRight") showNext();
+      else if (e.key === "ArrowLeft") showPrev();
+      else if (e.key === "Escape") setViewingIndex(null);
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [viewingIndex, photos.length]);
+
+  async function handleAssign(photo, value) {
+    const payload = { day_id: null, activity_id: null, transport_id: null, accommodation_id: null };
+    if (value) {
+      const [type, idStr] = value.split(":");
+      const id = Number(idStr);
+      if (type === "day") payload.day_id = id;
+      else if (type === "activity") {
+        payload.activity_id = id;
+        const day = days.find((d) => (d.activities || []).some((a) => a.id === id));
+        if (day) payload.day_id = day.id;
+      } else if (type === "transport") payload.transport_id = id;
+      else if (type === "accommodation") payload.accommodation_id = id;
+    }
+    const updated = await api.updatePhoto(photo.id, payload);
+    setPhotos((prev) => prev.map((p) => (p.id === photo.id ? updated : p)));
+  }
+
+  async function handleDelete(photo) {
+    if (!confirm("Foto verwijderen?")) return;
+    await api.deletePhoto(photo.id);
+    setViewingIndex(null);
+    loadPhotos();
+  }
+
+  if (loading) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+
+  return (
+    <div>
+      <h3 className="font-semibold text-gray-700 mb-6">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
+
+      {photos.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <div className="text-5xl mb-3">📷</div>
+          <div className="font-medium">Nog geen foto's</div>
+          <div className="text-sm mt-1">Upload foto's via een dag, activiteit, vervoer of verblijf</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+          {photos.map((p, i) => {
+            const assignment = photoAssignmentInfo(p, days, transports, accommodations);
+            return (
+              <button key={p.id} onClick={() => setViewingIndex(i)}
+                className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group">
+                <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                {assignment ? (
+                  <div className="absolute bottom-1 left-1 right-1 text-white text-[10px] font-medium truncate flex items-center gap-1">
+                    <span className="shrink-0">{assignment.icon}</span><span className="truncate">{assignment.text}</span>
+                  </div>
+                ) : (
+                  <div className="absolute bottom-1 left-1 right-1 text-amber-200 text-[10px] font-semibold">Niet toegewezen</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {viewing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
+          <div className="max-w-full flex flex-col items-center gap-3 relative py-8"
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            {photos.length > 1 && (
+              <>
+                <button type="button" onClick={showPrev}
+                  className="absolute left-2 top-40 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
+                  ‹
+                </button>
+                <button type="button" onClick={showNext}
+                  className="absolute right-2 top-40 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
+                  ›
+                </button>
+              </>
+            )}
+            <img src={viewing.url} alt="" className="max-w-full max-h-[50vh] rounded-lg select-none" draggable={false} />
+            {photos.length > 1 && <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>}
+            {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
+              <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
+                {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
+                {viewing.latitude != null && viewing.longitude != null && (
+                  <a href={`https://www.openstreetmap.org/?mlat=${viewing.latitude}&mlon=${viewing.longitude}#map=15/${viewing.latitude}/${viewing.longitude}`}
+                    target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-300">
+                    📍 Bekijk op kaart
+                  </a>
+                )}
+              </div>
+            )}
+            <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
+              <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
+                <option value="">— Niet toegewezen —</option>
+                {days.map((day) => (
+                  <React.Fragment key={day.id}>
+                    <option value={`day:${day.id}`}>📅 {dayOptionLabel(day)} (hele dag)</option>
+                    {(day.activities || []).map((act) => (
+                      <option key={act.id} value={`activity:${act.id}`}>{"  "}└ {CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                    ))}
+                  </React.Fragment>
+                ))}
+                {transports.map((t) => (
+                  <option key={t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                ))}
+                {accommodations.map((a) => (
+                  <option key={a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                ))}
+              </Select>
+              <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
+                🗑 Foto verwijderen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Packing tab ----------
 const PACKING_CATEGORIES = ["📄 Documenten", "👕 Kleding", "🔌 Elektronica", "🧴 Toilettas", "💊 Medicijnen", "🎒 Overig"];
 const PACKING_SUGGESTIONS = {
@@ -3023,6 +3212,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
     { key: "journal", label: "Dagboek", icon: "📖" },
+    { key: "photos", label: "Foto's", icon: "📷" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "packing", label: "Paklijst", icon: "🎒" },
@@ -3036,6 +3226,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
+    { key: "photos", icon: "📷", label: "Foto's" },
     { key: "accommodation", icon: "🏨", label: "Verblijf" },
     { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "packing", icon: "🎒", label: "Paklijst" },
@@ -3165,6 +3356,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
       {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
+      {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
