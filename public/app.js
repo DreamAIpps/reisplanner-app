@@ -73,6 +73,7 @@ const guestApi = {
     d.transports = (d.transports || []).filter(t => t.trip_id !== id);
     d.expenses = (d.expenses || []).filter(e => e.trip_id !== id);
     d.photos = (d.photos || []).filter(p => p.trip_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.trip_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getDays(tripId) {
@@ -94,6 +95,7 @@ const guestApi = {
     d.days = (d.days || []).filter(day => day.id !== id);
     d.activities = (d.activities || []).filter(a => a.day_id !== id);
     d.photos = (d.photos || []).filter(p => p.day_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.day_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   addActivity(dayId, data) {
@@ -109,6 +111,7 @@ const guestApi = {
     const d = _gr();
     d.activities = (d.activities || []).filter(a => a.id !== id);
     d.photos = (d.photos || []).filter(p => p.activity_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.activity_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getAccommodations(tripId) {
@@ -123,7 +126,10 @@ const guestApi = {
     d.accommodations = (d.accommodations || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
   },
   deleteAccommodation(id) {
-    const d = _gr(); d.accommodations = (d.accommodations || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.accommodations = (d.accommodations || []).filter(a => a.id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.accommodation_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getTransports(tripId) {
     return Promise.resolve((_gr().transports || []).filter(t => t.trip_id === tripId));
@@ -137,7 +143,10 @@ const guestApi = {
     d.transports = (d.transports || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
   },
   deleteTransport(id) {
-    const d = _gr(); d.transports = (d.transports || []).filter(t => t.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.transports = (d.transports || []).filter(t => t.id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.transport_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getExpenses(tripId) {
     return Promise.resolve((_gr().expenses || []).filter(e => e.trip_id === tripId));
@@ -179,6 +188,29 @@ const guestApi = {
   deletePhoto(id) {
     const d = _gr(); d.photos = (d.photos || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
   },
+  getJournal(tripId) {
+    return Promise.resolve((_gr().journal_entries || []).filter(e => e.trip_id === tripId));
+  },
+  saveJournalEntry(tripId, data) {
+    const d = _gr();
+    const list = d.journal_entries || [];
+    const key = data.day_id ? "day_id" : data.activity_id ? "activity_id" : data.transport_id ? "transport_id" : data.accommodation_id ? "accommodation_id" : null;
+    if (!key) return Promise.reject(new Error("Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf"));
+    const val = data[key];
+    const idx = list.findIndex(e => e[key] === val);
+    let entry;
+    if (idx >= 0) {
+      entry = { ...list[idx], title: data.title || null, body: data.body, updated_at: new Date().toISOString() };
+      list[idx] = entry;
+    } else {
+      entry = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null, title: data.title || null, body: data.body, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      list.push(entry);
+    }
+    d.journal_entries = list; _gw(d); return Promise.resolve(entry);
+  },
+  deleteJournalEntry(id) {
+    const d = _gr(); d.journal_entries = (d.journal_entries || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
+  },
   importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
   createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
   getAdminTrips() { return Promise.resolve([]); },
@@ -215,6 +247,9 @@ const api = {
   getPhotos: (tripId) => _guestMode ? guestApi.getPhotos(tripId) : apiFetch(`/api/trips/${tripId}/photos`),
   addPhoto: (tripId, d) => _guestMode ? guestApi.addPhoto(tripId, d) : apiFetch(`/api/trips/${tripId}/photos`, { method: "POST", body: JSON.stringify(d) }),
   deletePhoto: (id) => _guestMode ? guestApi.deletePhoto(id) : apiFetch(`/api/photos/${id}`, { method: "DELETE" }),
+  getJournal: (tripId) => _guestMode ? guestApi.getJournal(tripId) : apiFetch(`/api/trips/${tripId}/journal`),
+  saveJournalEntry: (tripId, d) => _guestMode ? guestApi.saveJournalEntry(tripId, d) : apiFetch(`/api/trips/${tripId}/journal`, { method: "POST", body: JSON.stringify(d) }),
+  deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
@@ -1299,6 +1334,170 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {tipsLocation && (
         <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
+    </div>
+  );
+}
+
+// ---------- Journal (dagboek) ----------
+function JournalEntryBox({ entry, placeholder, onSave, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(entry?.body || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (!editing) setText(entry?.body || ""); }, [entry?.body, editing]);
+
+  async function handleSave() {
+    if (!text.trim()) return;
+    setSaving(true);
+    try { await onSave(text.trim()); setEditing(false); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    if (!confirm("Verhaal verwijderen?")) return;
+    await onDelete();
+    setText(""); setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+        <Textarea rows={4} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} />
+        <div className="flex items-center gap-2">
+          <Button onClick={handleSave} disabled={saving || !text.trim()}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          <Button variant="secondary" onClick={() => { setText(entry?.body || ""); setEditing(false); }}>Annuleren</Button>
+          {entry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700">🗑 Verwijderen</button>}
+        </div>
+      </div>
+    );
+  }
+
+  if (entry?.body) {
+    return (
+      <div onClick={(e) => e.stopPropagation()} className="group">
+        <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{entry.body}</p>
+        <button type="button" onClick={() => setEditing(true)}
+          className="mt-1 text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
+          ✏️ Bewerken
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      className="text-xs text-gray-400 hover:text-sky-600 italic transition-colors">
+      + Verhaal schrijven
+    </button>
+  );
+}
+
+function JournalTab({ trip, days, transports, accommodations }) {
+  const [entries, setEntries] = useState([]);
+  const accent = trip.cover_color || "#0369a1";
+
+  const loadEntries = useCallback(async () => {
+    try { setEntries(await api.getJournal(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadEntries(); }, [loadEntries]);
+
+  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
+
+  async function saveEntry(target, text) {
+    await api.saveJournalEntry(trip.id, { ...target, body: text });
+    await loadEntries();
+  }
+  async function deleteEntry(id) {
+    await api.deleteJournalEntry(id);
+    await loadEntries();
+  }
+
+  if (days.length === 0) {
+    return (
+      <div className="text-center py-16 text-gray-400">
+        <div className="text-5xl mb-3">📖</div>
+        <div className="font-medium">Nog geen dagen gepland</div>
+        <div className="text-sm mt-1">Voeg dagen toe op de Dagplanning-tab om je dagboek te beginnen</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h3 className="font-semibold text-gray-700 mb-6">Dagboek</h3>
+      <div className="space-y-4">
+        {days.map((day) => {
+          const dayStr = day.date ? day.date.slice(0, 10) : null;
+          const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
+          const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
+          const dayEntry = entries.find((e) => e.day_id === day.id);
+          const d = day.date ? new Date(day.date) : null;
+          const dayNum = d ? d.getDate() : "?";
+          const dayName = d ? DAY_NAMES[d.getDay()] : "";
+          const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
+          const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
+
+          return (
+            <div key={day.id} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white">
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-50" style={{ background: accent + "0d" }}>
+                <div className="w-10 h-10 rounded-xl flex flex-col items-center justify-center text-white shadow-sm font-bold shrink-0" style={{ background: accent }}>
+                  <span className="text-[9px] leading-none opacity-75 uppercase">{dayName}</span>
+                  <span className="text-sm leading-none font-extrabold">{dayNum}</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                  {day.title && <div className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</div>}
+                </div>
+              </div>
+
+              <div className="p-4 space-y-4">
+                <JournalEntryBox entry={dayEntry} placeholder="Hoe was deze dag?"
+                  onSave={(text) => saveEntry({ day_id: day.id }, text)}
+                  onDelete={dayEntry ? () => deleteEntry(dayEntry.id) : null} />
+
+                {hasSubItems && (
+                  <div className="pt-3 space-y-3 border-t border-gray-50">
+                    {dayTransports.map((t) => {
+                      const tEntry = entries.find((e) => e.transport_id === t.id);
+                      return (
+                        <div key={"t" + t.id} className="pl-3 border-l-2" style={{ borderColor: "#bfdbfe" }}>
+                          <div className="text-xs font-semibold text-blue-700 mb-1">{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</div>
+                          <JournalEntryBox entry={tEntry} placeholder="Vertel over deze reis..."
+                            onSave={(text) => saveEntry({ transport_id: t.id }, text)}
+                            onDelete={tEntry ? () => deleteEntry(tEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                    {dayAccommodations.map((a) => {
+                      const aEntry = entries.find((e) => e.accommodation_id === a.id);
+                      return (
+                        <div key={"a" + a.id} className="pl-3 border-l-2" style={{ borderColor: "#fde68a" }}>
+                          <div className="text-xs font-semibold text-amber-700 mb-1">🏨 {a.name}</div>
+                          <JournalEntryBox entry={aEntry} placeholder="Vertel over dit verblijf..."
+                            onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
+                            onDelete={aEntry ? () => deleteEntry(aEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                    {day.activities.map((act) => {
+                      const actEntry = entries.find((e) => e.activity_id === act.id);
+                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
+                      return (
+                        <div key={"act" + act.id} className="pl-3 border-l-2" style={{ borderColor: catColor + "55" }}>
+                          <div className="text-xs font-semibold mb-1" style={{ color: catColor }}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</div>
+                          <JournalEntryBox entry={actEntry} placeholder={`Vertel over ${act.title}...`}
+                            onSave={(text) => saveEntry({ activity_id: act.id }, text)}
+                            onDelete={actEntry ? () => deleteEntry(actEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2651,6 +2850,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
+    { key: "journal", label: "Dagboek", icon: "📖" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "map", label: "Kaart", icon: "🗺" },
@@ -2660,6 +2860,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   // Bottom nav tabs for mobile
   const bottomNavItems = [
     { key: "days", icon: "🗓", label: "Planning" },
+    { key: "journal", icon: "📖", label: "Dagboek" },
     { key: "accommodation", icon: "🏨", label: "Verblijf" },
     { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "map", icon: "🗺", label: "Kaart" },
@@ -2789,6 +2990,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       })()}
 
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
+      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}

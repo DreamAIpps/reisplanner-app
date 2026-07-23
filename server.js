@@ -531,6 +531,39 @@ route("DELETE", "/api/photos/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Journal (dagboek) ----------
+route("GET", "/api/trips/:id/journal", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM journal_entries WHERE trip_id = $1 ORDER BY created_at ASC", [params.id]);
+  sendJson(res, 200, rows);
+});
+
+route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
+  const { day_id, activity_id, transport_id, accommodation_id, title, body: text } = body;
+  if (!text || !text.trim()) return sendError(res, 400, "Verhaal mag niet leeg zijn");
+  const targets = [["day_id", day_id], ["activity_id", activity_id], ["transport_id", transport_id], ["accommodation_id", accommodation_id]].filter(([, v]) => v);
+  if (targets.length !== 1) return sendError(res, 400, "Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf");
+  const [col, val] = targets[0];
+
+  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1`, [val]);
+  if (existing.rows.length) {
+    const { rows } = await query(
+      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
+      [title || null, text, existing.rows[0].id]
+    );
+    return sendJson(res, 200, rows[0]);
+  }
+  const { rows } = await query(
+    "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text]
+  );
+  sendJson(res, 201, rows[0]);
+});
+
+route("DELETE", "/api/journal/:id", async (req, res, params) => {
+  await query("DELETE FROM journal_entries WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
 // ---------- Auth routes ----------
 // ---------- Password helpers ----------
 function hashPassword(password) {
