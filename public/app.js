@@ -72,6 +72,8 @@ const guestApi = {
     d.accommodations = (d.accommodations || []).filter(a => a.trip_id !== id);
     d.transports = (d.transports || []).filter(t => t.trip_id !== id);
     d.expenses = (d.expenses || []).filter(e => e.trip_id !== id);
+    d.photos = (d.photos || []).filter(p => p.trip_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.trip_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   getDays(tripId) {
@@ -92,6 +94,8 @@ const guestApi = {
     const d = _gr();
     d.days = (d.days || []).filter(day => day.id !== id);
     d.activities = (d.activities || []).filter(a => a.day_id !== id);
+    d.photos = (d.photos || []).filter(p => p.day_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.day_id !== id);
     _gw(d); return Promise.resolve(null);
   },
   addActivity(dayId, data) {
@@ -104,7 +108,11 @@ const guestApi = {
     d.activities = (d.activities || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
   },
   deleteActivity(id) {
-    const d = _gr(); d.activities = (d.activities || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.activities = (d.activities || []).filter(a => a.id !== id);
+    d.photos = (d.photos || []).filter(p => p.activity_id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.activity_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getAccommodations(tripId) {
     return Promise.resolve((_gr().accommodations || []).filter(a => a.trip_id === tripId));
@@ -118,7 +126,10 @@ const guestApi = {
     d.accommodations = (d.accommodations || []).map(a => a.id === id ? (found = { ...a, ...data }) : a); _gw(d); return Promise.resolve(found);
   },
   deleteAccommodation(id) {
-    const d = _gr(); d.accommodations = (d.accommodations || []).filter(a => a.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.accommodations = (d.accommodations || []).filter(a => a.id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.accommodation_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getTransports(tripId) {
     return Promise.resolve((_gr().transports || []).filter(t => t.trip_id === tripId));
@@ -132,7 +143,10 @@ const guestApi = {
     d.transports = (d.transports || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
   },
   deleteTransport(id) {
-    const d = _gr(); d.transports = (d.transports || []).filter(t => t.id !== id); _gw(d); return Promise.resolve(null);
+    const d = _gr();
+    d.transports = (d.transports || []).filter(t => t.id !== id);
+    d.journal_entries = (d.journal_entries || []).filter(e => e.transport_id !== id);
+    _gw(d); return Promise.resolve(null);
   },
   getExpenses(tripId) {
     return Promise.resolve((_gr().expenses || []).filter(e => e.trip_id === tripId));
@@ -161,6 +175,41 @@ const guestApi = {
   },
   deletePackingItem(id) {
     const d = _gr(); d.packing_items = (d.packing_items || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  getPhotos(tripId) {
+    return Promise.resolve((_gr().photos || []).filter(p => p.trip_id === tripId));
+  },
+  addPhoto(tripId, data) {
+    const d = _gr();
+    const url = `data:${data.image.mediaType};base64,${data.image.data}`;
+    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, caption: data.caption || null, taken_at: data.taken_at || null, latitude: data.latitude ?? null, longitude: data.longitude ?? null, url, created_at: new Date().toISOString() };
+    d.photos = [...(d.photos || []), p]; _gw(d); return Promise.resolve(p);
+  },
+  deletePhoto(id) {
+    const d = _gr(); d.photos = (d.photos || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  getJournal(tripId) {
+    return Promise.resolve((_gr().journal_entries || []).filter(e => e.trip_id === tripId));
+  },
+  saveJournalEntry(tripId, data) {
+    const d = _gr();
+    const list = d.journal_entries || [];
+    const key = data.day_id ? "day_id" : data.activity_id ? "activity_id" : data.transport_id ? "transport_id" : data.accommodation_id ? "accommodation_id" : null;
+    if (!key) return Promise.reject(new Error("Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf"));
+    const val = data[key];
+    const idx = list.findIndex(e => e[key] === val);
+    let entry;
+    if (idx >= 0) {
+      entry = { ...list[idx], title: data.title || null, body: data.body, updated_at: new Date().toISOString() };
+      list[idx] = entry;
+    } else {
+      entry = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null, title: data.title || null, body: data.body, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      list.push(entry);
+    }
+    d.journal_entries = list; _gw(d); return Promise.resolve(entry);
+  },
+  deleteJournalEntry(id) {
+    const d = _gr(); d.journal_entries = (d.journal_entries || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
   },
   importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
   createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
@@ -195,6 +244,12 @@ const api = {
   addExpense: (tripId, d) => _guestMode ? guestApi.addExpense(tripId, d) : apiFetch(`/api/trips/${tripId}/expenses`, { method: "POST", body: JSON.stringify(d) }),
   updateExpense: (id, d) => _guestMode ? guestApi.updateExpense(id, d) : apiFetch(`/api/expenses/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deleteExpense: (id) => _guestMode ? guestApi.deleteExpense(id) : apiFetch(`/api/expenses/${id}`, { method: "DELETE" }),
+  getPhotos: (tripId) => _guestMode ? guestApi.getPhotos(tripId) : apiFetch(`/api/trips/${tripId}/photos`),
+  addPhoto: (tripId, d) => _guestMode ? guestApi.addPhoto(tripId, d) : apiFetch(`/api/trips/${tripId}/photos`, { method: "POST", body: JSON.stringify(d) }),
+  deletePhoto: (id) => _guestMode ? guestApi.deletePhoto(id) : apiFetch(`/api/photos/${id}`, { method: "DELETE" }),
+  getJournal: (tripId) => _guestMode ? guestApi.getJournal(tripId) : apiFetch(`/api/trips/${tripId}/journal`),
+  saveJournalEntry: (tripId, d) => _guestMode ? guestApi.saveJournalEntry(tripId, d) : apiFetch(`/api/trips/${tripId}/journal`, { method: "POST", body: JSON.stringify(d) }),
+  deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
@@ -483,7 +538,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -526,6 +581,11 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
         <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        {initial?.id && (
+          <Field label="Foto's">
+            <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
+          </Field>
+        )}
         <div className="flex justify-between items-center pt-2">
           {onDelete ? (
             <button type="button" onClick={onDelete}
@@ -691,6 +751,262 @@ function ExpenseForm({ tripId, initial, onSaved, onClose }) {
   );
 }
 
+// ---------- Photo gallery / uploader ----------
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+// EXIF GPS coordinates come as [degrees, minutes, seconds]
+function exifGpsToDecimal(dms, ref) {
+  if (!dms || dms.length < 3) return null;
+  let dec = dms[0] + dms[1] / 60 + dms[2] / 3600;
+  if (ref === "S" || ref === "W") dec = -dec;
+  return dec;
+}
+
+// EXIF dates look like "YYYY:MM:DD HH:MM:SS" with no timezone
+function exifDateToIso(str) {
+  const m = typeof str === "string" && str.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}` : null;
+}
+
+function readExif(file) {
+  return new Promise((resolve) => {
+    if (typeof EXIF === "undefined") { resolve({}); return; }
+    try {
+      EXIF.getData(file, function () {
+        try {
+          const lat = exifGpsToDecimal(EXIF.getTag(this, "GPSLatitude"), EXIF.getTag(this, "GPSLatitudeRef"));
+          const lon = exifGpsToDecimal(EXIF.getTag(this, "GPSLongitude"), EXIF.getTag(this, "GPSLongitudeRef"));
+          const taken_at = exifDateToIso(EXIF.getTag(this, "DateTimeOriginal") || EXIF.getTag(this, "DateTime"));
+          resolve({ latitude: lat, longitude: lon, taken_at });
+        } catch { resolve({}); }
+      });
+    } catch { resolve({}); }
+  });
+}
+
+function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [viewing, setViewing] = useState(null);
+
+  function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        if (file.size > MAX_PHOTO_BYTES) { alert(`"${file.name}" is te groot (max 8 MB)`); continue; }
+        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
+        const base64 = dataUrl.split(",")[1];
+        await api.addPhoto(tripId, {
+          day_id: dayId || null, activity_id: activityId || null,
+          image: { data: base64, mediaType: file.type },
+          taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
+        });
+      }
+      onChange();
+    } catch (err) { alert(err.message || "Uploaden mislukt"); }
+    finally { setUploading(false); }
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("Foto verwijderen?")) return;
+    await api.deletePhoto(id);
+    onChange();
+  }
+
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1" onClick={(e) => e.stopPropagation()}>
+      {photos.map((p) => (
+        <div key={p.id} className="relative shrink-0 group">
+          <img src={p.url} alt="" onClick={() => setViewing(p)}
+            className="w-16 h-16 rounded-lg object-cover cursor-pointer border border-gray-100" />
+          {p.latitude != null && p.longitude != null && (
+            <span className="absolute bottom-0.5 left-0.5 text-[9px] leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
+          )}
+          <button type="button" onClick={() => handleDelete(p.id)}
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white shadow text-red-500 text-xs leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+        className="shrink-0 w-16 h-16 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-xl transition-colors">
+        {uploading ? "…" : "＋"}
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+      {viewing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewing(null)}>
+          <div className="max-w-full max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg" />
+            {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
+              <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
+                {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
+                {viewing.latitude != null && viewing.longitude != null && (
+                  <a href={`https://www.openstreetmap.org/?mlat=${viewing.latitude}&mlon=${viewing.longitude}#map=15/${viewing.latitude}/${viewing.longitude}`}
+                    target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-300">
+                    📍 Bekijk op kaart
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Bulk photo upload with automatic day allocation ----------
+function dayOptionLabel(day) {
+  if (!day.date) return "Dag zonder datum";
+  return new Date(day.date).toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
+  const [items, setItems] = useState([]);
+  const [processing, setProcessing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const fileRef = useRef(null);
+
+  function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function matchDay(takenAt) {
+    if (!takenAt) return "";
+    const dateStr = takenAt.slice(0, 10);
+    const match = days.find((d) => d.date && d.date.slice(0, 10) === dateStr);
+    return match ? String(match.id) : "";
+  }
+
+  async function handleSelectFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setProcessing(true);
+    const newItems = [];
+    for (const file of files) {
+      const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
+      if (file.size > MAX_PHOTO_BYTES) { newItems.push({ key, name: file.name, error: "Te groot (max 8 MB)" }); continue; }
+      try {
+        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
+        newItems.push({ key, name: file.name, dataUrl, mediaType: file.type, exif, dayId: matchDay(exif.taken_at) });
+      } catch {
+        newItems.push({ key, name: file.name, error: "Kon foto niet lezen" });
+      }
+    }
+    setItems((prev) => [...prev, ...newItems]);
+    setProcessing(false);
+  }
+
+  function setItemDay(key, dayId) {
+    setItems((prev) => prev.map((it) => it.key === key ? { ...it, dayId } : it));
+  }
+  function removeItem(key) {
+    setItems((prev) => prev.filter((it) => it.key !== key));
+  }
+
+  const uploadable = items.filter((it) => !it.error);
+  const matchedCount = uploadable.filter((it) => it.dayId).length;
+
+  async function handleUploadAll() {
+    if (!uploadable.length) return;
+    setUploading(true); setProgress(0);
+    for (const it of uploadable) {
+      const base64 = it.dataUrl.split(",")[1];
+      try {
+        await api.addPhoto(tripId, {
+          day_id: it.dayId || null, activity_id: null,
+          image: { data: base64, mediaType: it.mediaType },
+          taken_at: it.exif.taken_at || null, latitude: it.exif.latitude ?? null, longitude: it.exif.longitude ?? null,
+        });
+      } catch {}
+      setProgress((p) => p + 1);
+    }
+    setUploading(false);
+    onUploaded();
+    onClose();
+  }
+
+  return (
+    <Modal title="Foto's uploaden" onClose={onClose} wide>
+      {items.length === 0 ? (
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Selecteer meerdere foto's tegelijk. Ze worden automatisch aan de juiste reisdag gekoppeld op basis van de datum waarop de foto is gemaakt.
+          </p>
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={processing}
+            className="w-full border-2 border-dashed border-gray-200 rounded-xl py-10 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
+            {processing ? "Foto's verwerken..." : "📷 Klik om foto's te kiezen"}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-sm text-gray-500">
+              {matchedCount} van de {uploadable.length} foto's automatisch gekoppeld aan een dag.
+            </p>
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={processing || uploading}
+              className="text-xs font-medium text-sky-600 hover:text-sky-700 disabled:opacity-50">+ Meer foto's</button>
+            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
+          </div>
+          {processing && <div className="text-xs text-gray-400">Nieuwe foto's verwerken...</div>}
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {items.map((it) => (
+              <div key={it.key} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
+                {it.dataUrl ? (
+                  <img src={it.dataUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-red-50 flex items-center justify-center text-red-400 text-lg shrink-0">⚠</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-700 truncate">{it.name}</div>
+                  {it.error ? (
+                    <div className="text-xs text-red-500">{it.error}</div>
+                  ) : (
+                    <div className="text-xs text-gray-400">{it.exif?.taken_at ? fmtDatetime(it.exif.taken_at) : "Geen datum gevonden"}</div>
+                  )}
+                </div>
+                {!it.error && (
+                  <Select value={it.dayId} onChange={(e) => setItemDay(it.key, e.target.value)} className="!w-40 shrink-0">
+                    <option value="">Geen dag</option>
+                    {days.map((d) => <option key={d.id} value={d.id}>{dayOptionLabel(d)}</option>)}
+                  </Select>
+                )}
+                <button type="button" onClick={() => removeItem(it.key)} className="text-gray-300 hover:text-red-400 text-sm p-1 shrink-0">🗑</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose} disabled={uploading}>Annuleren</Button>
+            <Button type="button" onClick={handleUploadAll} disabled={uploading || !uploadable.length}>
+              {uploading ? `Uploaden... ${progress}/${uploadable.length}` : `Uploaden (${uploadable.length})`}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ---------- Day planning tab ----------
 const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
 const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
@@ -705,10 +1021,17 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   const [editingAccommodation, setEditingAccommodation] = useState(null);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
-  const [photos, setPhotos] = useState({});
+  const [locationPhotos, setLocationPhotos] = useState({});
+  const [tripPhotos, setTripPhotos] = useState([]);
+  const [bulkUploading, setBulkUploading] = useState(false);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#0369a1";
+
+  const loadPhotos = useCallback(async () => {
+    try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   useEffect(() => {
     const locs = new Set();
@@ -718,7 +1041,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       fetchedRef.current.add(loc);
       try {
         const d = await api.suggestPhoto(loc);
-        setPhotos((p) => ({ ...p, [loc]: d.thumb }));
+        setLocationPhotos((p) => ({ ...p, [loc]: d.thumb }));
       } catch {}
     });
   }, [days]);
@@ -742,9 +1065,12 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
-        <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>
+          <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
+        </div>
       </div>
 
       {addingDay && (
@@ -762,6 +1088,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
           <div className="text-5xl mb-3">🗓</div>
           <div className="font-medium">Nog geen dagen gepland</div>
           <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
+        </div>
+      )}
+
+      {tripPhotos.some((p) => !p.day_id && !p.activity_id) && (
+        <div className="mb-6">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overige foto's (geen dag gekoppeld)</h4>
+          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id)} tripId={trip.id} onChange={loadPhotos} />
         </div>
       )}
 
@@ -901,7 +1234,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 
                     {/* Activity cards */}
                     {day.activities.map((act) => {
-                      const photo = act.location ? photos[act.location] : null;
+                      const actPhotos = tripPhotos.filter((p) => p.activity_id === act.id);
+                      const photo = actPhotos[0]?.url || (act.location ? locationPhotos[act.location] : null);
                       const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={act.id}
@@ -913,6 +1247,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                               {act.location && (
                                 <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
+                              )}
+                              {actPhotos.length > 0 && (
+                                <div className="absolute top-2 right-2 bg-black/50 text-white text-xs font-medium px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  📷 {actPhotos.length}
+                                </div>
                               )}
                             </div>
                           )}
@@ -948,6 +1287,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                         + Activiteit toevoegen
                       </button>
                     )}
+
+                    {/* Day photos (not linked to a specific activity) */}
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <PhotoStrip
+                        photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id)}
+                        tripId={trip.id} dayId={day.id} onChange={loadPhotos} />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -956,6 +1302,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         </div>
       </div>
 
+      {bulkUploading && (
+        <BulkPhotoUpload tripId={trip.id} days={days}
+          onClose={() => setBulkUploading(false)}
+          onUploaded={loadPhotos} />
+      )}
       {showActivityForm && (
         <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
@@ -964,6 +1315,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       )}
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
+          photos={tripPhotos} onPhotosChange={loadPhotos}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
           onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
@@ -982,6 +1334,170 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {tipsLocation && (
         <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
+    </div>
+  );
+}
+
+// ---------- Journal (dagboek) ----------
+function JournalEntryBox({ entry, placeholder, onSave, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(entry?.body || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (!editing) setText(entry?.body || ""); }, [entry?.body, editing]);
+
+  async function handleSave() {
+    if (!text.trim()) return;
+    setSaving(true);
+    try { await onSave(text.trim()); setEditing(false); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    if (!confirm("Verhaal verwijderen?")) return;
+    await onDelete();
+    setText(""); setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+        <Textarea rows={4} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} />
+        <div className="flex items-center gap-2">
+          <Button onClick={handleSave} disabled={saving || !text.trim()}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          <Button variant="secondary" onClick={() => { setText(entry?.body || ""); setEditing(false); }}>Annuleren</Button>
+          {entry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700">🗑 Verwijderen</button>}
+        </div>
+      </div>
+    );
+  }
+
+  if (entry?.body) {
+    return (
+      <div onClick={(e) => e.stopPropagation()} className="group">
+        <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{entry.body}</p>
+        <button type="button" onClick={() => setEditing(true)}
+          className="mt-1 text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
+          ✏️ Bewerken
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      className="text-xs text-gray-400 hover:text-sky-600 italic transition-colors">
+      + Verhaal schrijven
+    </button>
+  );
+}
+
+function JournalTab({ trip, days, transports, accommodations }) {
+  const [entries, setEntries] = useState([]);
+  const accent = trip.cover_color || "#0369a1";
+
+  const loadEntries = useCallback(async () => {
+    try { setEntries(await api.getJournal(trip.id)); } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadEntries(); }, [loadEntries]);
+
+  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
+
+  async function saveEntry(target, text) {
+    await api.saveJournalEntry(trip.id, { ...target, body: text });
+    await loadEntries();
+  }
+  async function deleteEntry(id) {
+    await api.deleteJournalEntry(id);
+    await loadEntries();
+  }
+
+  if (days.length === 0) {
+    return (
+      <div className="text-center py-16 text-gray-400">
+        <div className="text-5xl mb-3">📖</div>
+        <div className="font-medium">Nog geen dagen gepland</div>
+        <div className="text-sm mt-1">Voeg dagen toe op de Dagplanning-tab om je dagboek te beginnen</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h3 className="font-semibold text-gray-700 mb-6">Dagboek</h3>
+      <div className="space-y-4">
+        {days.map((day) => {
+          const dayStr = day.date ? day.date.slice(0, 10) : null;
+          const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
+          const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
+          const dayEntry = entries.find((e) => e.day_id === day.id);
+          const d = day.date ? new Date(day.date) : null;
+          const dayNum = d ? d.getDate() : "?";
+          const dayName = d ? DAY_NAMES[d.getDay()] : "";
+          const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
+          const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
+
+          return (
+            <div key={day.id} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white">
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-50" style={{ background: accent + "0d" }}>
+                <div className="w-10 h-10 rounded-xl flex flex-col items-center justify-center text-white shadow-sm font-bold shrink-0" style={{ background: accent }}>
+                  <span className="text-[9px] leading-none opacity-75 uppercase">{dayName}</span>
+                  <span className="text-sm leading-none font-extrabold">{dayNum}</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                  {day.title && <div className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</div>}
+                </div>
+              </div>
+
+              <div className="p-4 space-y-4">
+                <JournalEntryBox entry={dayEntry} placeholder="Hoe was deze dag?"
+                  onSave={(text) => saveEntry({ day_id: day.id }, text)}
+                  onDelete={dayEntry ? () => deleteEntry(dayEntry.id) : null} />
+
+                {hasSubItems && (
+                  <div className="pt-3 space-y-3 border-t border-gray-50">
+                    {dayTransports.map((t) => {
+                      const tEntry = entries.find((e) => e.transport_id === t.id);
+                      return (
+                        <div key={"t" + t.id} className="pl-3 border-l-2" style={{ borderColor: "#bfdbfe" }}>
+                          <div className="text-xs font-semibold text-blue-700 mb-1">{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</div>
+                          <JournalEntryBox entry={tEntry} placeholder="Vertel over deze reis..."
+                            onSave={(text) => saveEntry({ transport_id: t.id }, text)}
+                            onDelete={tEntry ? () => deleteEntry(tEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                    {dayAccommodations.map((a) => {
+                      const aEntry = entries.find((e) => e.accommodation_id === a.id);
+                      return (
+                        <div key={"a" + a.id} className="pl-3 border-l-2" style={{ borderColor: "#fde68a" }}>
+                          <div className="text-xs font-semibold text-amber-700 mb-1">🏨 {a.name}</div>
+                          <JournalEntryBox entry={aEntry} placeholder="Vertel over dit verblijf..."
+                            onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
+                            onDelete={aEntry ? () => deleteEntry(aEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                    {day.activities.map((act) => {
+                      const actEntry = entries.find((e) => e.activity_id === act.id);
+                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
+                      return (
+                        <div key={"act" + act.id} className="pl-3 border-l-2" style={{ borderColor: catColor + "55" }}>
+                          <div className="text-xs font-semibold mb-1" style={{ color: catColor }}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</div>
+                          <JournalEntryBox entry={actEntry} placeholder={`Vertel over ${act.title}...`}
+                            onSave={(text) => saveEntry({ activity_id: act.id }, text)}
+                            onDelete={actEntry ? () => deleteEntry(actEntry.id) : null} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2334,6 +2850,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
 
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
+    { key: "journal", label: "Dagboek", icon: "📖" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
     { key: "map", label: "Kaart", icon: "🗺" },
@@ -2343,6 +2860,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   // Bottom nav tabs for mobile
   const bottomNavItems = [
     { key: "days", icon: "🗓", label: "Planning" },
+    { key: "journal", icon: "📖", label: "Dagboek" },
     { key: "accommodation", icon: "🏨", label: "Verblijf" },
     { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "map", icon: "🗺", label: "Kaart" },
@@ -2472,6 +2990,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
       })()}
 
       {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
+      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
       {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
       {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
       {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}

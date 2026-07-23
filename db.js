@@ -148,6 +148,40 @@ async function initDb() {
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Overig';
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS checked BOOLEAN DEFAULT FALSE;
+
+    CREATE TABLE IF NOT EXISTS photos (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      day_id INTEGER REFERENCES days(id) ON DELETE CASCADE,
+      activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+      mime_type TEXT NOT NULL,
+      data BYTEA NOT NULL,
+      caption TEXT,
+      taken_at TIMESTAMPTZ,
+      latitude NUMERIC(9,6),
+      longitude NUMERIC(9,6),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS taken_at TIMESTAMPTZ;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6);
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
+
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      day_id INTEGER REFERENCES days(id) ON DELETE CASCADE,
+      activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+      transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE,
+      accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE,
+      title TEXT,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_day_unique ON journal_entries(day_id) WHERE day_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_activity_unique ON journal_entries(activity_id) WHERE activity_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_unique ON journal_entries(transport_id) WHERE transport_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_accommodation_unique ON journal_entries(accommodation_id) WHERE accommodation_id IS NOT NULL;
   `);
 }
 

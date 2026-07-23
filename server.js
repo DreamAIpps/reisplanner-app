@@ -494,6 +494,76 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Photos ----------
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+route("GET", "/api/trips/:id/photos", async (req, res, params) => {
+  const { rows } = await query(
+    "SELECT id, trip_id, day_id, activity_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
+    [params.id]
+  );
+  sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw` })));
+});
+
+route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
+  const { day_id, activity_id, image, caption, taken_at, latitude, longitude } = body;
+  if (!image?.data || !image?.mediaType) return sendError(res, 400, "Geen afbeelding opgegeven");
+  const buffer = Buffer.from(image.data, "base64");
+  if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
+  const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
+  const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
+  const { rows } = await query(
+    "INSERT INTO photos (trip_id, day_id, activity_id, mime_type, data, caption, taken_at, latitude, longitude) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, trip_id, day_id, activity_id, mime_type, caption, taken_at, latitude, longitude, created_at",
+    [params.id, day_id || null, activity_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon]
+  );
+  sendJson(res, 201, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
+});
+
+route("GET", "/api/photos/:id/raw", async (req, res, params) => {
+  const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+  if (!rows.length) { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { "Content-Type": rows[0].mime_type, "Cache-Control": "private, max-age=31536000" });
+  res.end(rows[0].data);
+});
+
+route("DELETE", "/api/photos/:id", async (req, res, params) => {
+  await query("DELETE FROM photos WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
+// ---------- Journal (dagboek) ----------
+route("GET", "/api/trips/:id/journal", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM journal_entries WHERE trip_id = $1 ORDER BY created_at ASC", [params.id]);
+  sendJson(res, 200, rows);
+});
+
+route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
+  const { day_id, activity_id, transport_id, accommodation_id, title, body: text } = body;
+  if (!text || !text.trim()) return sendError(res, 400, "Verhaal mag niet leeg zijn");
+  const targets = [["day_id", day_id], ["activity_id", activity_id], ["transport_id", transport_id], ["accommodation_id", accommodation_id]].filter(([, v]) => v);
+  if (targets.length !== 1) return sendError(res, 400, "Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf");
+  const [col, val] = targets[0];
+
+  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1`, [val]);
+  if (existing.rows.length) {
+    const { rows } = await query(
+      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
+      [title || null, text, existing.rows[0].id]
+    );
+    return sendJson(res, 200, rows[0]);
+  }
+  const { rows } = await query(
+    "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text]
+  );
+  sendJson(res, 201, rows[0]);
+});
+
+route("DELETE", "/api/journal/:id", async (req, res, params) => {
+  await query("DELETE FROM journal_entries WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
 // ---------- Auth routes ----------
 // ---------- Password helpers ----------
 function hashPassword(password) {
