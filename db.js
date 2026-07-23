@@ -148,6 +148,17 @@ async function initDb() {
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Overig';
     ALTER TABLE packing_items ADD COLUMN IF NOT EXISTS checked BOOLEAN DEFAULT FALSE;
+
+    CREATE TABLE IF NOT EXISTS photos (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      day_id INTEGER REFERENCES days(id) ON DELETE CASCADE,
+      activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+      mime_type TEXT NOT NULL,
+      data BYTEA NOT NULL,
+      caption TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 

@@ -494,6 +494,41 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 });
 
+// ---------- Photos ----------
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+route("GET", "/api/trips/:id/photos", async (req, res, params) => {
+  const { rows } = await query(
+    "SELECT id, trip_id, day_id, activity_id, mime_type, caption, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
+    [params.id]
+  );
+  sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw` })));
+});
+
+route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
+  const { day_id, activity_id, image, caption } = body;
+  if (!image?.data || !image?.mediaType) return sendError(res, 400, "Geen afbeelding opgegeven");
+  const buffer = Buffer.from(image.data, "base64");
+  if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
+  const { rows } = await query(
+    "INSERT INTO photos (trip_id, day_id, activity_id, mime_type, data, caption) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, trip_id, day_id, activity_id, mime_type, caption, created_at",
+    [params.id, day_id || null, activity_id || null, image.mediaType, buffer, caption || null]
+  );
+  sendJson(res, 201, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
+});
+
+route("GET", "/api/photos/:id/raw", async (req, res, params) => {
+  const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+  if (!rows.length) { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { "Content-Type": rows[0].mime_type, "Cache-Control": "private, max-age=31536000" });
+  res.end(rows[0].data);
+});
+
+route("DELETE", "/api/photos/:id", async (req, res, params) => {
+  await query("DELETE FROM photos WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
 // ---------- Auth routes ----------
 // ---------- Password helpers ----------
 function hashPassword(password) {
