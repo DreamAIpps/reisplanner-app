@@ -583,7 +583,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
         {initial?.id && (
           <Field label="Foto's">
-            <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
+            <PhotoStrip photos={(photos || []).filter((p) => p.activity_id === initial.id)} tripId={tripId} dayId={dayId} activityId={initial.id} onChange={onPhotosChange} />
           </Field>
         )}
         {initial?.id && (
@@ -808,7 +808,37 @@ function readExif(file) {
 function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
-  const [viewing, setViewing] = useState(null);
+  const [viewingIndex, setViewingIndex] = useState(null);
+  const touchStart = useRef(null);
+  const viewing = viewingIndex != null ? photos[viewingIndex] : null;
+
+  function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
+  function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
+
+  function handleTouchStart(e) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+  function handleTouchEnd(e) {
+    if (!touchStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    touchStart.current = null;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) showNext(); else showPrev();
+  }
+
+  useEffect(() => {
+    if (viewingIndex == null) return;
+    function handleKey(e) {
+      if (e.key === "ArrowRight") showNext();
+      else if (e.key === "ArrowLeft") showPrev();
+      else if (e.key === "Escape") setViewingIndex(null);
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [viewingIndex, photos.length]);
 
   function readAsDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -848,9 +878,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
 
   return (
     <div className="flex gap-2 overflow-x-auto pb-1" onClick={(e) => e.stopPropagation()}>
-      {photos.map((p) => (
+      {photos.map((p, i) => (
         <div key={p.id} className="relative shrink-0 group">
-          <img src={p.url} alt="" onClick={() => setViewing(p)}
+          <img src={p.url} alt="" onClick={() => setViewingIndex(i)}
             className="w-16 h-16 rounded-lg object-cover cursor-pointer border border-gray-100" />
           {p.latitude != null && p.longitude != null && (
             <span className="absolute bottom-0.5 left-0.5 text-[9px] leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
@@ -867,9 +897,25 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
       </button>
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewing(null)}>
-          <div className="max-w-full max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg" />
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
+          <div className="max-w-full max-h-full flex flex-col items-center gap-2 relative"
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            {photos.length > 1 && (
+              <>
+                <button type="button" onClick={showPrev}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
+                  ‹
+                </button>
+                <button type="button" onClick={showNext}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
+                  ›
+                </button>
+              </>
+            )}
+            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg select-none" draggable={false} />
+            {photos.length > 1 && (
+              <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>
+            )}
             {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
                 {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
