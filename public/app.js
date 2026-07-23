@@ -2955,7 +2955,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "journal", label: "Dagboek", icon: "📖" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
-    { key: "map", label: "Kaart", icon: "🗺" },
     { key: "packing", label: "Paklijst", icon: "🎒" },
   ];
 
@@ -2963,7 +2962,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
   const bottomNavItems = [
     { key: "days", icon: "🗓", label: "Planning" },
     { key: "journal", icon: "📖", label: "Dagboek" },
-    { key: "map", icon: "🗺", label: "Kaart" },
     { key: "budget", icon: "💰", label: "Budget" },
   ];
   // Reachable only via the "Meer" dropdown on mobile
