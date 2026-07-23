@@ -3177,6 +3177,11 @@ function TripDetail({ tripId, onBack, onChanged }) {
           <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
           <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
             style={{ right: 12, bottom: "calc(56px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
+            <button onClick={() => { setShowMoreMenu(false); onBack(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left text-gray-700 border-b border-gray-100">
+              <span className="text-lg leading-none">←</span>
+              Terug
+            </button>
             {moreMenuItems.map((item) => (
               <button key={item.key} onClick={() => { setTab(item.key); setShowMoreMenu(false); }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left"
@@ -3192,11 +3197,6 @@ function TripDetail({ tripId, onBack, onChanged }) {
       {/* Mobile bottom nav */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="flex">
-          <button onClick={onBack} className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-gray-400 hover:text-sky-600 transition-colors min-w-0" style={{ minHeight: 56 }}>
-            <span className="text-xl">←</span>
-            <span className="text-xs font-medium leading-none">Terug</span>
-          </button>
-          <div className="w-px bg-gray-100 my-2" />
           {bottomNavItems.map((item) => (
             <button key={item.key} onClick={() => setTab(item.key)}
               className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-colors min-w-0"
