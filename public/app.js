@@ -173,7 +173,7 @@ const guestApi = {
   addPhoto(tripId, data) {
     const d = _gr();
     const url = `data:${data.image.mediaType};base64,${data.image.data}`;
-    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, caption: data.caption || null, url, created_at: new Date().toISOString() };
+    const p = { id: _gid(), trip_id: tripId, day_id: data.day_id || null, activity_id: data.activity_id || null, caption: data.caption || null, taken_at: data.taken_at || null, latitude: data.latitude ?? null, longitude: data.longitude ?? null, url, created_at: new Date().toISOString() };
     d.photos = [...(d.photos || []), p]; _gw(d); return Promise.resolve(p);
   },
   deletePhoto(id) {
@@ -719,6 +719,36 @@ function ExpenseForm({ tripId, initial, onSaved, onClose }) {
 // ---------- Photo gallery / uploader ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
+// EXIF GPS coordinates come as [degrees, minutes, seconds]
+function exifGpsToDecimal(dms, ref) {
+  if (!dms || dms.length < 3) return null;
+  let dec = dms[0] + dms[1] / 60 + dms[2] / 3600;
+  if (ref === "S" || ref === "W") dec = -dec;
+  return dec;
+}
+
+// EXIF dates look like "YYYY:MM:DD HH:MM:SS" with no timezone
+function exifDateToIso(str) {
+  const m = typeof str === "string" && str.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}` : null;
+}
+
+function readExif(file) {
+  return new Promise((resolve) => {
+    if (typeof EXIF === "undefined") { resolve({}); return; }
+    try {
+      EXIF.getData(file, function () {
+        try {
+          const lat = exifGpsToDecimal(EXIF.getTag(this, "GPSLatitude"), EXIF.getTag(this, "GPSLatitudeRef"));
+          const lon = exifGpsToDecimal(EXIF.getTag(this, "GPSLongitude"), EXIF.getTag(this, "GPSLongitudeRef"));
+          const taken_at = exifDateToIso(EXIF.getTag(this, "DateTimeOriginal") || EXIF.getTag(this, "DateTime"));
+          resolve({ latitude: lat, longitude: lon, taken_at });
+        } catch { resolve({}); }
+      });
+    } catch { resolve({}); }
+  });
+}
+
 function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -741,9 +771,13 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
     try {
       for (const file of files) {
         if (file.size > MAX_PHOTO_BYTES) { alert(`"${file.name}" is te groot (max 8 MB)`); continue; }
-        const dataUrl = await readAsDataUrl(file);
+        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
         const base64 = dataUrl.split(",")[1];
-        await api.addPhoto(tripId, { day_id: dayId || null, activity_id: activityId || null, image: { data: base64, mediaType: file.type } });
+        await api.addPhoto(tripId, {
+          day_id: dayId || null, activity_id: activityId || null,
+          image: { data: base64, mediaType: file.type },
+          taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
+        });
       }
       onChange();
     } catch (err) { alert(err.message || "Uploaden mislukt"); }
@@ -762,6 +796,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
         <div key={p.id} className="relative shrink-0 group">
           <img src={p.url} alt="" onClick={() => setViewing(p)}
             className="w-16 h-16 rounded-lg object-cover cursor-pointer border border-gray-100" />
+          {p.latitude != null && p.longitude != null && (
+            <span className="absolute bottom-0.5 left-0.5 text-[9px] leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
+          )}
           <button type="button" onClick={() => handleDelete(p.id)}
             className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white shadow text-red-500 text-xs leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
             ×
@@ -775,7 +812,20 @@ function PhotoStrip({ photos, tripId, dayId, activityId, onChange }) {
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewing && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewing(null)}>
-          <img src={viewing.url} alt="" className="max-w-full max-h-full rounded-lg" />
+          <div className="max-w-full max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg" />
+            {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
+              <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
+                {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
+                {viewing.latitude != null && viewing.longitude != null && (
+                  <a href={`https://www.openstreetmap.org/?mlat=${viewing.latitude}&mlon=${viewing.longitude}#map=15/${viewing.latitude}/${viewing.longitude}`}
+                    target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-300">
+                    📍 Bekijk op kaart
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
