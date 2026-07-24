@@ -3507,13 +3507,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     { key: "days", icon: "🗓", label: "Planning" },
     ...(currentUserId ? [{ key: "journal", icon: "📖", label: "Dagboek" }] : []),
     { key: "photos", icon: "📷", label: "Foto's" },
-    ...(readOnly ? [] : [{ key: "budget", icon: "💰", label: "Budget" }]),
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
     { key: "accommodation", icon: "🏨", label: "Verblijf" },
     { key: "transport", icon: "✈️", label: "Vervoer" },
     { key: "packing", icon: "🎒", label: "Paklijst" },
+    ...(readOnly ? [] : [{ key: "budget", icon: "💰", label: "Budget" }]),
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
