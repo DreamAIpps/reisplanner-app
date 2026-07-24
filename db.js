@@ -169,6 +169,8 @@ async function initDb() {
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS content_hash TEXT;
+    UPDATE photos SET content_hash = md5(data) WHERE content_hash IS NULL;
 
     CREATE TABLE IF NOT EXISTS journal_entries (
       id SERIAL PRIMARY KEY,
@@ -187,6 +189,42 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_unique ON journal_entries(transport_id) WHERE transport_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_accommodation_unique ON journal_entries(accommodation_id) WHERE accommodation_id IS NOT NULL;
   `);
+
+  // Merge any photos already duplicated (same trip, identical bytes) before
+  // this content_hash uniqueness was introduced, so the index below can apply.
+  await mergeDuplicatePhotos();
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS photos_trip_hash_unique ON photos(trip_id, content_hash) WHERE content_hash IS NOT NULL;
+  `);
+}
+
+async function mergeDuplicatePhotos() {
+  const { rows: groups } = await query(`
+    SELECT trip_id, content_hash, array_agg(id ORDER BY created_at ASC) AS ids
+    FROM photos
+    WHERE content_hash IS NOT NULL
+    GROUP BY trip_id, content_hash
+    HAVING COUNT(*) > 1
+  `);
+  for (const group of groups) {
+    const [keepId, ...dupIds] = group.ids;
+    for (const dupId of dupIds) {
+      await query(
+        `UPDATE photos p SET
+           day_id = COALESCE(p.day_id, d.day_id),
+           activity_id = COALESCE(p.activity_id, d.activity_id),
+           transport_id = COALESCE(p.transport_id, d.transport_id),
+           accommodation_id = COALESCE(p.accommodation_id, d.accommodation_id),
+           taken_at = COALESCE(p.taken_at, d.taken_at),
+           latitude = COALESCE(p.latitude, d.latitude),
+           longitude = COALESCE(p.longitude, d.longitude)
+         FROM (SELECT * FROM photos WHERE id = $2) d
+         WHERE p.id = $1`,
+        [keepId, dupId]
+      );
+      await query("DELETE FROM photos WHERE id = $1", [dupId]);
+    }
+  }
 }
 
 module.exports = { query, initDb };

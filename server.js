@@ -515,11 +515,26 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
   const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
   const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
+  // Content hash de-dupes identical photos within a trip: re-uploading the same
+  // bytes reassigns the existing row's target instead of storing a duplicate blob.
+  const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const { rows } = await query(
-    "INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at",
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon]
+    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
+       day_id = EXCLUDED.day_id,
+       activity_id = EXCLUDED.activity_id,
+       transport_id = EXCLUDED.transport_id,
+       accommodation_id = EXCLUDED.accommodation_id,
+       caption = COALESCE(photos.caption, EXCLUDED.caption),
+       taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
+       latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
+       longitude = COALESCE(photos.longitude, EXCLUDED.longitude)
+     RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon, contentHash]
   );
-  sendJson(res, 201, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
+  const { inserted, ...photo } = rows[0];
+  sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw` });
 });
 
 route("GET", "/api/photos/:id/raw", async (req, res, params) => {
