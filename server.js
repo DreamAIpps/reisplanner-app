@@ -630,8 +630,27 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
 route("GET", "/api/photos/:id/raw", async (req, res, params) => {
   const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
   if (!rows.length) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { "Content-Type": rows[0].mime_type, "Cache-Control": "private, max-age=31536000" });
-  res.end(rows[0].data);
+  let { data, mime_type } = rows[0];
+  // Safety net: convert on first view for any HEIC photo the upload-time
+  // conversion or startup backfill missed (e.g. a legacy row whose stored
+  // mime_type didn't look HEIC even though its bytes are), and persist the
+  // result so later requests are served directly.
+  if (looksLikeHeic(data, mime_type)) {
+    try {
+      const converted = await normalizeImage(data, mime_type);
+      if (converted.mediaType !== mime_type) {
+        data = converted.buffer;
+        mime_type = converted.mediaType;
+        const contentHash = crypto.createHash("md5").update(data).digest("hex");
+        query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mime_type, data, contentHash, params.id])
+          .catch((err) => console.error(`Failed to persist HEIC conversion for photo ${params.id}:`, err.message));
+      }
+    } catch (err) {
+      console.error(`On-the-fly HEIC conversion failed for photo ${params.id}:`, err.message);
+    }
+  }
+  res.writeHead(200, { "Content-Type": mime_type, "Cache-Control": "private, max-age=31536000" });
+  res.end(data);
 });
 
 route("PUT", "/api/photos/:id", async (req, res, params, body) => {
@@ -1249,18 +1268,24 @@ const server = http.createServer(async (req, res) => {
 // One-time backfill: photos uploaded before HEIC conversion was added are
 // stored as HEIC/HEIF and fail to render in most browsers. Convert them to
 // JPEG in the background so existing trips self-heal without blocking startup.
+// Checks actual bytes (not just the stored mime_type) — some legacy uploads
+// have an unreliable mime_type despite being HEIC underneath, which a plain
+// "WHERE mime_type ILIKE 'image/hei%'" filter would silently skip forever.
 async function backfillHeicPhotos() {
-  const { rows } = await query("SELECT id, mime_type, data FROM photos WHERE mime_type ILIKE 'image/hei%'");
-  if (!rows.length) return;
-  console.log(`Converting ${rows.length} existing HEIC photo(s) to JPEG...`);
-  for (const row of rows) {
+  const { rows: probe } = await query("SELECT id, mime_type, substring(data from 1 for 12) AS head FROM photos");
+  const heicIds = probe.filter((r) => looksLikeHeic(r.head, r.mime_type)).map((r) => r.id);
+  if (!heicIds.length) return;
+  console.log(`Converting ${heicIds.length} existing HEIC photo(s) to JPEG...`);
+  for (const id of heicIds) {
     try {
-      const { buffer, mediaType } = await normalizeImage(row.data, row.mime_type);
-      if (mediaType === row.mime_type) continue;
+      const { rows } = await query("SELECT mime_type, data FROM photos WHERE id = $1", [id]);
+      if (!rows.length) continue;
+      const { buffer, mediaType } = await normalizeImage(rows[0].data, rows[0].mime_type);
+      if (mediaType === rows[0].mime_type) continue;
       const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
-      await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, row.id]);
+      await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, id]);
     } catch (err) {
-      console.error(`Failed to convert photo ${row.id}:`, err.message);
+      console.error(`Failed to convert photo ${id}:`, err.message);
     }
   }
   console.log("HEIC photo backfill done.");
