@@ -1676,8 +1676,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
       <div className="space-y-4">
         {days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
-          const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
-          const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
+          // Anchor each transport/accommodation to a single day (departure /
+          // check-in, falling back to arrival / check-out) so multi-day items
+          // don't show their journal entry twice on the timeline.
+          const dayTransports = transports.filter((t) => (isoDate(t.departure_time) || isoDate(t.arrival_time)) === dayStr);
+          const dayAccommodations = accommodations.filter((a) => (isoDate(a.check_in) || isoDate(a.check_out)) === dayStr);
           const dayEntries = entries.filter((e) => e.day_id === day.id);
           const d = day.date ? new Date(day.date) : null;
           const dayNum = d ? d.getDate() : "?";
