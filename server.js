@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const heicConvert = require("heic-convert");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
@@ -234,8 +235,10 @@ function serveStatic(res, filePath) {
     if (err) { res.writeHead(404); res.end("Not found"); return; }
     // Never let the browser (esp. iOS standalone PWAs) cache the app shell —
     // without this, a device can silently keep serving an old index.html/app.js
-    // after a fresh deploy.
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache, must-revalidate" });
+    // after a fresh deploy. no-store (not just no-cache) because iOS WKWebView
+    // has been observed serving stale responses from disk cache even when a
+    // revalidation is technically required.
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-store, no-cache, must-revalidate" });
     res.end(data);
   });
 }
@@ -562,6 +565,27 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
 // ---------- Photos ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
+// iPhones upload photos as HEIC/HEIF, which most browsers (and even iOS
+// WKWebView-hosted PWAs in some cases) can't decode in an <img> tag. Convert
+// to JPEG on upload so stored photos render everywhere.
+function looksLikeHeic(buffer, mediaType) {
+  if (/hei[cf]/i.test(mediaType || "")) return true;
+  if (buffer.length < 12 || buffer.toString("ascii", 4, 8) !== "ftyp") return false;
+  const brand = buffer.toString("ascii", 8, 12);
+  return ["heic", "heix", "heim", "heis", "hevc", "hevx", "hevm", "hevs", "mif1", "msf1"].includes(brand);
+}
+
+async function normalizeImage(buffer, mediaType) {
+  if (!looksLikeHeic(buffer, mediaType)) return { buffer, mediaType };
+  try {
+    const jpegBuffer = await heicConvert({ buffer, format: "JPEG", quality: 0.9 });
+    return { buffer: Buffer.from(jpegBuffer), mediaType: "image/jpeg" };
+  } catch (err) {
+    console.error("HEIC conversion failed:", err.message);
+    return { buffer, mediaType };
+  }
+}
+
 route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   const { rows } = await query(
     "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
@@ -573,7 +597,10 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, image, caption, taken_at, latitude, longitude } = body;
   if (!image?.data || !image?.mediaType) return sendError(res, 400, "Geen afbeelding opgegeven");
-  const buffer = Buffer.from(image.data, "base64");
+  let buffer = Buffer.from(image.data, "base64");
+  if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
+  let mimeType = image.mediaType;
+  ({ buffer, mediaType: mimeType } = await normalizeImage(buffer, mimeType));
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
   const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
   const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
@@ -594,7 +621,7 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
        latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
        longitude = COALESCE(photos.longitude, EXCLUDED.longitude)
      RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, image.mediaType, buffer, caption || null, taken_at || null, lat, lon, contentHash]
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash]
   );
   const { inserted, ...photo } = rows[0];
   sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw` });
@@ -653,11 +680,11 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const [col, val] = targets[0];
   const author = firstName(req.user);
 
-  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1`, [val]);
+  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1 AND user_id = $2`, [val, req.user.id]);
   if (existing.rows.length) {
     const { rows } = await query(
-      "UPDATE journal_entries SET title=$1, body=$2, user_id=$3, updated_at=NOW() WHERE id=$4 RETURNING *",
-      [title || null, text, req.user.id, existing.rows[0].id]
+      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
+      [title || null, text, existing.rows[0].id]
     );
     return sendJson(res, 200, { ...rows[0], author });
   }
@@ -669,7 +696,7 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
 }, { tripScope: "param" });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
-  await query("DELETE FROM journal_entries WHERE id = $1", [params.id]);
+  await query("DELETE FROM journal_entries WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
 }, { tripScope: "journal_entries" });
 
@@ -841,6 +868,45 @@ route("GET", "/auth/apple", async (req, res) => {
   console.log("Apple Sign In: redirecting to Apple with redirect_uri:", `${appUrl(req)}/auth/apple/callback`);
   res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
   res.end();
+});
+
+route("GET", "/auth/apple/client-id", async (req, res) => {
+  sendJson(res, 200, { clientId: process.env.APPLE_CLIENT_ID || null });
+});
+
+route("POST", "/auth/apple/js-callback", async (req, res, params, body) => {
+  const { id_token, name } = body;
+  if (!id_token) return sendJson(res, 400, { error: "Geen id_token ontvangen" });
+
+  let payload;
+  try {
+    payload = await verifyAppleIdToken(id_token);
+  } catch (err) {
+    console.error("Apple JS callback: token verification failed:", err.message);
+    const code = err.message.includes("expired") ? "expired" : err.message.includes("JWK") ? "jwk" : "invalid";
+    return sendJson(res, 401, { error: `apple-verify-${code}` });
+  }
+
+  const given_name = name?.firstName || null;
+  const family_name = name?.lastName || null;
+  const fullName = [given_name, family_name].filter(Boolean).join(" ") || null;
+
+  try {
+    const user = await findOrCreateUser({
+      apple_id: payload.sub,
+      email: payload.email || null,
+      email_verified: payload.email_verified === "true" || payload.email_verified === true,
+      name: fullName,
+      given_name,
+      family_name,
+    });
+    const sessionToken = await createSession(user.id);
+    setSessionCookie(res, sessionToken);
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error("Apple JS callback: findOrCreateUser failed:", err.message);
+    sendJson(res, 500, { error: "apple-db" });
+  }
 });
 
 route("POST", "/auth/apple/callback", async (req, res) => {
@@ -1180,9 +1246,30 @@ const server = http.createServer(async (req, res) => {
   serveStatic(res, filePath);
 });
 
+// One-time backfill: photos uploaded before HEIC conversion was added are
+// stored as HEIC/HEIF and fail to render in most browsers. Convert them to
+// JPEG in the background so existing trips self-heal without blocking startup.
+async function backfillHeicPhotos() {
+  const { rows } = await query("SELECT id, mime_type, data FROM photos WHERE mime_type ILIKE 'image/hei%'");
+  if (!rows.length) return;
+  console.log(`Converting ${rows.length} existing HEIC photo(s) to JPEG...`);
+  for (const row of rows) {
+    try {
+      const { buffer, mediaType } = await normalizeImage(row.data, row.mime_type);
+      if (mediaType === row.mime_type) continue;
+      const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
+      await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, row.id]);
+    } catch (err) {
+      console.error(`Failed to convert photo ${row.id}:`, err.message);
+    }
+  }
+  console.log("HEIC photo backfill done.");
+}
+
 initDb()
   .then(() => {
     server.listen(PORT, () => console.log(`Reisplanner draait op http://localhost:${PORT}`));
+    backfillHeicPhotos().catch((err) => console.error("HEIC backfill failed:", err.message));
   })
   .catch((err) => {
     console.error("Database init failed:", err.message);
