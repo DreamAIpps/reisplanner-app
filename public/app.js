@@ -1674,13 +1674,28 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
         {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
       </div>
       <div className="space-y-4">
-        {days.map((day) => {
+        {(() => {
+          // Claim each transport/accommodation on the first day it matches
+          // (departure/check-in, falling back to arrival/check-out) and never
+          // again — guards against multi-day items AND duplicate day rows
+          // that share a date, either of which would otherwise render the
+          // same journal entry twice on the timeline.
+          const claimedTransportIds = new Set();
+          const claimedAccommodationIds = new Set();
+          return days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
-          // Anchor each transport/accommodation to a single day (departure /
-          // check-in, falling back to arrival / check-out) so multi-day items
-          // don't show their journal entry twice on the timeline.
-          const dayTransports = transports.filter((t) => (isoDate(t.departure_time) || isoDate(t.arrival_time)) === dayStr);
-          const dayAccommodations = accommodations.filter((a) => (isoDate(a.check_in) || isoDate(a.check_out)) === dayStr);
+          const dayTransports = transports.filter((t) => {
+            if (claimedTransportIds.has(t.id)) return false;
+            if ((isoDate(t.departure_time) || isoDate(t.arrival_time)) !== dayStr) return false;
+            claimedTransportIds.add(t.id);
+            return true;
+          });
+          const dayAccommodations = accommodations.filter((a) => {
+            if (claimedAccommodationIds.has(a.id)) return false;
+            if ((isoDate(a.check_in) || isoDate(a.check_out)) !== dayStr) return false;
+            claimedAccommodationIds.add(a.id);
+            return true;
+          });
           const dayEntries = entries.filter((e) => e.day_id === day.id);
           const d = day.date ? new Date(day.date) : null;
           const dayNum = d ? d.getDate() : "?";
@@ -1772,7 +1787,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               </div>
             </div>
           );
-        })}
+          });
+        })()}
       </div>
     </div>
   );
