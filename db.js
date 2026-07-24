@@ -183,6 +183,17 @@ async function initDb() {
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS content_hash TEXT;
     UPDATE photos SET content_hash = md5(data) WHERE content_hash IS NULL;
+    -- Downscaled copy served to grids and strips. Without it every 150px
+    -- thumbnail downloads the full multi-megabyte original.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_data BYTEA;
+    CREATE INDEX IF NOT EXISTS photos_trip_idx ON photos(trip_id);
+    CREATE INDEX IF NOT EXISTS days_trip_idx ON days(trip_id);
+    CREATE INDEX IF NOT EXISTS activities_trip_idx ON activities(trip_id);
+    CREATE INDEX IF NOT EXISTS activities_day_idx ON activities(day_id);
+    CREATE INDEX IF NOT EXISTS accommodations_trip_idx ON accommodations(trip_id);
+    CREATE INDEX IF NOT EXISTS transports_trip_idx ON transports(trip_id);
+    CREATE INDEX IF NOT EXISTS expenses_trip_idx ON expenses(trip_id);
+    CREATE INDEX IF NOT EXISTS packing_items_trip_idx ON packing_items(trip_id);
 
     CREATE TABLE IF NOT EXISTS journal_entries (
       id SERIAL PRIMARY KEY,

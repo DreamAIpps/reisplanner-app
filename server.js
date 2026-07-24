@@ -5,6 +5,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const heicConvert = require("heic-convert");
+const sharp = require("sharp");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
@@ -253,6 +254,20 @@ async function resolveTripId(tripScope, params) {
   return rows[0]?.trip_id || null;
 }
 
+// Guards against a request pinning a photo or journal entry to a day/activity/
+// transport/stay that belongs to a different trip than the one just authorized.
+const TARGET_TABLES = { day_id: "days", activity_id: "activities", transport_id: "transports", accommodation_id: "accommodations" };
+
+async function targetsBelongToTrip(tripId, targets) {
+  for (const [field, table] of Object.entries(TARGET_TABLES)) {
+    const id = targets[field];
+    if (!id) continue;
+    const { rows } = await query(`SELECT 1 FROM ${table} WHERE id = $1 AND trip_id = $2`, [id, tripId]);
+    if (!rows.length) return false;
+  }
+  return true;
+}
+
 function stripCosts(role, row, fields) {
   if (role !== "viewer" || !row) return row;
   const copy = { ...row };
@@ -261,16 +276,24 @@ function stripCosts(role, row, fields) {
 }
 
 // ---------- Static files ----------
-function serveStatic(res, filePath) {
+// The HTML shell must never be cached, so a deploy is picked up immediately even
+// by an iOS standalone PWA. Everything it references carries a ?v=NN cache
+// buster, so those can be cached hard: bumping the version in index.html (which
+// is always fresh) is what invalidates them. Without this, every single app
+// launch re-downloaded 200 KB of app.js over cellular and re-transpiled it.
+function serveStatic(res, filePath, { versioned = false } = {}) {
   const ext = path.extname(filePath);
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end("Not found"); return; }
-    // Never let the browser (esp. iOS standalone PWAs) cache the app shell —
-    // without this, a device can silently keep serving an old index.html/app.js
-    // after a fresh deploy. no-store (not just no-cache) because iOS WKWebView
-    // has been observed serving stale responses from disk cache even when a
-    // revalidation is technically required.
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-store, no-cache, must-revalidate" });
+    const etag = `"${crypto.createHash("md5").update(data).digest("hex")}"`;
+    const cacheControl = versioned
+      ? "public, max-age=31536000, immutable"
+      : "no-store, no-cache, must-revalidate";
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] || "application/octet-stream",
+      "Cache-Control": cacheControl,
+      ETag: etag,
+    });
     res.end(data);
   });
 }
@@ -459,11 +482,17 @@ route("DELETE", "/api/days/:id", async (req, res, params) => {
 }, { tripScope: "days" });
 
 route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
-  const { trip_id, time, title, location, notes, category, cost } = body;
+  const { time, title, location, notes, category, cost } = body;
+  if (!title || !String(title).trim()) return sendError(res, 400, "Titel is verplicht");
+  // trip_id is derived from the day, never taken from the body — trusting the
+  // client there let an editor drop rows into a trip they have no access to.
   const { rows } = await query(
-    "INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-    [params.id, trip_id, time||null, title, location||null, notes||null, category||"activity", cost||null]
+    `INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost)
+     SELECT $1, d.trip_id, $2, $3, $4, $5, $6, $7 FROM days d WHERE d.id = $1
+     RETURNING *`,
+    [params.id, time||null, title, location||null, notes||null, category||"activity", cost||null]
   );
+  if (!rows.length) return sendError(res, 404, "Dag niet gevonden");
   sendJson(res, 201, rows[0]);
 }, { tripScope: "days" });
 
@@ -596,17 +625,39 @@ async function normalizeImage(buffer, mediaType) {
   }
 }
 
+// Grids and strips render photos at ~150–300 CSS px. Serving the original there
+// means a 150px square costs several megabytes, so a trip with a few hundred
+// photos downloads hundreds of MB to draw one screen. 600px longest edge covers
+// every thumbnail size in the UI at 2x density and lands around 30–60 KB.
+const THUMB_MAX_EDGE = 600;
+
+async function makeThumbnail(buffer) {
+  try {
+    return await sharp(buffer)
+      .rotate() // honour EXIF orientation, otherwise phone photos come out sideways
+      .resize(THUMB_MAX_EDGE, THUMB_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+  } catch (err) {
+    console.error("Thumbnail generation failed:", err.message);
+    return null;
+  }
+}
+
 route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   const { rows } = await query(
     "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
     [params.id]
   );
-  sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw` })));
+  sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb` })));
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, image, caption, taken_at, latitude, longitude } = body;
   if (!image?.data || !image?.mediaType) return sendError(res, 400, "Geen afbeelding opgegeven");
+  if (!(await targetsBelongToTrip(params.id, { day_id, activity_id, transport_id, accommodation_id }))) {
+    return sendError(res, 400, "Ongeldige koppeling voor deze reis");
+  }
   let buffer = Buffer.from(image.data, "base64");
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
   let mimeType = image.mediaType;
@@ -618,9 +669,10 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   // bytes reuses the existing row instead of storing a duplicate blob, keeping
   // its current assignment (day/activity/transport/accommodation) if it has one.
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
+  const thumb = await makeThumbnail(buffer);
   const { rows } = await query(
-    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
        day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
        activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
@@ -629,12 +681,13 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
        caption = COALESCE(photos.caption, EXCLUDED.caption),
        taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
        latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
-       longitude = COALESCE(photos.longitude, EXCLUDED.longitude)
+       longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
+       thumb_data = COALESCE(photos.thumb_data, EXCLUDED.thumb_data)
      RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash]
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb]
   );
   const { inserted, ...photo } = rows[0];
-  sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw` });
+  sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw`, thumb_url: `/api/photos/${photo.id}/thumb` });
 }, { tripScope: "param" });
 
 // Persist a converted photo. Changing the bytes changes the content hash, which
@@ -685,14 +738,47 @@ route("GET", "/api/photos/:id/raw", async (req, res, params) => {
   res.end(data);
 }, { tripScope: "photos" });
 
+route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
+  const { rows } = await query("SELECT thumb_data, content_hash FROM photos WHERE id = $1", [params.id]);
+  if (!rows.length) { res.writeHead(404); res.end(); return; }
+  let thumb = rows[0].thumb_data;
+  // Generated lazily for photos that predate thumbnails (or whose generation
+  // failed at upload). Only the first viewer pays for it.
+  if (!thumb) {
+    const full = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+    let { data, mime_type } = full.rows[0];
+    if (looksLikeHeic(data, mime_type)) {
+      const converted = await normalizeImage(data, mime_type);
+      data = converted.buffer;
+    }
+    thumb = await makeThumbnail(data);
+    if (!thumb) { res.writeHead(302, { Location: `/api/photos/${params.id}/raw` }); res.end(); return; }
+    await query("UPDATE photos SET thumb_data = $1 WHERE id = $2", [thumb, params.id])
+      .catch((err) => console.error(`Failed to persist thumbnail for photo ${params.id}:`, err.message));
+  }
+  const etag = rows[0].content_hash ? `"t${rows[0].content_hash}"` : null;
+  if (etag && req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
+  const headers = { "Content-Type": "image/jpeg", "Content-Length": thumb.length, "Cache-Control": "private, max-age=31536000" };
+  if (etag) headers.ETag = etag;
+  res.writeHead(200, headers);
+  res.end(thumb);
+}, { tripScope: "photos" });
+
 route("PUT", "/api/photos/:id", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id } = body;
+  const { rows: owner } = await query("SELECT trip_id FROM photos WHERE id = $1", [params.id]);
+  if (!owner.length) return sendError(res, 404, "Foto niet gevonden");
+  // A photo may only be pinned to targets inside its own trip — otherwise it
+  // could be attached to a stranger's day/activity by id.
+  if (!(await targetsBelongToTrip(owner[0].trip_id, { day_id, activity_id, transport_id, accommodation_id }))) {
+    return sendError(res, 400, "Ongeldige koppeling voor deze reis");
+  }
   const { rows } = await query(
     "UPDATE photos SET day_id=$1, activity_id=$2, transport_id=$3, accommodation_id=$4 WHERE id=$5 RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at",
     [day_id || null, activity_id || null, transport_id || null, accommodation_id || null, params.id]
   );
   if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
-  sendJson(res, 200, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
+  sendJson(res, 200, { ...rows[0], url: `/api/photos/${rows[0].id}/raw`, thumb_url: `/api/photos/${rows[0].id}/thumb` });
 }, { tripScope: "photos" });
 
 route("DELETE", "/api/photos/:id", async (req, res, params) => {
@@ -729,6 +815,9 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const targets = [["day_id", day_id], ["activity_id", activity_id], ["transport_id", transport_id], ["accommodation_id", accommodation_id]].filter(([, v]) => v);
   if (targets.length !== 1) return sendError(res, 400, "Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf");
   const [col, val] = targets[0];
+  if (!(await targetsBelongToTrip(params.id, { day_id, activity_id, transport_id, accommodation_id }))) {
+    return sendError(res, 400, "Ongeldige koppeling voor deze reis");
+  }
   const author = firstName(req.user);
 
   const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1 AND user_id = $2`, [val, req.user.id]);
@@ -1302,40 +1391,25 @@ const server = http.createServer(async (req, res) => {
   if (pathname === "/login") { serveStatic(res, path.join(PUBLIC_DIR, "login.html")); return; }
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end(); return; }
-  if (!fs.existsSync(filePath)) filePath = path.join(PUBLIC_DIR, "index.html");
-  serveStatic(res, filePath);
+  if (!fs.existsSync(filePath)) {
+    // Only unknown *routes* fall back to the SPA shell. Asset paths must 404, or
+    // a missing file (e.g. an icon) silently returns HTML with a 200 and the
+    // failure is invisible.
+    if (path.extname(pathname)) { res.writeHead(404); res.end("Not found"); return; }
+    filePath = path.join(PUBLIC_DIR, "index.html");
+  }
+  // ?v=NN makes the URL content-addressed, so the response can be cached forever.
+  serveStatic(res, filePath, { versioned: url.searchParams.has("v") });
 });
 
-// One-time backfill: photos uploaded before HEIC conversion was added are
-// stored as HEIC/HEIF and fail to render in most browsers. Convert them to
-// JPEG in the background so existing trips self-heal without blocking startup.
-// Checks actual bytes (not just the stored mime_type) — some legacy uploads
-// have an unreliable mime_type despite being HEIC underneath, which a plain
-// "WHERE mime_type ILIKE 'image/hei%'" filter would silently skip forever.
-async function backfillHeicPhotos() {
-  const { rows: probe } = await query("SELECT id, mime_type, substring(data from 1 for 12) AS head FROM photos");
-  const heicIds = probe.filter((r) => looksLikeHeic(r.head, r.mime_type)).map((r) => r.id);
-  if (!heicIds.length) return;
-  console.log(`Converting ${heicIds.length} existing HEIC photo(s) to JPEG...`);
-  for (const id of heicIds) {
-    try {
-      const { rows } = await query("SELECT mime_type, data FROM photos WHERE id = $1", [id]);
-      if (!rows.length) continue;
-      const { buffer, mediaType } = await normalizeImage(rows[0].data, rows[0].mime_type);
-      if (mediaType === rows[0].mime_type) continue;
-      const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
-      await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, id]);
-    } catch (err) {
-      console.error(`Failed to convert photo ${id}:`, err.message);
-    }
-  }
-  console.log("HEIC photo backfill done.");
-}
-
+// Legacy HEIC photos and missing thumbnails are repaired lazily on first view
+// by the /raw and /thumb handlers, so there is deliberately no startup backfill:
+// heic-convert is pure JS and blocks the event loop for seconds per photo, which
+// made every deploy stall the server for minutes and retried permanent failures
+// on every single boot.
 initDb()
   .then(() => {
     server.listen(PORT, () => console.log(`Reisplanner draait op http://localhost:${PORT}`));
-    backfillHeicPhotos().catch((err) => console.error("HEIC backfill failed:", err.message));
   })
   .catch((err) => {
     console.error("Database init failed:", err.message);
