@@ -296,6 +296,10 @@ function daysUntilDeparture(startDate) {
   const start = new Date(startDate); start.setHours(0, 0, 0, 0);
   return Math.round((start - today) / 86400000);
 }
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function greeting(name) {
   const h = new Date().getHours();
   const first = name ? name.split(" ")[0] : "";
@@ -1202,12 +1206,19 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
   }
 
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
+  const todayDay = days.find((d) => isoDate(d.date) === todayIso());
+
+  function scrollToToday() {
+    if (!todayDay) return;
+    document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <div>
       <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
         <div className="flex gap-2">
+          {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
           <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>
           <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
         </div>
@@ -1260,12 +1271,14 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
               return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
             }) : null;
 
+            const isToday = dayStr === todayIso();
+
             return (
-              <div key={day.id} className="relative flex gap-4 pb-6">
+              <div key={day.id} id={`day-${day.id}`} className="relative flex gap-4 pb-6" style={{ scrollMarginTop: "5rem" }}>
                 {/* Day node */}
                 <div className="flex flex-col items-center shrink-0 z-10" style={{ width: "5.2rem" }}>
                   <div className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white shadow-md font-bold"
-                    style={{ background: accent }}>
+                    style={{ background: accent, boxShadow: isToday ? `0 0 0 3px white, 0 0 0 5px ${accent}` : undefined }}>
                     <span className="text-[10px] leading-none opacity-75 uppercase tracking-wide">{dayName}</span>
                     <span className="text-lg leading-none font-extrabold">{dayNum}</span>
                     <span className="text-[10px] leading-none opacity-75">{monthName}</span>
@@ -1280,6 +1293,11 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                   <div className="flex items-center justify-between mb-2 pt-1.5">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2">
+                        {isToday && (
+                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white" style={{ background: accent }}>
+                            Vandaag
+                          </span>
+                        )}
                         {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
                         {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
                       </div>
@@ -1571,6 +1589,12 @@ function JournalTab({ trip, days, transports, accommodations }) {
     await loadEntries();
   }
 
+  const todayDay = days.find((d) => isoDate(d.date) === todayIso());
+  function scrollToToday() {
+    if (!todayDay) return;
+    document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   if (days.length === 0) {
     return (
       <div className="text-center py-16 text-gray-400">
@@ -1583,7 +1607,10 @@ function JournalTab({ trip, days, transports, accommodations }) {
 
   return (
     <div>
-      <h3 className="font-semibold text-gray-700 mb-6">Dagboek</h3>
+      <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
+        <h3 className="font-semibold text-gray-700">Dagboek</h3>
+        {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+      </div>
       <div className="space-y-4">
         {days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
@@ -1595,16 +1622,25 @@ function JournalTab({ trip, days, transports, accommodations }) {
           const dayName = d ? DAY_NAMES[d.getDay()] : "";
           const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
           const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
+          const isToday = dayStr === todayIso();
 
           return (
-            <div key={day.id} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white">
+            <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white" style={{ scrollMarginTop: "5rem" }}>
               <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-50" style={{ background: accent + "0d" }}>
-                <div className="w-10 h-10 rounded-xl flex flex-col items-center justify-center text-white shadow-sm font-bold shrink-0" style={{ background: accent }}>
+                <div className="w-10 h-10 rounded-xl flex flex-col items-center justify-center text-white shadow-sm font-bold shrink-0"
+                  style={{ background: accent, boxShadow: isToday ? `0 0 0 2px white, 0 0 0 4px ${accent}` : undefined }}>
                   <span className="text-[9px] leading-none opacity-75 uppercase">{dayName}</span>
                   <span className="text-sm leading-none font-extrabold">{dayNum}</span>
                 </div>
                 <div className="min-w-0">
-                  <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                  <div className="flex items-center gap-2">
+                    {isToday && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white shrink-0" style={{ background: accent }}>
+                        Vandaag
+                      </span>
+                    )}
+                    <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                  </div>
                   {day.title && <div className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</div>}
                 </div>
               </div>
@@ -2923,6 +2959,20 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
   const otherTransports = transports.filter((t) => !matchedTransportIds.has(t.id));
   const otherAccommodations = accommodations.filter((a) => !matchedAccommodationIds.has(a.id));
 
+  const todayGroup = dayGroups.find((g) => isoDate(g.day.date) === todayIso());
+  const todayPhoto = todayGroup && photos.find((p) => {
+    if (p.day_id === todayGroup.day.id) return true;
+    if (p.activity_id && (todayGroup.day.activities || []).some((a) => a.id === p.activity_id)) return true;
+    if (p.transport_id && todayGroup.transports.some((t) => t.id === p.transport_id)) return true;
+    if (p.accommodation_id && todayGroup.accommodations.some((a) => a.id === p.accommodation_id)) return true;
+    if (isoDate(p.taken_at) === todayIso()) return true;
+    return false;
+  });
+  function scrollToToday() {
+    if (!todayPhoto) return;
+    document.getElementById(`gallery-photo-${todayPhoto.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   const viewing = viewingIndex != null ? photos[viewingIndex] : null;
   function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
   function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
@@ -2997,7 +3047,10 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
 
   return (
     <div>
-      <h3 className="font-semibold text-gray-700 mb-6">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
+      <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
+        <h3 className="font-semibold text-gray-700">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
+        {todayPhoto && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+      </div>
 
       {photos.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
@@ -3010,8 +3063,9 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
           {photos.map((p, i) => {
             const assignment = photoAssignmentInfo(p, days, transports, accommodations);
             return (
-              <button key={p.id} onClick={() => setViewingIndex(i)}
-                className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group">
+              <button key={p.id} id={`gallery-photo-${p.id}`} onClick={() => setViewingIndex(i)}
+                className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group"
+                style={{ scrollMarginTop: "5rem", boxShadow: p.id === todayPhoto?.id ? "0 0 0 3px #0369a1" : undefined }}>
                 <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 {assignment ? (
