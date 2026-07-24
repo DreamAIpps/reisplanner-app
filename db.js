@@ -181,9 +181,11 @@ async function initDb() {
       accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE,
       title TEXT,
       body TEXT NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_day_unique ON journal_entries(day_id) WHERE day_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_activity_unique ON journal_entries(activity_id) WHERE activity_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_unique ON journal_entries(transport_id) WHERE transport_id IS NOT NULL;
