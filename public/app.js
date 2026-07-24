@@ -3047,19 +3047,27 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
               <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
                 <option value="">— Niet toegewezen —</option>
-                {days.map((day) => (
-                  <React.Fragment key={day.id}>
-                    <option value={`day:${day.id}`}>📅 {dayOptionLabel(day)} (hele dag)</option>
-                    {(day.activities || []).map((act) => (
-                      <option key={act.id} value={`activity:${act.id}`}>{"  "}└ {CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                {transports.length > 0 && (
+                  <optgroup label="Vervoer">
+                    {transports.map((t) => (
+                      <option key={t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
                     ))}
-                  </React.Fragment>
-                ))}
-                {transports.map((t) => (
-                  <option key={t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                ))}
-                {accommodations.map((a) => (
-                  <option key={a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                  </optgroup>
+                )}
+                {accommodations.length > 0 && (
+                  <optgroup label="Verblijf">
+                    {accommodations.map((a) => (
+                      <option key={a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {days.map((day) => (
+                  <optgroup key={day.id} label={dayOptionLabel(day)}>
+                    <option value={`day:${day.id}`}>Hele dag</option>
+                    {(day.activities || []).map((act) => (
+                      <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </Select>
               <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
