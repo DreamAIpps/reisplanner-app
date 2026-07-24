@@ -3475,8 +3475,8 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
   return (
     <div className="pb-2">
-      {/* Back button — only on desktop */}
-      <button onClick={onBack} className="hidden sm:inline-flex mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
+      {/* Back button — only on desktop, except for read-only viewers who have no bottom nav */}
+      <button onClick={onBack} className={`${readOnly ? "inline-flex" : "hidden sm:inline-flex"} mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity`} style={{ color: accent }}>
         ← Alle reizen
       </button>
 
@@ -3551,18 +3551,22 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       </div>
 
       {/* Desktop tabs / mobile: alleen de grote Dagplanning knop */}
-      <div className="hidden sm:block">
-        <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
-      </div>
-      <div className="sm:hidden mb-4">
-        <button onClick={() => setTab("days")}
-          className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
-          style={tab === "days"
-            ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-            : { background: "#f1f5f9", color: "#374151" }}>
-          🗓 Dagplanning
-        </button>
-      </div>
+      {!readOnly && (
+        <>
+          <div className="hidden sm:block">
+            <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+          </div>
+          <div className="sm:hidden mb-4">
+            <button onClick={() => setTab("days")}
+              className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
+              style={tab === "days"
+                ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
+                : { background: "#f1f5f9", color: "#374151" }}>
+              🗓 Dagplanning
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Budget balk */}
       {trip.budget && tab !== "journal" && tab !== "photos" && (() => {
@@ -3602,17 +3606,23 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
         );
       })()}
 
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
-      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
-      {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
-      {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
+      {readOnly ? (
+        <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />
+      ) : (
+        <>
+          {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
+          {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
+          {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
+          {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
+        </>
+      )}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
-      {showMoreMenu && (
+      {!readOnly && showMoreMenu && (
         <>
           <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
           <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
@@ -3635,6 +3645,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       )}
 
       {/* Mobile bottom nav */}
+      {!readOnly && (
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="flex">
           {bottomNavItems.map((item) => (
@@ -3655,6 +3666,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           </button>
         </div>
       </div>
+      )}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
