@@ -551,7 +551,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntry, onJournalChange, readOnly }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -596,9 +596,9 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
-            <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
+            <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
               onSave={(text) => api.saveJournalEntry(tripId, { activity_id: initial.id, body: text }).then(onJournalChange)}
-              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
+              onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.activity_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
               tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
@@ -622,7 +622,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange, readOnly }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -661,9 +661,9 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
-            <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
+            <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
               onSave={(text) => api.saveJournalEntry(tripId, { accommodation_id: initial.id, body: text }).then(onJournalChange)}
-              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
+              onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.accommodation_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.accommodation_id !== initial.id)}
               tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
@@ -679,7 +679,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange, readOnly }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -733,9 +733,9 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
-            <JournalEntryBox entry={journalEntry} placeholder="Vertel over deze reis..."
+            <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
               onSave={(text) => api.saveJournalEntry(tripId, { transport_id: initial.id, body: text }).then(onJournalChange)}
-              onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
+              onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.transport_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.transport_id !== initial.id)}
               tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
@@ -1150,7 +1150,7 @@ const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", 
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
-function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly }) {
+function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
@@ -1477,7 +1477,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
           photos={tripPhotos} onPhotosChange={loadPhotos}
-          journalEntry={tripJournal.find((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal}
+          journalEntries={tripJournal.filter((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
           onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
@@ -1501,12 +1501,16 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 }
 
 // ---------- Journal (dagboek) ----------
-function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly }) {
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly }) {
+  const allEntries = entries || [];
+  const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
+  const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
+
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(entry?.body || "");
+  const [text, setText] = useState(myEntry?.body || "");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { if (!editing) setText(entry?.body || ""); }, [entry?.body, editing]);
+  useEffect(() => { if (!editing) setText(myEntry?.body || ""); }, [myEntry?.body, editing]);
 
   async function handleSave() {
     if (!text.trim()) return;
@@ -1517,7 +1521,7 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
 
   async function handleDelete() {
     if (!confirm("Verhaal verwijderen?")) return;
-    await onDelete();
+    await onDelete(myEntry.id);
     setText(""); setEditing(false);
   }
 
@@ -1528,21 +1532,28 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
   }
 
   return (
-    <div>
+    <div className="space-y-2">
+      {othersEntries.map((e) => (
+        <div key={e.id} className="bg-gray-50 rounded-lg px-3 py-2">
+          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{e.body}</p>
+          {e.author && <div className="text-xs text-gray-400 mt-1">— {e.author}</div>}
+        </div>
+      ))}
+
       {editing ? (
         <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
           <Textarea rows={4} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} />
           <div className="flex items-center gap-2">
             <Button onClick={handleSave} disabled={saving || !text.trim()}>{saving ? "Opslaan..." : "Opslaan"}</Button>
-            <Button variant="secondary" onClick={() => { setText(entry?.body || ""); setEditing(false); }}>Annuleren</Button>
-            {entry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700">🗑 Verwijderen</button>}
+            <Button variant="secondary" onClick={() => { setText(myEntry?.body || ""); setEditing(false); }}>Annuleren</Button>
+            {myEntry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700">🗑 Verwijderen</button>}
           </div>
         </div>
-      ) : entry?.body ? (
+      ) : myEntry?.body ? (
         <div onClick={(e) => e.stopPropagation()} className="group">
-          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{entry.body}</p>
+          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{myEntry.body}</p>
           <div className="flex items-center gap-2 mt-1">
-            {entry.author && <span className="text-xs text-gray-400">— {entry.author}</span>}
+            {myEntry.author && currentUserId && <span className="text-xs text-gray-400">— {myEntry.author}</span>}
             {!readOnly && (
               <button type="button" onClick={() => setEditing(true)}
                 className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
@@ -1554,7 +1565,7 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
       ) : readOnly ? null : (
         <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
           className="text-xs text-gray-400 hover:text-sky-600 italic transition-colors">
-          + Verhaal schrijven
+          + {othersEntries.length > 0 ? "Jouw verhaal toevoegen" : "Verhaal schrijven"}
         </button>
       )}
 
@@ -1568,7 +1579,7 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations, readOnly }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId }) {
   const [entries, setEntries] = useState([]);
   const [tripPhotos, setTripPhotos] = useState([]);
   const accent = trip.cover_color || "#0369a1";
@@ -1589,8 +1600,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
     await api.saveJournalEntry(trip.id, { ...target, body: text });
     await loadEntries();
   }
-  async function deleteEntry(id) {
-    await api.deleteJournalEntry(id);
+  async function deleteEntry(entryId) {
+    await api.deleteJournalEntry(entryId);
     await loadEntries();
   }
 
@@ -1621,7 +1632,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
           const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
           const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
-          const dayEntry = entries.find((e) => e.day_id === day.id);
+          const dayEntries = entries.filter((e) => e.day_id === day.id);
           const d = day.date ? new Date(day.date) : null;
           const dayNum = d ? d.getDate() : "?";
           const dayName = d ? DAY_NAMES[d.getDay()] : "";
@@ -1651,9 +1662,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
               </div>
 
               <div className="p-4 space-y-4">
-                <JournalEntryBox entry={dayEntry} placeholder="Hoe was deze dag?"
+                <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} placeholder="Hoe was deze dag?"
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
-                  onDelete={dayEntry ? () => deleteEntry(dayEntry.id) : null}
+                  onDelete={deleteEntry}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
@@ -1661,13 +1672,13 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
                 {hasSubItems && (
                   <div className="pt-3 space-y-3 border-t border-gray-50">
                     {dayTransports.map((t) => {
-                      const tEntry = entries.find((e) => e.transport_id === t.id);
+                      const tEntries = entries.filter((e) => e.transport_id === t.id);
                       return (
                         <div key={"t" + t.id} className="pl-3 border-l-2" style={{ borderColor: "#bfdbfe" }}>
                           <div className="text-xs font-semibold text-blue-700 mb-1">{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</div>
-                          <JournalEntryBox entry={tEntry} placeholder="Vertel over deze reis..."
+                          <JournalEntryBox entries={tEntries} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
                             onSave={(text) => saveEntry({ transport_id: t.id }, text)}
-                            onDelete={tEntry ? () => deleteEntry(tEntry.id) : null}
+                            onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
                             tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
@@ -1675,13 +1686,13 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
                       );
                     })}
                     {dayAccommodations.map((a) => {
-                      const aEntry = entries.find((e) => e.accommodation_id === a.id);
+                      const aEntries = entries.filter((e) => e.accommodation_id === a.id);
                       return (
                         <div key={"a" + a.id} className="pl-3 border-l-2" style={{ borderColor: "#fde68a" }}>
                           <div className="text-xs font-semibold text-amber-700 mb-1">🏨 {a.name}</div>
-                          <JournalEntryBox entry={aEntry} placeholder="Vertel over dit verblijf..."
+                          <JournalEntryBox entries={aEntries} currentUserId={currentUserId} placeholder="Vertel over dit verblijf..."
                             onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
-                            onDelete={aEntry ? () => deleteEntry(aEntry.id) : null}
+                            onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
                             tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
@@ -1689,14 +1700,14 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
                       );
                     })}
                     {day.activities.map((act) => {
-                      const actEntry = entries.find((e) => e.activity_id === act.id);
+                      const actEntries = entries.filter((e) => e.activity_id === act.id);
                       const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={"act" + act.id} className="pl-3 border-l-2" style={{ borderColor: catColor + "55" }}>
                           <div className="text-xs font-semibold mb-1" style={{ color: catColor }}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</div>
-                          <JournalEntryBox entry={actEntry} placeholder={`Vertel over ${act.title}...`}
+                          <JournalEntryBox entries={actEntries} currentUserId={currentUserId} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
-                            onDelete={actEntry ? () => deleteEntry(actEntry.id) : null}
+                            onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
                             tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
@@ -1715,7 +1726,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly }) {
 }
 
 // ---------- Accommodation tab ----------
-function AccommodationTab({ trip, accommodations, onRefresh, readOnly }) {
+function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUserId }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1796,7 +1807,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly }) {
       {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && (
         <AccommodationForm tripId={trip.id} initial={editing}
-          journalEntry={journal.find((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal}
+          journalEntries={journal.filter((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
@@ -1808,7 +1819,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly }) {
 // ---------- Transport tab ----------
 const TRANSPORT_ICONS = { Vliegtuig: "✈️", Trein: "🚆", Bus: "🚌", Huurauto: "🚗", Taxi: "🚕", Boot: "⛴️", Anders: "🚀" };
 
-function TransportTab({ trip, transports, onRefresh, readOnly }) {
+function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1873,7 +1884,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly }) {
       {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && (
         <TransportForm tripId={trip.id} initial={editing}
-          journalEntry={journal.find((e) => e.transport_id === editing.id)} onJournalChange={loadJournal}
+          journalEntries={journal.filter((e) => e.transport_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
@@ -3379,7 +3390,7 @@ function PackingTab({ tripId, readOnly }) {
 }
 
 // ---------- Trip detail ----------
-function TripDetail({ tripId, onBack, onChanged }) {
+function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [accommodations, setAccommodations] = useState([]);
@@ -3571,11 +3582,11 @@ function TripDetail({ tripId, onBack, onChanged }) {
         );
       })()}
 
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} />}
-      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
+      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
       {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
-      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} />}
-      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} />}
+      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
       {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
       {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
@@ -3887,7 +3898,7 @@ function App() {
         ) : view.name === "admin" ? (
           <AdminView onBack={() => setView({ name: "list" })} />
         ) : (
-          <TripDetail tripId={view.id} onBack={() => setView({ name: "list" })} onChanged={loadTrips} />
+          <TripDetail tripId={view.id} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
         )}
       </main>
 

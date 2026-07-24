@@ -653,11 +653,11 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const [col, val] = targets[0];
   const author = firstName(req.user);
 
-  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1`, [val]);
+  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1 AND user_id = $2`, [val, req.user.id]);
   if (existing.rows.length) {
     const { rows } = await query(
-      "UPDATE journal_entries SET title=$1, body=$2, user_id=$3, updated_at=NOW() WHERE id=$4 RETURNING *",
-      [title || null, text, req.user.id, existing.rows[0].id]
+      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
+      [title || null, text, existing.rows[0].id]
     );
     return sendJson(res, 200, { ...rows[0], author });
   }
@@ -669,7 +669,7 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
 }, { tripScope: "param" });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
-  await query("DELETE FROM journal_entries WHERE id = $1", [params.id]);
+  await query("DELETE FROM journal_entries WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
 }, { tripScope: "journal_entries" });
 
