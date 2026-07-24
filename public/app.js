@@ -3495,7 +3495,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
                 <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
                   {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                  {trip.budget && tab !== "journal" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
                 </div>
                 {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
@@ -3506,11 +3506,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                   📧 Planning toevoegen
                 </button>
               )}
-              <div className="flex gap-2 overflow-x-auto">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
-              </div>
+              {tab !== "journal" && (
+                <div className="flex gap-2 overflow-x-auto">
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
+                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -3528,18 +3530,20 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <div className="bg-white px-4 py-3">
               <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
                 {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                {trip.budget && tab !== "journal" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
               </div>
               {!readOnly && tab !== "journal" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
                   📧 Planning toevoegen
                 </button>
               )}
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
-              </div>
+              {tab !== "journal" && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
+                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
+                </div>
+              )}
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
           </>
@@ -3561,7 +3565,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       </div>
 
       {/* Budget balk */}
-      {trip.budget && (() => {
+      {trip.budget && tab !== "journal" && (() => {
         const transportTotal = transports.reduce((s, t) => s + Number(t.cost || 0), 0);
         const accommodationTotal = accommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
         const activityTotal = days.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
