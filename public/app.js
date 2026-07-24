@@ -960,15 +960,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
             {photos.length > 1 && (
               <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>
             )}
-            {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
+            {viewing.taken_at && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
-                {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
-                {viewing.latitude != null && viewing.longitude != null && (
-                  <a href={`https://www.openstreetmap.org/?mlat=${viewing.latitude}&mlon=${viewing.longitude}#map=15/${viewing.latitude}/${viewing.longitude}`}
-                    target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-300">
-                    📍 Bekijk op kaart
-                  </a>
-                )}
+                <span>🕐 {fmtDatetime(viewing.taken_at)}</span>
               </div>
             )}
           </div>
@@ -3170,15 +3164,9 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
             <img src={viewing.url} alt="" className="max-w-full max-h-[50vh] rounded-lg select-none" draggable={false}
               style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
             {photos.length > 1 && <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>}
-            {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
+            {viewing.taken_at && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
-                {viewing.taken_at && <span>🕐 {fmtDatetime(viewing.taken_at)}</span>}
-                {viewing.latitude != null && viewing.longitude != null && (
-                  <a href={`https://www.openstreetmap.org/?mlat=${viewing.latitude}&mlon=${viewing.longitude}#map=15/${viewing.latitude}/${viewing.longitude}`}
-                    target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-300">
-                    📍 Bekijk op kaart
-                  </a>
-                )}
+                <span>🕐 {fmtDatetime(viewing.taken_at)}</span>
               </div>
             )}
             {readOnly ? (
