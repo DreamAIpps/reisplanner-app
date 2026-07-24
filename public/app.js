@@ -2909,6 +2909,20 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
   }, [trip.id]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
+  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
+  const dayGroups = days.map((day) => {
+    const dayStr = day.date ? day.date.slice(0, 10) : null;
+    return {
+      day,
+      transports: transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr),
+      accommodations: accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr),
+    };
+  });
+  const matchedTransportIds = new Set(dayGroups.flatMap((g) => g.transports.map((t) => t.id)));
+  const matchedAccommodationIds = new Set(dayGroups.flatMap((g) => g.accommodations.map((a) => a.id)));
+  const otherTransports = transports.filter((t) => !matchedTransportIds.has(t.id));
+  const otherAccommodations = accommodations.filter((a) => !matchedAccommodationIds.has(a.id));
+
   const viewing = viewingIndex != null ? photos[viewingIndex] : null;
   function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
   function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
@@ -3047,28 +3061,30 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
               <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
                 <option value="">— Niet toegewezen —</option>
-                {transports.length > 0 && (
-                  <optgroup label="Vervoer">
-                    {transports.map((t) => (
-                      <option key={t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {accommodations.length > 0 && (
-                  <optgroup label="Verblijf">
-                    {accommodations.map((a) => (
-                      <option key={a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {days.map((day) => (
+                {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
                   <optgroup key={day.id} label={dayOptionLabel(day)}>
                     <option value={`day:${day.id}`}>Hele dag</option>
+                    {dayT.map((t) => (
+                      <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                    ))}
+                    {dayA.map((a) => (
+                      <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                    ))}
                     {(day.activities || []).map((act) => (
                       <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
                     ))}
                   </optgroup>
                 ))}
+                {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
+                  <optgroup label="Overig (geen datum gekoppeld)">
+                    {otherTransports.map((t) => (
+                      <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                    ))}
+                    {otherAccommodations.map((a) => (
+                      <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
               <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
                 🗑 Foto verwijderen
