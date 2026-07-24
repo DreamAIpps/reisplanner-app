@@ -821,6 +821,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const touchStart = useRef(null);
   const viewing = viewingIndex != null ? photos[viewingIndex] : null;
 
@@ -829,16 +831,36 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
 
   function handleTouchStart(e) {
     const t = e.touches[0];
-    touchStart.current = { x: t.clientX, y: t.clientY };
+    touchStart.current = { x: t.clientX, y: t.clientY, locked: null };
+    setDragging(true);
+  }
+  function handleTouchMove(e) {
+    if (!touchStart.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    if (touchStart.current.locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      touchStart.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+    if (touchStart.current.locked === "x") setDragX(dx);
   }
   function handleTouchEnd(e) {
     if (!touchStart.current) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.current.x;
     const dy = t.clientY - touchStart.current.y;
+    const wasHorizontal = touchStart.current.locked === "x";
     touchStart.current = null;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    if (dx < 0) showNext(); else showPrev();
+    if (wasHorizontal && Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
+      // Completed swipe: cut straight to the new photo — stay "dragging" this
+      // tick so the transition is suppressed and nothing animates backwards.
+      if (dx < 0) showNext(); else showPrev();
+      setDragX(0);
+    } else {
+      // Cancelled: ease back to center.
+      setDragging(false);
+      setDragX(0);
+    }
   }
 
   useEffect(() => {
@@ -911,7 +933,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       {viewing && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full max-h-full flex flex-col items-center gap-2 relative"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {photos.length > 1 && (
               <>
                 <button type="button" onClick={showPrev}
@@ -924,7 +946,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
                 </button>
               </>
             )}
-            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg select-none" draggable={false} />
+            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg select-none" draggable={false}
+              style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
             {photos.length > 1 && (
               <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>
             )}
@@ -2877,6 +2900,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewingIndex, setViewingIndex] = useState(null);
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const touchStart = useRef(null);
 
   const loadPhotos = useCallback(async () => {
@@ -2890,16 +2915,33 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
 
   function handleTouchStart(e) {
     const t = e.touches[0];
-    touchStart.current = { x: t.clientX, y: t.clientY };
+    touchStart.current = { x: t.clientX, y: t.clientY, locked: null };
+    setDragging(true);
+  }
+  function handleTouchMove(e) {
+    if (!touchStart.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    if (touchStart.current.locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      touchStart.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+    if (touchStart.current.locked === "x") setDragX(dx);
   }
   function handleTouchEnd(e) {
     if (!touchStart.current) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.current.x;
     const dy = t.clientY - touchStart.current.y;
+    const wasHorizontal = touchStart.current.locked === "x";
     touchStart.current = null;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    if (dx < 0) showNext(); else showPrev();
+    if (wasHorizontal && Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx < 0) showNext(); else showPrev();
+      setDragX(0);
+    } else {
+      setDragging(false);
+      setDragX(0);
+    }
   }
 
   useEffect(() => {
@@ -2974,7 +3016,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
       {viewing && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full flex flex-col items-center gap-3 relative py-8"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {photos.length > 1 && (
               <>
                 <button type="button" onClick={showPrev}
@@ -2987,7 +3029,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
                 </button>
               </>
             )}
-            <img src={viewing.url} alt="" className="max-w-full max-h-[50vh] rounded-lg select-none" draggable={false} />
+            <img src={viewing.url} alt="" className="max-w-full max-h-[50vh] rounded-lg select-none" draggable={false}
+              style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
             {photos.length > 1 && <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>}
             {(viewing.taken_at || (viewing.latitude != null && viewing.longitude != null)) && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
