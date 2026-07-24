@@ -822,7 +822,7 @@ function readExif(file) {
   });
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -925,12 +925,14 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     onChange();
   }
 
+  const thumbClass = large ? "w-44 h-44 sm:w-52 sm:h-52" : "w-24 h-24";
+
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1" onClick={(e) => e.stopPropagation()}>
+    <div className={`flex ${large ? "gap-3" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
       {photos.map((p, i) => (
         <div key={p.id} className="relative shrink-0 group">
           <img src={p.url} alt="" onClick={() => setViewingIndex(i)}
-            className="w-24 h-24 rounded-lg object-cover cursor-pointer border border-gray-100" />
+            className={`${thumbClass} rounded-lg object-cover cursor-pointer border border-gray-100`} />
           {p.latitude != null && p.longitude != null && (
             <span className="absolute bottom-0.5 left-0.5 text-xs leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
           )}
@@ -944,7 +946,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       ))}
       {!readOnly && (
         <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-          className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
+          className={`shrink-0 ${thumbClass} rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors`}>
           {uploading ? "…" : "＋"}
         </button>
       )}
@@ -1615,7 +1617,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
       {tripId != null && (photos?.length > 0 || !readOnly) && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
           <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
-            days={days} transports={transports} accommodations={accommodations} />
+            days={days} transports={transports} accommodations={accommodations} large />
           {!readOnly && <ExistingPhotoPicker candidates={photoCandidates || []} onAssign={handleAssignExisting} />}
         </div>
       )}
