@@ -553,9 +553,21 @@ function TripCard({ trip, onClick }) {
 // ---------- Activity form ----------
 function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly }) {
   const [form, setForm] = useState(() => {
-    if (initial) return initial;
+    if (initial) {
+      // `initial` is the raw DB row, where empty columns are null. Feeding null
+      // into a controlled <Input> makes React flip it to uncontrolled on typing.
+      return {
+        ...initial,
+        time: initial.time ?? "", location: initial.location ?? "",
+        notes: initial.notes ?? "", cost: initial.cost ?? "",
+        category: initial.category ?? "Bezienswaardigheid",
+      };
+    }
+    // The day whose "+ Activiteit" button was pressed is an explicit choice and
+    // always wins. Today is only the default when no day was specified at all
+    // (and only if today actually falls inside the trip).
     const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso());
-    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", day_id: todayDay ? todayDay.id : dayId };
+    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", day_id: dayId ?? todayDay?.id ?? "" };
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1274,6 +1286,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
         <div className="flex gap-2">
           {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+          {/* Quick-add while on the trip: opens the form pre-set to today.
+              The per-day "+ Activiteit" buttons keep using their own day. */}
+          {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
           {!readOnly && <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>}
           {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
         </div>
@@ -1690,17 +1705,22 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           // same journal entry twice on the timeline.
           const claimedTransportIds = new Set();
           const claimedAccommodationIds = new Set();
+          // Match on EITHER date, so an item whose preferred date has no day row
+          // (e.g. a flight departing the evening before the trip's first day)
+          // still shows up — the claimed-set is what prevents the second match
+          // from rendering it again.
+          const matchesDay = (a, b, dayStr) => isoDate(a) === dayStr || isoDate(b) === dayStr;
           return days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
           const dayTransports = transports.filter((t) => {
             if (claimedTransportIds.has(t.id)) return false;
-            if ((isoDate(t.departure_time) || isoDate(t.arrival_time)) !== dayStr) return false;
+            if (!matchesDay(t.departure_time, t.arrival_time, dayStr)) return false;
             claimedTransportIds.add(t.id);
             return true;
           });
           const dayAccommodations = accommodations.filter((a) => {
             if (claimedAccommodationIds.has(a.id)) return false;
-            if ((isoDate(a.check_in) || isoDate(a.check_out)) !== dayStr) return false;
+            if (!matchesDay(a.check_in, a.check_out, dayStr)) return false;
             claimedAccommodationIds.add(a.id);
             return true;
           });
@@ -3033,8 +3053,13 @@ function computeDayGroups(days, transports, accommodations) {
 function assignPhotoPayload(days, value) {
   const payload = { day_id: null, activity_id: null, transport_id: null, accommodation_id: null };
   if (!value) return payload;
-  const [type, idStr] = value.split(":");
-  const id = Number(idStr);
+  // Only the first ":" separates type from id — guest-mode ids are strings like
+  // "g1721…", so coercing with Number() would yield NaN and silently null out
+  // every field on the way to the API.
+  const sep = value.indexOf(":");
+  const type = value.slice(0, sep);
+  const idStr = value.slice(sep + 1);
+  const id = /^\d+$/.test(idStr) ? Number(idStr) : idStr;
   if (type === "day") payload.day_id = id;
   else if (type === "activity") {
     payload.activity_id = id;

@@ -198,10 +198,19 @@ async function initDb() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_day_unique ON journal_entries(day_id) WHERE day_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_activity_unique ON journal_entries(activity_id) WHERE activity_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_unique ON journal_entries(transport_id) WHERE transport_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_accommodation_unique ON journal_entries(accommodation_id) WHERE accommodation_id IS NOT NULL;
+    -- Uniqueness is per (slot, author): each user keeps their own entry for a
+    -- day/activity/transport/stay. The original indexes were on the slot column
+    -- alone, which made a second user's INSERT fail with a 23505 duplicate-key
+    -- error — i.e. only the first person to write about something could ever do so.
+    DROP INDEX IF EXISTS journal_entries_day_unique;
+    DROP INDEX IF EXISTS journal_entries_activity_unique;
+    DROP INDEX IF EXISTS journal_entries_transport_unique;
+    DROP INDEX IF EXISTS journal_entries_accommodation_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_day_user_unique ON journal_entries(day_id, user_id) WHERE day_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_activity_user_unique ON journal_entries(activity_id, user_id) WHERE activity_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_user_unique ON journal_entries(transport_id, user_id) WHERE transport_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_accommodation_user_unique ON journal_entries(accommodation_id, user_id) WHERE accommodation_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS journal_entries_trip_idx ON journal_entries(trip_id);
   `);
 
   // Merge any photos already duplicated (same trip, identical bytes) before
