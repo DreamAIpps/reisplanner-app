@@ -259,7 +259,8 @@ const api = {
   saveJournalEntry: (tripId, d) => _guestMode ? guestApi.saveJournalEntry(tripId, d) : apiFetch(`/api/trips/${tripId}/journal`, { method: "POST", body: JSON.stringify(d) }),
   deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
-  createInvite: (tripId) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST" }),
+  createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
+  getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -512,7 +513,7 @@ function TripCard({ trip, onClick }) {
               {until === 0 ? "Vandaag! 🎉" : until === 1 ? "Morgen ✈️" : `${until} dagen`}
             </span>
           )}
-          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-purple-500/80 text-white backdrop-blur-sm ml-auto">Gedeeld</span>}
+          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-purple-500/80 text-white backdrop-blur-sm ml-auto">{trip.role === "viewer" ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
         </div>
         {/* Title */}
         <div className="absolute bottom-0 left-0 right-0 p-4">
@@ -550,7 +551,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntry, onJournalChange }) {
+function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntry, onJournalChange, readOnly }) {
   const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -582,17 +583,17 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Tijd"><Input type="time" value={form.time} onChange={set("time")} /></Field>
+          <Field label="Tijd"><Input type="time" value={form.time} onChange={set("time")} disabled={readOnly} /></Field>
           <Field label="Categorie">
-            <Select value={form.category} onChange={set("category")}>
+            <Select value={form.category} onChange={set("category")} disabled={readOnly}>
               {ACTIVITY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
             </Select>
           </Field>
         </div>
-        <Field label="Titel"><Input required value={form.title} onChange={set("title")} placeholder="bijv. Colosseum bezoek" /></Field>
-        <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" /></Field>
-        <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        <Field label="Titel"><Input required value={form.title} onChange={set("title")} placeholder="bijv. Colosseum bezoek" disabled={readOnly} /></Field>
+        <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" disabled={readOnly} /></Field>
+        {!readOnly && <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
+        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
@@ -600,19 +601,19 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
               onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
               photos={(photos || []).filter((p) => p.activity_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
-              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} />
+              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
           </Field>
         )}
         <div className="flex justify-between items-center pt-2">
-          {onDelete ? (
+          {onDelete && !readOnly ? (
             <button type="button" onClick={onDelete}
               className="text-sm text-red-500 hover:text-red-700 px-2 py-1">
               🗑 Verwijderen
             </button>
           ) : <span />}
           <div className="flex gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+            <Button type="button" variant="secondary" onClick={onClose}>{readOnly ? "Sluiten" : "Annuleren"}</Button>
+            {!readOnly && <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>}
           </div>
         </div>
       </form>
@@ -621,7 +622,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange, readOnly }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -647,17 +648,17 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
         </>
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Naam"><Input required value={form.name} onChange={set("name")} placeholder="bijv. Hotel Roma Centrale" /></Field>
+        <Field label="Naam"><Input required value={form.name} onChange={set("name")} placeholder="bijv. Hotel Roma Centrale" disabled={readOnly} /></Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Check-in"><Input type="date" value={form.check_in} onChange={set("check_in")} /></Field>
-          <Field label="Check-out"><Input type="date" value={form.check_out} onChange={set("check_out")} /></Field>
+          <Field label="Check-in"><Input type="date" value={form.check_in} onChange={set("check_in")} disabled={readOnly} /></Field>
+          <Field label="Check-out"><Input type="date" value={form.check_out} onChange={set("check_out")} disabled={readOnly} /></Field>
         </div>
-        <Field label="Adres"><Input value={form.address} onChange={set("address")} placeholder="Straat, stad" /></Field>
+        <Field label="Adres"><Input value={form.address} onChange={set("address")} placeholder="Straat, stad" disabled={readOnly} /></Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} /></Field>
-          <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
+          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} disabled={readOnly} /></Field>
+          {!readOnly && <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
         </div>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entry={journalEntry} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
@@ -665,12 +666,12 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
               onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
               photos={(photos || []).filter((p) => p.accommodation_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.accommodation_id !== initial.id)}
-              tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} />
+              tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
           </Field>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-          <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+          <Button type="button" variant="secondary" onClick={onClose}>{readOnly ? "Sluiten" : "Annuleren"}</Button>
+          {!readOnly && <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>}
         </div>
       </form>
     </Modal>
@@ -678,7 +679,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntry, onJournalChange, photos, onPhotosChange, readOnly }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -712,24 +713,24 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Type">
-          <Select value={form.type} onChange={set("type")}>
+          <Select value={form.type} onChange={set("type")} disabled={readOnly}>
             {TRANSPORT_TYPES.map((t) => <option key={t}>{t}</option>)}
           </Select>
         </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Van"><Input value={form.from_location} onChange={set("from_location")} placeholder="Vertrekpunt" /></Field>
-          <Field label="Naar"><Input value={form.to_location} onChange={set("to_location")} placeholder="Bestemming" /></Field>
+          <Field label="Van"><Input value={form.from_location} onChange={set("from_location")} placeholder="Vertrekpunt" disabled={readOnly} /></Field>
+          <Field label="Naar"><Input value={form.to_location} onChange={set("to_location")} placeholder="Bestemming" disabled={readOnly} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Vertrek"><Input type="datetime-local" value={form.departure_time} onChange={set("departure_time")} /></Field>
-          <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} /></Field>
+          <Field label="Vertrek"><Input type="datetime-local" value={form.departure_time} onChange={set("departure_time")} disabled={readOnly} /></Field>
+          <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} disabled={readOnly} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} /></Field>
-          <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>
+          <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} disabled={readOnly} /></Field>
+          {!readOnly && <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
         </div>
-        <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" /></Field>
-        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
+        <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" disabled={readOnly} /></Field>
+        <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entry={journalEntry} placeholder="Vertel over deze reis..."
@@ -737,13 +738,13 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
               onDelete={journalEntry ? () => api.deleteJournalEntry(journalEntry.id).then(onJournalChange) : null}
               photos={(photos || []).filter((p) => p.transport_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.transport_id !== initial.id)}
-              tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} />
+              tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
           </Field>
         )}
         <div className="flex items-center justify-between pt-2">
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+            <Button type="button" variant="secondary" onClick={onClose}>{readOnly ? "Sluiten" : "Annuleren"}</Button>
+            {!readOnly && <Button type="submit" disabled={saving}>{saving ? "Opslaan..." : "Opslaan"}</Button>}
           </div>
         </div>
       </form>
@@ -821,7 +822,7 @@ function readExif(file) {
   });
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -923,16 +924,20 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           {p.latitude != null && p.longitude != null && (
             <span className="absolute bottom-0.5 left-0.5 text-xs leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
           )}
-          <button type="button" onClick={() => handleDelete(p.id)}
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow text-red-500 text-sm leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
-            ×
-          </button>
+          {!readOnly && (
+            <button type="button" onClick={() => handleDelete(p.id)}
+              className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow text-red-500 text-sm leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
+              ×
+            </button>
+          )}
         </div>
       ))}
-      <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-        className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
-        {uploading ? "…" : "＋"}
-      </button>
+      {!readOnly && (
+        <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+          className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
+          {uploading ? "…" : "＋"}
+        </button>
+      )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewing && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
@@ -1151,7 +1156,7 @@ const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", 
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
-function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
+function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
@@ -1219,8 +1224,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
         <h3 className="font-semibold text-gray-700">Dagplanning</h3>
         <div className="flex gap-2">
           {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
-          <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>
-          <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>
+          {!readOnly && <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>}
+          {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
         </div>
       </div>
 
@@ -1245,7 +1250,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
       {tripPhotos.some((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id) && (
         <div className="mb-6">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overige foto's (geen dag gekoppeld)</h4>
-          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id)} tripId={trip.id} onChange={loadPhotos} />
+          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id)} tripId={trip.id} onChange={loadPhotos} readOnly={readOnly} />
         </div>
       )}
 
@@ -1308,13 +1313,15 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                        className="text-xs font-medium px-2.5 py-1 rounded-lg hover:opacity-80 transition-opacity text-white"
-                        style={{ background: accent }}>
-                        + Activiteit
-                      </button>
-                    </div>
+                    {!readOnly && (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setShowActivityForm({ dayId: day.id })}
+                          className="text-xs font-medium px-2.5 py-1 rounded-lg hover:opacity-80 transition-opacity text-white"
+                          style={{ background: accent }}>
+                          + Activiteit
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -1431,15 +1438,17 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                               {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
                               {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
                             </div>
-                            <div className="flex gap-1 shrink-0">
-                              <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1">🗑</button>
-                            </div>
+                            {!readOnly && (
+                              <div className="flex gap-1 shrink-0">
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1">🗑</button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
                     })}
 
-                    {totalItems === 0 && (
+                    {totalItems === 0 && !readOnly && (
                       <button onClick={() => setShowActivityForm({ dayId: day.id })}
                         className="w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
                         + Activiteit toevoegen
@@ -1450,7 +1459,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
                     <div onClick={(e) => e.stopPropagation()}>
                       <PhotoStrip
                         photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id)}
-                        tripId={trip.id} dayId={day.id} onChange={loadPhotos} />
+                        tripId={trip.id} dayId={day.id} onChange={loadPhotos} readOnly={readOnly} />
                     </div>
                   </div>
                 </div>
@@ -1498,7 +1507,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh }) {
 }
 
 // ---------- Journal (dagboek) ----------
-function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange }) {
+function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(entry?.body || "");
   const [saving, setSaving] = useState(false);
@@ -1540,30 +1549,32 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{entry.body}</p>
           <div className="flex items-center gap-2 mt-1">
             {entry.author && <span className="text-xs text-gray-400">— {entry.author}</span>}
-            <button type="button" onClick={() => setEditing(true)}
-              className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
-              ✏️ Bewerken
-            </button>
+            {!readOnly && (
+              <button type="button" onClick={() => setEditing(true)}
+                className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
+                ✏️ Bewerken
+              </button>
+            )}
           </div>
         </div>
-      ) : (
+      ) : readOnly ? null : (
         <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
           className="text-xs text-gray-400 hover:text-sky-600 italic transition-colors">
           + Verhaal schrijven
         </button>
       )}
 
-      {tripId != null && (
+      {tripId != null && (photos?.length > 0 || !readOnly) && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} />
-          <ExistingPhotoPicker candidates={photoCandidates || []} onAssign={handleAssignExisting} />
+          <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly} />
+          {!readOnly && <ExistingPhotoPicker candidates={photoCandidates || []} onAssign={handleAssignExisting} />}
         </div>
       )}
     </div>
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly }) {
   const [entries, setEntries] = useState([]);
   const [tripPhotos, setTripPhotos] = useState([]);
   const accent = trip.cover_color || "#0369a1";
@@ -1651,7 +1662,7 @@ function JournalTab({ trip, days, transports, accommodations }) {
                   onDelete={dayEntry ? () => deleteEntry(dayEntry.id) : null}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
-                  tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} />
+                  tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
 
                 {hasSubItems && (
                   <div className="pt-3 space-y-3 border-t border-gray-50">
@@ -1665,7 +1676,7 @@ function JournalTab({ trip, days, transports, accommodations }) {
                             onDelete={tEntry ? () => deleteEntry(tEntry.id) : null}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
-                            tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} />
+                            tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
                         </div>
                       );
                     })}
@@ -1679,7 +1690,7 @@ function JournalTab({ trip, days, transports, accommodations }) {
                             onDelete={aEntry ? () => deleteEntry(aEntry.id) : null}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
-                            tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} />
+                            tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
                         </div>
                       );
                     })}
@@ -1694,7 +1705,7 @@ function JournalTab({ trip, days, transports, accommodations }) {
                             onDelete={actEntry ? () => deleteEntry(actEntry.id) : null}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
-                            tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} />
+                            tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
                         </div>
                       );
                     })}
@@ -1710,7 +1721,7 @@ function JournalTab({ trip, days, transports, accommodations }) {
 }
 
 // ---------- Accommodation tab ----------
-function AccommodationTab({ trip, accommodations, onRefresh }) {
+function AccommodationTab({ trip, accommodations, onRefresh, readOnly }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1737,7 +1748,7 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="font-semibold text-gray-700">Accommodaties</h3>
-        <Button onClick={() => setShowForm(true)} variant="secondary">+ Verblijf toevoegen</Button>
+        {!readOnly && <Button onClick={() => setShowForm(true)} variant="secondary">+ Verblijf toevoegen</Button>}
       </div>
 
       {accommodations.length === 0 ? (
@@ -1774,9 +1785,9 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
                   )}
                   {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">✏️</button>
-                  <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>
+                <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
+                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">{readOnly ? "👁" : "✏️"}</button>
+                  {!readOnly && <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
                 </div>
               </div>
               <div className="mt-2 ml-10">
@@ -1792,7 +1803,7 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
       {editing && (
         <AccommodationForm tripId={trip.id} initial={editing}
           journalEntry={journal.find((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal}
-          photos={tripPhotos} onPhotosChange={loadPhotos}
+          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
@@ -1803,7 +1814,7 @@ function AccommodationTab({ trip, accommodations, onRefresh }) {
 // ---------- Transport tab ----------
 const TRANSPORT_ICONS = { Vliegtuig: "✈️", Trein: "🚆", Bus: "🚌", Huurauto: "🚗", Taxi: "🚕", Boot: "⛴️", Anders: "🚀" };
 
-function TransportTab({ trip, transports, onRefresh }) {
+function TransportTab({ trip, transports, onRefresh, readOnly }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1830,7 +1841,7 @@ function TransportTab({ trip, transports, onRefresh }) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="font-semibold text-gray-700">Vervoer</h3>
-        <Button onClick={() => setShowForm(true)} variant="secondary">+ Vervoer toevoegen</Button>
+        {!readOnly && <Button onClick={() => setShowForm(true)} variant="secondary">+ Vervoer toevoegen</Button>}
       </div>
 
       {transports.length === 0 ? (
@@ -1855,9 +1866,9 @@ function TransportTab({ trip, transports, onRefresh }) {
                   {t.baggage_allowance && <div className="text-sm text-blue-600 mt-1">🧳 {t.baggage_allowance}</div>}
                   {t.notes && <div className="text-sm text-gray-500 mt-1">{t.notes}</div>}
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600">✏️</button>
-                  <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500">🗑</button>
+                <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
+                  <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600">{readOnly ? "👁" : "✏️"}</button>
+                  {!readOnly && <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
                 </div>
               </div>
             </div>
@@ -1869,7 +1880,7 @@ function TransportTab({ trip, transports, onRefresh }) {
       {editing && (
         <TransportForm tripId={trip.id} initial={editing}
           journalEntry={journal.find((e) => e.transport_id === editing.id)} onJournalChange={loadJournal}
-          photos={tripPhotos} onPhotosChange={loadPhotos}
+          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
@@ -2846,15 +2857,25 @@ function ImportModal({ tripId, onImported, onClose }) {
 
 // ---------- Share modal ----------
 function ShareModal({ tripId, onClose }) {
+  const [role, setRole] = useState("viewer");
   const [link, setLink] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [stats, setStats] = useState(null);
 
-  useEffect(() => {
-    api.createInvite(tripId)
+  function generateLink(r) {
+    setRole(r); setLink(null); setLoading(true);
+    api.createInvite(tripId, r)
       .then((d) => setLink(d.link))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { generateLink("viewer"); }, [tripId]);
+
+  const loadStats = useCallback(() => {
+    api.getShareStats(tripId).then(setStats).catch(() => {});
   }, [tripId]);
+  useEffect(() => { loadStats(); }, [loadStats]);
 
   function handleCopy() {
     navigator.clipboard.writeText(link);
@@ -2865,12 +2886,27 @@ function ShareModal({ tripId, onClose }) {
   return (
     <Modal title="Reis delen" onClose={onClose} wide>
       <div className="space-y-4">
-        <p className="text-sm text-gray-500">
-          Deel de link hieronder. De ontvanger kan inloggen via Google of Apple en krijgt direct toegang tot deze reis.
-        </p>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Type toegang</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => generateLink("viewer")}
+              className="flex-1 rounded-xl border-2 px-3 py-2.5 text-left transition-colors"
+              style={role === "viewer" ? { borderColor: "#0369a1", background: "#0369a10d" } : { borderColor: "#e5e7eb" }}>
+              <div className="text-sm font-semibold text-gray-800">👀 Alleen-lezen</div>
+              <div className="text-xs text-gray-500 mt-0.5">Voor familie & vrienden — geen budget/kosten zichtbaar, kan niets wijzigen</div>
+            </button>
+            <button type="button" onClick={() => generateLink("editor")}
+              className="flex-1 rounded-xl border-2 px-3 py-2.5 text-left transition-colors"
+              style={role === "editor" ? { borderColor: "#0369a1", background: "#0369a10d" } : { borderColor: "#e5e7eb" }}>
+              <div className="text-sm font-semibold text-gray-800">✏️ Bewerker</div>
+              <div className="text-xs text-gray-500 mt-0.5">Voor medereizigers — volledige toegang, kan alles zien en aanpassen</div>
+            </button>
+          </div>
+        </div>
+
         {loading ? (
           <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
-        ) : (
+        ) : link && (
           <>
             <div className="flex gap-2">
               <input
@@ -2892,6 +2928,40 @@ function ShareModal({ tripId, onClose }) {
           </>
         )}
         <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
+
+        {stats && (stats.members.length > 0) && (
+          <div className="border-t border-gray-100 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Wie heeft de reis bekeken</label>
+              <div className="flex gap-3 text-xs text-gray-500">
+                <span><b className="text-gray-700">{stats.total_views}</b> keer bekeken</span>
+                <span><b className="text-gray-700">{stats.views_24h}</b> in 24u</span>
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {stats.members.map((m) => (
+                <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-gray-50">
+                  {m.avatar ? (
+                    <img src={m.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 shrink-0">
+                      {(m.given_name || m.name || "?")[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
+                    <div className="text-xs text-gray-400">
+                      {m.role === "viewer" ? "👀 Alleen-lezen" : "✏️ Bewerker"}
+                      {m.view_count > 0 && ` · ${m.view_count}x bekeken`}
+                      {m.last_viewed_at && ` · laatst ${fmtDatetime(m.last_viewed_at)}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-end pt-2">
           <Button variant="secondary" onClick={onClose}>Sluiten</Button>
         </div>
@@ -2932,7 +3002,7 @@ function photoTargetValue(photo) {
   return "";
 }
 
-function PhotoGalleryTab({ trip, days, transports, accommodations }) {
+function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -3111,39 +3181,50 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
                 )}
               </div>
             )}
-            <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
-              <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
-                <option value="">— Niet toegewezen —</option>
-                {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
-                  <optgroup key={day.id} label={dayOptionLabel(day)}>
-                    <option value={`day:${day.id}`}>Hele dag</option>
-                    {dayT.map((t) => (
-                      <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                    ))}
-                    {dayA.map((a) => (
-                      <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                    ))}
-                    {(day.activities || []).map((act) => (
-                      <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
-                    ))}
-                  </optgroup>
-                ))}
-                {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
-                  <optgroup label="Overig (geen datum gekoppeld)">
-                    {otherTransports.map((t) => (
-                      <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                    ))}
-                    {otherAccommodations.map((a) => (
-                      <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </Select>
-              <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
-                🗑 Foto verwijderen
-              </button>
-            </div>
+            {readOnly ? (
+              (() => {
+                const info = photoAssignmentInfo(viewing, days, transports, accommodations);
+                return info ? (
+                  <div className="bg-white rounded-xl px-3 py-2 text-sm text-gray-600 flex items-center gap-1.5">
+                    <span>{info.icon}</span><span>{info.text}</span>
+                  </div>
+                ) : null;
+              })()
+            ) : (
+              <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
+                <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
+                  <option value="">— Niet toegewezen —</option>
+                  {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
+                    <optgroup key={day.id} label={dayOptionLabel(day)}>
+                      <option value={`day:${day.id}`}>Hele dag</option>
+                      {dayT.map((t) => (
+                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                      ))}
+                      {dayA.map((a) => (
+                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                      ))}
+                      {(day.activities || []).map((act) => (
+                        <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
+                    <optgroup label="Overig (geen datum gekoppeld)">
+                      {otherTransports.map((t) => (
+                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                      ))}
+                      {otherAccommodations.map((a) => (
+                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </Select>
+                <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
+                  🗑 Foto verwijderen
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3162,7 +3243,7 @@ const PACKING_SUGGESTIONS = {
   "🎒 Overig": ["Reiskussen", "Slaapmasker", "Hangslot", "Paraplu", "Waterfles", "Snacks voor onderweg"],
 };
 
-function PackingTab({ tripId }) {
+function PackingTab({ tripId, readOnly }) {
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState("");
   const [newCategory, setNewCategory] = useState(PACKING_CATEGORIES[0]);
@@ -3219,7 +3300,7 @@ function PackingTab({ tripId }) {
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm font-medium text-gray-700">{checkedCount} / {items.length} ingepakt</span>
-            {checkedCount > 0 && (
+            {checkedCount > 0 && !readOnly && (
               <button onClick={handleUncheckAll} className="text-xs text-gray-400 hover:text-gray-600">Alles uitvinken</button>
             )}
           </div>
@@ -3230,15 +3311,17 @@ function PackingTab({ tripId }) {
       )}
 
       {/* Add item */}
-      <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex gap-2">
-        <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
-          className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-400 shrink-0">
-          {PACKING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Item toevoegen..."
-          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 min-w-0" />
-        <button type="submit" className="bg-sky-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-sky-700 shrink-0">+</button>
-      </form>
+      {!readOnly && (
+        <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex gap-2">
+          <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
+            className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-400 shrink-0">
+            {PACKING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+          </select>
+          <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Item toevoegen..."
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 min-w-0" />
+          <button type="submit" className="bg-sky-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-sky-700 shrink-0">+</button>
+        </form>
+      )}
 
       {/* Categories */}
       {PACKING_CATEGORIES.map(cat => {
@@ -3267,15 +3350,17 @@ function PackingTab({ tripId }) {
                 <div className="divide-y divide-gray-50">
                   {catItems.map(item => (
                     <div key={item.id} className="flex items-center gap-3 py-2 group">
-                      <input type="checkbox" checked={item.checked} onChange={() => handleToggle(item)}
+                      <input type="checkbox" checked={item.checked} disabled={readOnly} onChange={() => handleToggle(item)}
                         className="w-4 h-4 rounded accent-sky-600 cursor-pointer shrink-0" />
                       <span className={`flex-1 text-sm ${item.checked ? "line-through text-gray-400" : "text-gray-800"}`}>{item.item}</span>
-                      <button onClick={() => handleDelete(item.id)}
-                        className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑</button>
+                      {!readOnly && (
+                        <button onClick={() => handleDelete(item.id)}
+                          className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑</button>
+                      )}
                     </div>
                   ))}
                 </div>
-                {suggestions.length > 0 && (
+                {!readOnly && suggestions.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-gray-50">
                     <p className="text-xs text-gray-400 mb-1.5">Suggesties:</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -3347,6 +3432,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
   if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
   const accent = trip.cover_color || "#0369a1";
+  const readOnly = trip.role === "viewer";
 
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
@@ -3362,7 +3448,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
     { key: "days", icon: "🗓", label: "Planning" },
     { key: "journal", icon: "📖", label: "Dagboek" },
     { key: "photos", icon: "📷", label: "Foto's" },
-    { key: "budget", icon: "💰", label: "Budget" },
+    ...(readOnly ? [] : [{ key: "budget", icon: "💰", label: "Budget" }]),
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
@@ -3388,7 +3474,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
               <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
                 <div className="flex items-start gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">Gedeeld</span>}
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">{readOnly ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
                 {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
@@ -3400,9 +3486,11 @@ function TripDetail({ tripId, onBack, onChanged }) {
               </div>
             </div>
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
-              <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
-                📧 Planning toevoegen
-              </button>
+              {!readOnly && (
+                <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
+                  📧 Planning toevoegen
+                </button>
+              )}
               <div className="flex gap-2 overflow-x-auto">
                 {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
                 {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
@@ -3416,7 +3504,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
               <div className="relative flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">Gedeeld</span>}
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">{readOnly ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
                 <h2 className="text-2xl font-bold text-white drop-shadow">{trip.name}</h2>
                 {trip.destination && <div className="text-white/80 text-sm mt-0.5">📍 {trip.destination}</div>}
@@ -3427,9 +3515,11 @@ function TripDetail({ tripId, onBack, onChanged }) {
                 {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
                 {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
               </div>
-              <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
-                📧 Planning toevoegen
-              </button>
+              {!readOnly && (
+                <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
+                  📧 Planning toevoegen
+                </button>
+              )}
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
                 {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
@@ -3493,14 +3583,14 @@ function TripDetail({ tripId, onBack, onChanged }) {
         );
       })()}
 
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} />}
-      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
-      {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} />}
-      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} />}
-      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} />}
-      {tab === "budget" && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
+      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} />}
+      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
+      {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
+      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} />}
+      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} />}
+      {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
       {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
-      {tab === "packing" && <PackingTab tripId={trip.id} />}
+      {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
       {showMoreMenu && (
