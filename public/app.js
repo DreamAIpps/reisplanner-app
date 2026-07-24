@@ -2949,7 +2949,7 @@ function ShareModal({ tripId, onClose }) {
                 <span><b className="text-gray-700">{stats.views_24h}</b> in 24u</span>
               </div>
             </div>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            <div className="space-y-1.5">
               {stats.members.map((m) => (
                 <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-gray-50">
                   {m.avatar ? (
