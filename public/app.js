@@ -954,7 +954,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     <div className={`flex ${large ? "gap-4" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
       {photos.map((p, i) => (
         <div key={p.id} className="relative shrink-0 group">
-          <img src={p.url} alt="" onClick={() => setViewingIndex(i)}
+          <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
           {p.latitude != null && p.longitude != null && (
             <span className={`absolute bottom-0.5 left-0.5 leading-none bg-black/50 text-white rounded px-1 py-0.5 ${large ? "text-base px-1.5 py-1" : "text-xs"}`}>📍</span>
@@ -1063,7 +1063,7 @@ function ExistingPhotoPicker({ candidates, onAssign }) {
           {candidates.map((p) => (
             <button key={p.id} type="button" disabled={assigning === p.id} onClick={() => handlePick(p)}
               className="shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-gray-100 hover:ring-2 hover:ring-sky-400 transition-all disabled:opacity-50">
-              <img src={p.url} alt="" className="w-full h-full object-cover" />
+              <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
             </button>
           ))}
         </div>
@@ -3181,7 +3181,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
               <button key={p.id} id={`gallery-photo-${p.id}`} onClick={() => setViewingIndex(i)}
                 className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group"
                 style={{ scrollMarginTop: "5rem", boxShadow: p.id === todayPhoto?.id ? "0 0 0 3px #0369a1" : undefined }}>
-                <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 {assignment ? (
                   <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white text-xs font-medium truncate flex items-center gap-1">
