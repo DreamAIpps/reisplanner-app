@@ -939,8 +939,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         </button>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
-      {viewing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
+      {viewing && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full max-h-full flex flex-col items-center gap-2 relative"
             onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {photos.length > 1 && (
@@ -966,7 +966,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -3156,8 +3157,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
         </div>
       )}
 
-      {viewing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
+      {viewing && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full flex flex-col items-center gap-3 relative py-8"
             onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {photos.length > 1 && (
@@ -3225,7 +3226,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
