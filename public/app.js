@@ -1440,9 +1440,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                               <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">🗺</span>
                             </button>
                           </div>
-                          <div className="px-3 pb-2.5" onClick={(e) => e.stopPropagation()}>
-                            <HotelAiTip accommodationId={a.id} />
-                          </div>
                         </div>
                       );
                     })}
@@ -1875,9 +1872,6 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
                   {!readOnly && <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
                 </div>
               </div>
-              <div className="mt-2 ml-10">
-                <HotelAiTip accommodationId={acc.id} />
-              </div>
             </div>
             );
           })}
@@ -2214,74 +2208,6 @@ function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyP
           ) : items ? (
             <div className="px-4 py-3 text-sm text-gray-400">Geen tips beschikbaar.</div>
           ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------- Hotel AI Tip ----------
-function HotelAiTip({ accommodationId }) {
-  const [tip, setTip] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const cacheKey = `hotel_ai_tip_${accommodationId}`;
-
-  function load() {
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setTip(data); return; } }
-    } catch {}
-    setLoading(true);
-    apiFetch(`/api/accommodations/${accommodationId}/ai-tip`)
-      .then((d) => { setTip(d); try { localStorage.setItem(cacheKey, JSON.stringify({ data: d, ts: Date.now() })); } catch {} })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }
-
-  function handleClick(e) {
-    e.stopPropagation();
-    if (!open) { setOpen(true); if (!tip) load(); }
-    else setOpen(false);
-  }
-
-  return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <button onClick={handleClick}
-        className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors shrink-0 whitespace-nowrap"
-        style={{ background: open ? "#fef3c7" : "#fef9c3", color: "#b45309" }}>
-        🏨 Hotel tips {open ? "▴" : "▾"}
-      </button>
-      {open && (
-        <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm">
-          {loading ? (
-            <div className="space-y-2 animate-pulse">
-              <div className="h-3 bg-amber-200 rounded w-3/4" />
-              <div className="h-3 bg-amber-100 rounded w-full" />
-            </div>
-          ) : tip ? (
-            <div className="space-y-2">
-              {tip.location_tip && (
-                <div className="text-gray-700 leading-relaxed text-sm">
-                  📍 {tip.location_tip}
-                  {tip.location_url && <a href={tip.location_url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline text-xs whitespace-nowrap">↗ bekijk</a>}
-                </div>
-              )}
-              {tip.alternatives?.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-amber-700 mt-2 mb-1">Vergelijkbare hotels:</div>
-                  {tip.alternatives.map((alt, i) => (
-                    <div key={i} className="text-gray-600 text-xs leading-relaxed mb-1">
-                      • <span className="font-medium">{alt.name}</span> — {alt.reason}
-                      {alt.url && <a href={alt.url} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-sky-600 underline whitespace-nowrap">↗ boeken</a>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-gray-400">Tip kon niet worden geladen.</div>
-          )}
         </div>
       )}
     </div>
@@ -3549,8 +3475,8 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
   return (
     <div className="pb-2">
-      {/* Back button — only on desktop */}
-      <button onClick={onBack} className="hidden sm:inline-flex mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity" style={{ color: accent }}>
+      {/* Back button — only on desktop, except for read-only viewers who have no bottom nav */}
+      <button onClick={onBack} className={`${readOnly ? "inline-flex" : "hidden sm:inline-flex"} mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity`} style={{ color: accent }}>
         ← Alle reizen
       </button>
 
@@ -3569,22 +3495,24 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
                 <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
                   {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                  {trip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
                 </div>
                 {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
             </div>
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
-              {!readOnly && tab !== "journal" && (
+              {!readOnly && tab !== "journal" && tab !== "photos" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
                   📧 Planning toevoegen
                 </button>
               )}
-              <div className="flex gap-2 overflow-x-auto">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
-              </div>
+              {tab !== "journal" && tab !== "photos" && (
+                <div className="flex gap-2 overflow-x-auto">
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
+                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -3602,18 +3530,20 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <div className="bg-white px-4 py-3">
               <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
                 {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                {trip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
               </div>
-              {!readOnly && tab !== "journal" && (
+              {!readOnly && tab !== "journal" && tab !== "photos" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
                   📧 Planning toevoegen
                 </button>
               )}
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
-                {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
-                {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
-              </div>
+              {tab !== "journal" && tab !== "photos" && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
+                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
+                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
+                </div>
+              )}
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
           </>
@@ -3621,21 +3551,25 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       </div>
 
       {/* Desktop tabs / mobile: alleen de grote Dagplanning knop */}
-      <div className="hidden sm:block">
-        <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
-      </div>
-      <div className="sm:hidden mb-4">
-        <button onClick={() => setTab("days")}
-          className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
-          style={tab === "days"
-            ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-            : { background: "#f1f5f9", color: "#374151" }}>
-          🗓 Dagplanning
-        </button>
-      </div>
+      {!readOnly && (
+        <>
+          <div className="hidden sm:block">
+            <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+          </div>
+          <div className="sm:hidden mb-4">
+            <button onClick={() => setTab("days")}
+              className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
+              style={tab === "days"
+                ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
+                : { background: "#f1f5f9", color: "#374151" }}>
+              🗓 Dagplanning
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Budget balk */}
-      {trip.budget && (() => {
+      {trip.budget && tab !== "journal" && tab !== "photos" && (() => {
         const transportTotal = transports.reduce((s, t) => s + Number(t.cost || 0), 0);
         const accommodationTotal = accommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
         const activityTotal = days.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
@@ -3672,17 +3606,23 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
         );
       })()}
 
-      {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
-      {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-      {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
-      {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
-      {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
+      {readOnly ? (
+        <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />
+      ) : (
+        <>
+          {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
+          {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
+          {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
+          {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
+        </>
+      )}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
-      {showMoreMenu && (
+      {!readOnly && showMoreMenu && (
         <>
           <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
           <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
@@ -3705,6 +3645,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       )}
 
       {/* Mobile bottom nav */}
+      {!readOnly && (
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-lg" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="flex">
           {bottomNavItems.map((item) => (
@@ -3725,6 +3666,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           </button>
         </div>
       </div>
+      )}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
