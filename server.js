@@ -578,16 +578,17 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
   const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
   // Content hash de-dupes identical photos within a trip: re-uploading the same
-  // bytes reassigns the existing row's target instead of storing a duplicate blob.
+  // bytes reuses the existing row instead of storing a duplicate blob, keeping
+  // its current assignment (day/activity/transport/accommodation) if it has one.
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const { rows } = await query(
     `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
-       day_id = EXCLUDED.day_id,
-       activity_id = EXCLUDED.activity_id,
-       transport_id = EXCLUDED.transport_id,
-       accommodation_id = EXCLUDED.accommodation_id,
+       day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
+       activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
+       transport_id = COALESCE(photos.transport_id, EXCLUDED.transport_id),
+       accommodation_id = COALESCE(photos.accommodation_id, EXCLUDED.accommodation_id),
        caption = COALESCE(photos.caption, EXCLUDED.caption),
        taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
        latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
