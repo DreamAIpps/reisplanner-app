@@ -235,8 +235,10 @@ function serveStatic(res, filePath) {
     if (err) { res.writeHead(404); res.end("Not found"); return; }
     // Never let the browser (esp. iOS standalone PWAs) cache the app shell —
     // without this, a device can silently keep serving an old index.html/app.js
-    // after a fresh deploy.
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache, must-revalidate" });
+    // after a fresh deploy. no-store (not just no-cache) because iOS WKWebView
+    // has been observed serving stale responses from disk cache even when a
+    // revalidation is technically required.
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-store, no-cache, must-revalidate" });
     res.end(data);
   });
 }
