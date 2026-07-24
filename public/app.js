@@ -3435,7 +3435,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
-    { key: "journal", label: "Dagboek", icon: "📖" },
+    ...(currentUserId ? [{ key: "journal", label: "Dagboek", icon: "📖" }] : []),
     { key: "photos", label: "Foto's", icon: "📷" },
     { key: "accommodation", label: "Verblijf", icon: "🏨" },
     { key: "transport", label: "Vervoer", icon: "✈️" },
@@ -3445,7 +3445,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   // Bottom nav tabs for mobile
   const bottomNavItems = [
     { key: "days", icon: "🗓", label: "Planning" },
-    { key: "journal", icon: "📖", label: "Dagboek" },
+    ...(currentUserId ? [{ key: "journal", icon: "📖", label: "Dagboek" }] : []),
     { key: "photos", icon: "📷", label: "Foto's" },
     ...(readOnly ? [] : [{ key: "budget", icon: "💰", label: "Budget" }]),
   ];
