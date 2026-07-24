@@ -34,10 +34,25 @@ function sendError(res, status, msg) {
   sendJson(res, status, { error: msg });
 }
 
+// Photos arrive base64-encoded inside JSON (~33% overhead), so the cap has to
+// clear MAX_PHOTO_BYTES with room to spare. Without a cap the whole body is
+// buffered before any size check runs, so one large request can OOM the process.
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        const err = new Error("Verzoek te groot");
+        err.statusCode = 413;
+        req.destroy(err);
+        return reject(err);
+      }
+      chunks.push(c);
+    });
     req.on("end", () => {
       if (!chunks.length) return resolve({});
       try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
@@ -176,16 +191,31 @@ async function verifyAppleIdToken(idToken) {
   const jwk = keys.find((k) => k.kid === header.kid);
   if (!jwk) throw new Error(`Apple JWK niet gevonden (kid: ${header.kid})`);
   const pubKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
-  // Verify signature and expiry only — audience validation left to app logic
-  return jwt.verify(idToken, pubKey, { algorithms: ["RS256"] });
+  // Audience MUST be pinned to our own Service ID: an Apple-signed id_token is
+  // only a proof of identity *to the relying party it was minted for*. Without
+  // this check, any site offering "Sign in with Apple" could replay its users'
+  // tokens here and get a session. Issuer is pinned for the same reason.
+  const audience = process.env.APPLE_CLIENT_ID;
+  if (!audience) throw new Error("APPLE_CLIENT_ID niet geconfigureerd");
+  return jwt.verify(idToken, pubKey, {
+    algorithms: ["RS256"],
+    audience,
+    issuer: "https://appleid.apple.com",
+  });
 }
 
 // ---------- Router ----------
 const routes = [];
-// `tripScope` declares how to resolve the trip a write request belongs to, so the
-// dispatcher can reject it for viewer-role (read-only) members before the handler runs:
+// `tripScope` declares how to resolve the trip a request belongs to, so the
+// dispatcher can authorise it before the handler runs. On writes it also rejects
+// viewer-role (read-only) members; on reads it rejects non-members outright.
 //   "param"   — the route's own :id IS the trip id (e.g. POST /api/trips/:id/days)
 //   "<table>" — look up trip_id from that table using the route's :id (e.g. "activities")
+// Only tables named here may be interpolated into resolveTripId's SQL.
+const TRIP_SCOPE_TABLES = new Set([
+  "days", "activities", "accommodations", "transports",
+  "photos", "journal_entries", "expenses", "packing_items",
+]);
 function route(method, pattern, handler, opts) {
   const keys = [];
   const re = new RegExp("^" + pattern.replace(/:([^/]+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
@@ -215,8 +245,10 @@ async function getTripRole(tripId, userId) {
   return rows[0]?.role || null;
 }
 
-async function resolveTripIdForWrite(tripScope, params) {
-  if (tripScope === "param") return params.id;
+async function resolveTripId(tripScope, params) {
+  if (tripScope === "param") return /^\d+$/.test(params.id) ? params.id : null;
+  if (!TRIP_SCOPE_TABLES.has(tripScope)) throw new Error(`Unknown tripScope: ${tripScope}`);
+  if (!/^\d+$/.test(params.id)) return null;
   const { rows } = await query(`SELECT trip_id FROM ${tripScope} WHERE id = $1`, [params.id]);
   return rows[0]?.trip_id || null;
 }
@@ -340,17 +372,13 @@ route("GET", "/api/trips", async (req, res) => {
   const { rows } = await query(`
     SELECT t.*, (t.user_id = $1) as is_owner,
       CASE WHEN t.user_id = $1 THEN 'owner' ELSE COALESCE(tm.role, 'editor') END as role,
-      COALESCE(SUM(e.amount), 0) as total_spent,
-      COUNT(DISTINCT a.id) as activity_count
+      (SELECT COUNT(*) FROM activities a WHERE a.trip_id = t.id) as activity_count
     FROM trips t
     LEFT JOIN trip_members tm ON tm.trip_id = t.id AND tm.user_id = $1
-    LEFT JOIN expenses e ON e.trip_id = t.id
-    LEFT JOIN activities a ON a.trip_id = t.id
     WHERE t.user_id = $1 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = t.id AND user_id = $1)
-    GROUP BY t.id, tm.role
     ORDER BY t.start_date DESC NULLS LAST, t.created_at DESC
   `, [req.user.id]);
-  sendJson(res, 200, rows.map((r) => stripCosts(r.role, r, ["budget", "total_spent"])));
+  sendJson(res, 200, rows.map((r) => stripCosts(r.role, r, ["budget"])));
 });
 
 route("GET", "/api/trips/:id", async (req, res, params) => {
@@ -403,12 +431,12 @@ route("DELETE", "/api/trips/:id", async (req, res, params) => {
 
 // ---------- Days & activities ----------
 route("GET", "/api/trips/:id/days", async (req, res, params) => {
-  const role = await getTripRole(params.id, req.user.id);
+  const role = req.tripRole;
   const { rows: days } = await query("SELECT * FROM days WHERE trip_id = $1 ORDER BY date ASC", [params.id]);
   const { rows: acts } = await query("SELECT * FROM activities WHERE trip_id = $1 ORDER BY time ASC NULLS LAST, id ASC", [params.id]);
   const result = days.map((d) => ({ ...d, activities: acts.filter((a) => a.day_id === d.id).map((a) => stripCosts(role, a, ["cost"])) }));
   sendJson(res, 200, result);
-});
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/days", async (req, res, params, body) => {
   const { date, title, notes } = body;
@@ -474,10 +502,9 @@ function checkDateInRange(dateStr, tripStart, tripEnd) {
 
 // ---------- Accommodation ----------
 route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
-  const role = await getTripRole(params.id, req.user.id);
   const { rows } = await query("SELECT * FROM accommodations WHERE trip_id = $1 ORDER BY check_in ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows.map((r) => stripCosts(role, r, ["cost"])));
-});
+  sendJson(res, 200, rows.map((r) => stripCosts(req.tripRole, r, ["cost"])));
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
   const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
@@ -508,10 +535,9 @@ route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
 
 // ---------- Transport ----------
 route("GET", "/api/trips/:id/transports", async (req, res, params) => {
-  const role = await getTripRole(params.id, req.user.id);
   const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows.map((r) => stripCosts(role, r, ["cost"])));
-});
+  sendJson(res, 200, rows.map((r) => stripCosts(req.tripRole, r, ["cost"])));
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
   const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
@@ -542,6 +568,12 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
 
 // ---------- Photos ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+// Only these are ever echoed back as Content-Type — an upload may claim any
+// mediaType, and serving e.g. "text/html" from this origin would be stored XSS.
+const SAFE_IMAGE_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "image/heic", "image/heif", "image/avif",
+]);
 
 // iPhones upload photos as HEIC/HEIF, which most browsers (and even iOS
 // WKWebView-hosted PWAs in some cases) can't decode in an <img> tag. Convert
@@ -570,7 +602,7 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
     [params.id]
   );
   sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw` })));
-});
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, image, caption, taken_at, latitude, longitude } = body;
@@ -605,10 +637,25 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw` });
 }, { tripScope: "param" });
 
+// Persist a converted photo. Changing the bytes changes the content hash, which
+// can collide with an existing row under photos_trip_hash_unique (e.g. the same
+// picture was re-uploaded after the converter started working). Falling back to
+// a NULL hash — excluded from the partial index — keeps the converted JPEG
+// instead of leaving the row as HEIC and re-converting it on every single view.
+async function persistConvertedPhoto(id, mediaType, buffer) {
+  const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
+  try {
+    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, id]);
+  } catch (err) {
+    if (err.code !== "23505") throw err;
+    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=NULL WHERE id=$3", [mediaType, buffer, id]);
+  }
+}
+
 route("GET", "/api/photos/:id/raw", async (req, res, params) => {
-  const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+  const { rows } = await query("SELECT data, mime_type, content_hash FROM photos WHERE id = $1", [params.id]);
   if (!rows.length) { res.writeHead(404); res.end(); return; }
-  let { data, mime_type } = rows[0];
+  let { data, mime_type, content_hash } = rows[0];
   // Safety net: convert on first view for any HEIC photo the upload-time
   // conversion or startup backfill missed (e.g. a legacy row whose stored
   // mime_type didn't look HEIC even though its bytes are), and persist the
@@ -619,17 +666,24 @@ route("GET", "/api/photos/:id/raw", async (req, res, params) => {
       if (converted.mediaType !== mime_type) {
         data = converted.buffer;
         mime_type = converted.mediaType;
-        const contentHash = crypto.createHash("md5").update(data).digest("hex");
-        query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mime_type, data, contentHash, params.id])
+        content_hash = null;
+        await persistConvertedPhoto(params.id, mime_type, data)
           .catch((err) => console.error(`Failed to persist HEIC conversion for photo ${params.id}:`, err.message));
       }
     } catch (err) {
       console.error(`On-the-fly HEIC conversion failed for photo ${params.id}:`, err.message);
     }
   }
-  res.writeHead(200, { "Content-Type": mime_type, "Cache-Control": "private, max-age=31536000" });
+  // mime_type is attacker-supplied at upload time; echoing it verbatim would let
+  // a stored "text/html" photo execute script on this origin.
+  const contentType = SAFE_IMAGE_TYPES.has(mime_type) ? mime_type : "application/octet-stream";
+  const etag = content_hash ? `"${content_hash}"` : null;
+  if (etag && req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
+  const headers = { "Content-Type": contentType, "Content-Length": data.length, "Cache-Control": "private, max-age=31536000" };
+  if (etag) headers.ETag = etag;
+  res.writeHead(200, headers);
   res.end(data);
-});
+}, { tripScope: "photos" });
 
 route("PUT", "/api/photos/:id", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id } = body;
@@ -667,7 +721,7 @@ route("GET", "/api/trips/:id/journal", async (req, res, params) => {
     const { given_name, user_name, ...entry } = r;
     return { ...entry, author: firstName({ given_name, name: user_name }) };
   }));
-});
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, title, body: text } = body;
@@ -734,13 +788,13 @@ route("POST", "/auth/register", async (req, res, params, body) => {
   const token = await createSession(userId);
   setSessionCookie(res, token);
   const cookies = parseCookies(req);
-  const inviteToken = cookies["invite_token"];
+  const inviteToken = cookies["invite"];
   if (inviteToken) {
     const inv = await query("SELECT trip_id, role FROM trip_invites WHERE token = $1", [inviteToken]);
     if (inv.rows.length > 0) {
       await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, userId, inv.rows[0].role]);
     }
-    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
+    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite=; Path=/; Max-Age=0; HttpOnly"]);
   }
   sendJson(res, 200, { ok: true });
 });
@@ -757,13 +811,13 @@ route("POST", "/auth/login/password", async (req, res, params, body) => {
   const token = await createSession(user.id);
   setSessionCookie(res, token);
   const cookies = parseCookies(req);
-  const inviteToken = cookies["invite_token"];
+  const inviteToken = cookies["invite"];
   if (inviteToken) {
     const inv = await query("SELECT trip_id, role FROM trip_invites WHERE token = $1", [inviteToken]);
     if (inv.rows.length > 0) {
       await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, user.id, inv.rows[0].role]);
     }
-    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
+    res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite=; Path=/; Max-Age=0; HttpOnly"]);
   }
   sendJson(res, 200, { ok: true });
 });
@@ -1120,11 +1174,10 @@ Only include items actually present. Use null for missing values. Return empty a
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
-  const role = await getTripRole(params.id, req.user.id);
-  if (role === "viewer") return sendJson(res, 200, []);
+  if (req.tripRole === "viewer") return sendJson(res, 200, []);
   const { rows } = await query("SELECT * FROM expenses WHERE trip_id = $1 ORDER BY date ASC NULLS LAST, id ASC", [params.id]);
   sendJson(res, 200, rows);
-});
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/expenses", async (req, res, params, body) => {
   const { date, category, description, amount, paid_by } = body;
@@ -1153,7 +1206,7 @@ route("DELETE", "/api/expenses/:id", async (req, res, params) => {
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM packing_items WHERE trip_id = $1 ORDER BY category, created_at ASC", [params.id]);
   sendJson(res, 200, rows);
-});
+}, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/packing", async (req, res, params, body) => {
   const { category, item } = body;
@@ -1188,9 +1241,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")) {
-    const match = matchRoute(req.method, pathname);
-    if (!match) { res.writeHead(404); res.end(); return; }
     try {
+      // matchRoute percent-decodes path params and throws URIError on malformed
+      // input (e.g. "/invite/%"), so it must stay inside the try — an escaped
+      // rejection from this async handler would terminate the process.
+      const match = matchRoute(req.method, pathname);
+      if (!match) { res.writeHead(404); res.end(); return; }
       let body = {};
       if (["POST", "PUT", "PATCH"].includes(req.method)) {
         const raw = await new Promise((resolve, reject) => {
@@ -1214,23 +1270,30 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname.startsWith("/api/")) {
-    const user = await getSession(req);
-    if (!user) { sendError(res, 401, "Niet ingelogd"); return; }
-    const match = matchRoute(req.method, pathname);
-    if (!match) { sendError(res, 404, "Not found"); return; }
     try {
+      // getSession hits the DB and matchRoute can throw URIError on malformed
+      // percent-encoding; both must stay inside the try so a transient DB error
+      // or a crafted URL returns 500 instead of killing the process.
+      const user = await getSession(req);
+      if (!user) { sendError(res, 401, "Niet ingelogd"); return; }
+      const match = matchRoute(req.method, pathname);
+      if (!match) { sendError(res, 404, "Not found"); return; }
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
       req.user = user;
-      if (match.tripScope && req.method !== "GET") {
-        const tripId = await resolveTripIdForWrite(match.tripScope, match.params);
+      if (match.tripScope) {
+        const tripId = await resolveTripId(match.tripScope, match.params);
         const role = tripId ? await getTripRole(tripId, user.id) : null;
+        // Reads require membership; writes additionally require more than viewer.
         if (!role) return sendError(res, 403, "Geen toegang tot deze reis");
-        if (role === "viewer") return sendError(res, 403, "Alleen-lezen toegang: wijzigen kan niet");
+        if (role === "viewer" && req.method !== "GET") {
+          return sendError(res, 403, "Alleen-lezen toegang: wijzigen kan niet");
+        }
+        req.tripRole = role;
       }
       await match.handler(req, res, match.params, body);
     } catch (err) {
       console.error(err);
-      sendError(res, 500, err.message);
+      if (!res.headersSent) sendError(res, err.statusCode || 500, err.message);
     }
     return;
   }
