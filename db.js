@@ -70,15 +70,27 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS trip_members (
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'editor',
       PRIMARY KEY (trip_id, user_id)
     );
+    ALTER TABLE trip_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
 
     CREATE TABLE IF NOT EXISTS trip_invites (
       token TEXT PRIMARY KEY,
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
       created_by INTEGER NOT NULL REFERENCES users(id),
+      role TEXT NOT NULL DEFAULT 'editor',
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE trip_invites ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
+
+    CREATE TABLE IF NOT EXISTS trip_views (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      viewed_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS trip_views_trip_idx ON trip_views(trip_id, viewed_at);
 
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,

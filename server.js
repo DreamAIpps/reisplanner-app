@@ -129,7 +129,7 @@ async function handlePostLogin(req, res, user) {
   if (invite) {
     const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [invite]);
     if (rows.length) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
+      await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id, rows[0].role]);
       redirect = `/?trip=${rows[0].trip_id}`;
     }
     cookies.push("invite=; HttpOnly; Path=/; Max-Age=0");
@@ -181,10 +181,14 @@ async function verifyAppleIdToken(idToken) {
 
 // ---------- Router ----------
 const routes = [];
-function route(method, pattern, handler) {
+// `tripScope` declares how to resolve the trip a write request belongs to, so the
+// dispatcher can reject it for viewer-role (read-only) members before the handler runs:
+//   "param"   — the route's own :id IS the trip id (e.g. POST /api/trips/:id/days)
+//   "<table>" — look up trip_id from that table using the route's :id (e.g. "activities")
+function route(method, pattern, handler, opts) {
   const keys = [];
   const re = new RegExp("^" + pattern.replace(/:([^/]+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
-  routes.push({ method, re, keys, handler });
+  routes.push({ method, re, keys, handler, tripScope: opts?.tripScope });
 }
 
 function matchRoute(method, pathname) {
@@ -194,9 +198,33 @@ function matchRoute(method, pathname) {
     if (!m) continue;
     const params = {};
     r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
-    return { handler: r.handler, params };
+    return { handler: r.handler, params, tripScope: r.tripScope };
   }
   return null;
+}
+
+// ---------- Trip role resolution (owner / editor / viewer / none) ----------
+async function getTripRole(tripId, userId) {
+  const { rows } = await query(
+    `SELECT CASE WHEN t.user_id = $2 THEN 'owner' ELSE tm.role END AS role
+     FROM trips t LEFT JOIN trip_members tm ON tm.trip_id = t.id AND tm.user_id = $2
+     WHERE t.id = $1`,
+    [tripId, userId]
+  );
+  return rows[0]?.role || null;
+}
+
+async function resolveTripIdForWrite(tripScope, params) {
+  if (tripScope === "param") return params.id;
+  const { rows } = await query(`SELECT trip_id FROM ${tripScope} WHERE id = $1`, [params.id]);
+  return rows[0]?.trip_id || null;
+}
+
+function stripCosts(role, row, fields) {
+  if (role !== "viewer" || !row) return row;
+  const copy = { ...row };
+  fields.forEach((f) => { copy[f] = null; });
+  return copy;
 }
 
 // ---------- Static files ----------
@@ -225,17 +253,43 @@ route("GET", "/invite/:token", async (req, res, params) => {
     return;
   }
 
-  await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id]);
+  await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [rows[0].trip_id, user.id, rows[0].role]);
   res.writeHead(302, { Location: `/?trip=${rows[0].trip_id}` });
   res.end();
 });
 
-route("POST", "/api/trips/:id/invite", async (req, res, params) => {
+route("POST", "/api/trips/:id/invite", async (req, res, params, body) => {
   const { rows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   if (!rows.length) return sendError(res, 403, "Alleen de eigenaar kan uitnodigen");
+  const role = body?.role === "viewer" ? "viewer" : "editor";
   const token = crypto.randomBytes(16).toString("hex");
-  await query("INSERT INTO trip_invites (token, trip_id, created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [token, params.id, req.user.id]);
-  sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}` });
+  await query("INSERT INTO trip_invites (token, trip_id, created_by, role) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", [token, params.id, req.user.id, role]);
+  sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}`, role });
+});
+
+route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
+  const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan dit inzien");
+
+  const { rows: members } = await query(
+    `SELECT u.id, u.name, u.given_name, u.email, u.avatar, tm.role,
+       (SELECT COUNT(*) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) as view_count,
+       (SELECT MAX(viewed_at) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) as last_viewed_at
+     FROM trip_members tm JOIN users u ON u.id = tm.user_id
+     WHERE tm.trip_id = $1
+     ORDER BY tm.role ASC, u.name ASC NULLS LAST`,
+    [params.id]
+  );
+  const { rows: countRows } = await query(
+    `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE viewed_at > NOW() - INTERVAL '24 hours') as last_24h
+     FROM trip_views WHERE trip_id = $1`,
+    [params.id]
+  );
+  sendJson(res, 200, {
+    members: members.map((m) => ({ ...m, view_count: Number(m.view_count) })),
+    total_views: Number(countRows[0].total),
+    views_24h: Number(countRows[0].last_24h),
+  });
 });
 
 // ---------- Admin routes ----------
@@ -282,25 +336,30 @@ route("GET", "/api/admin/trips", async (req, res) => {
 route("GET", "/api/trips", async (req, res) => {
   const { rows } = await query(`
     SELECT t.*, (t.user_id = $1) as is_owner,
+      CASE WHEN t.user_id = $1 THEN 'owner' ELSE COALESCE(tm.role, 'editor') END as role,
       COALESCE(SUM(e.amount), 0) as total_spent,
       COUNT(DISTINCT a.id) as activity_count
     FROM trips t
+    LEFT JOIN trip_members tm ON tm.trip_id = t.id AND tm.user_id = $1
     LEFT JOIN expenses e ON e.trip_id = t.id
     LEFT JOIN activities a ON a.trip_id = t.id
     WHERE t.user_id = $1 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = t.id AND user_id = $1)
-    GROUP BY t.id
+    GROUP BY t.id, tm.role
     ORDER BY t.start_date DESC NULLS LAST, t.created_at DESC
   `, [req.user.id]);
-  sendJson(res, 200, rows);
+  sendJson(res, 200, rows.map((r) => stripCosts(r.role, r, ["budget", "total_spent"])));
 });
 
 route("GET", "/api/trips/:id", async (req, res, params) => {
   const { rows } = await query(
-    "SELECT *, (user_id = $2) as is_owner FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))",
+    `SELECT t.*, (t.user_id = $2) as is_owner, CASE WHEN t.user_id = $2 THEN 'owner' ELSE tm.role END as role
+     FROM trips t LEFT JOIN trip_members tm ON tm.trip_id = t.id AND tm.user_id = $2
+     WHERE t.id = $1 AND (t.user_id = $2 OR tm.user_id = $2)`,
     [params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
-  sendJson(res, 200, rows[0]);
+  if (rows[0].role === "viewer") await query("INSERT INTO trip_views (trip_id, user_id) VALUES ($1, $2)", [params.id, req.user.id]);
+  sendJson(res, 200, stripCosts(rows[0].role, rows[0], ["budget"]));
 });
 
 route("POST", "/api/trips", async (req, res, params, body) => {
@@ -332,18 +391,19 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "param" });
 
 route("DELETE", "/api/trips/:id", async (req, res, params) => {
   await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "param" });
 
 // ---------- Days & activities ----------
 route("GET", "/api/trips/:id/days", async (req, res, params) => {
+  const role = await getTripRole(params.id, req.user.id);
   const { rows: days } = await query("SELECT * FROM days WHERE trip_id = $1 ORDER BY date ASC", [params.id]);
   const { rows: acts } = await query("SELECT * FROM activities WHERE trip_id = $1 ORDER BY time ASC NULLS LAST, id ASC", [params.id]);
-  const result = days.map((d) => ({ ...d, activities: acts.filter((a) => a.day_id === d.id) }));
+  const result = days.map((d) => ({ ...d, activities: acts.filter((a) => a.day_id === d.id).map((a) => stripCosts(role, a, ["cost"])) }));
   sendJson(res, 200, result);
 });
 
@@ -354,18 +414,18 @@ route("POST", "/api/trips/:id/days", async (req, res, params, body) => {
     [params.id, date, title||null, notes||null]
   );
   sendJson(res, 201, { ...rows[0], activities: [] });
-});
+}, { tripScope: "param" });
 
 route("PUT", "/api/days/:id", async (req, res, params, body) => {
   const { title, notes } = body;
   const { rows } = await query("UPDATE days SET title=$1, notes=$2 WHERE id=$3 RETURNING *", [title||null, notes||null, params.id]);
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "days" });
 
 route("DELETE", "/api/days/:id", async (req, res, params) => {
   await query("DELETE FROM days WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "days" });
 
 route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
   const { trip_id, time, title, location, notes, category, cost } = body;
@@ -374,7 +434,7 @@ route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
     [params.id, trip_id, time||null, title, location||null, notes||null, category||"activity", cost||null]
   );
   sendJson(res, 201, rows[0]);
-});
+}, { tripScope: "days" });
 
 route("PUT", "/api/activities/:id", async (req, res, params, body) => {
   const { time, title, location, notes, category, cost } = body;
@@ -383,12 +443,12 @@ route("PUT", "/api/activities/:id", async (req, res, params, body) => {
     [time||null, title, location||null, notes||null, category||"activity", cost||null, params.id]
   );
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "activities" });
 
 route("DELETE", "/api/activities/:id", async (req, res, params) => {
   await query("DELETE FROM activities WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "activities" });
 
 // ---------- Date validation helper ----------
 function checkDateInRange(dateStr, tripStart, tripEnd) {
@@ -404,8 +464,9 @@ function checkDateInRange(dateStr, tripStart, tripEnd) {
 
 // ---------- Accommodation ----------
 route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
+  const role = await getTripRole(params.id, req.user.id);
   const { rows } = await query("SELECT * FROM accommodations WHERE trip_id = $1 ORDER BY check_in ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows);
+  sendJson(res, 200, rows.map((r) => stripCosts(role, r, ["cost"])));
 });
 
 route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
@@ -419,7 +480,7 @@ route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) =>
     [params.id, name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null]
   );
   sendJson(res, 201, rows[0]);
-});
+}, { tripScope: "param" });
 
 route("PUT", "/api/accommodations/:id", async (req, res, params, body) => {
   const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
@@ -428,12 +489,12 @@ route("PUT", "/api/accommodations/:id", async (req, res, params, body) => {
     [name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, params.id]
   );
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "accommodations" });
 
 route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
   await query("DELETE FROM accommodations WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "accommodations" });
 
 route("GET", "/api/accommodations/:id/ai-tip", async (req, res, params) => {
   const { rows } = await query(
@@ -466,8 +527,9 @@ Return ONLY valid JSON, no markdown:
 
 // ---------- Transport ----------
 route("GET", "/api/trips/:id/transports", async (req, res, params) => {
+  const role = await getTripRole(params.id, req.user.id);
   const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows);
+  sendJson(res, 200, rows.map((r) => stripCosts(role, r, ["cost"])));
 });
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
@@ -481,7 +543,7 @@ route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
     [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null]
   );
   sendJson(res, 201, rows[0]);
-});
+}, { tripScope: "param" });
 
 route("PUT", "/api/transports/:id", async (req, res, params, body) => {
   const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
@@ -490,12 +552,12 @@ route("PUT", "/api/transports/:id", async (req, res, params, body) => {
     [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, params.id]
   );
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "transports" });
 
 route("DELETE", "/api/transports/:id", async (req, res, params) => {
   await query("DELETE FROM transports WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "transports" });
 
 // ---------- Photos ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -535,7 +597,7 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   );
   const { inserted, ...photo } = rows[0];
   sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw` });
-});
+}, { tripScope: "param" });
 
 route("GET", "/api/photos/:id/raw", async (req, res, params) => {
   const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
@@ -552,12 +614,12 @@ route("PUT", "/api/photos/:id", async (req, res, params, body) => {
   );
   if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
   sendJson(res, 200, { ...rows[0], url: `/api/photos/${rows[0].id}/raw` });
-});
+}, { tripScope: "photos" });
 
 route("DELETE", "/api/photos/:id", async (req, res, params) => {
   await query("DELETE FROM photos WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "photos" });
 
 // ---------- Journal (dagboek) ----------
 function firstName(user) {
@@ -603,12 +665,12 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
     [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text, req.user.id]
   );
   sendJson(res, 201, { ...rows[0], author });
-});
+}, { tripScope: "param" });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
   await query("DELETE FROM journal_entries WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "journal_entries" });
 
 // ---------- Auth routes ----------
 // ---------- Password helpers ----------
@@ -649,9 +711,9 @@ route("POST", "/auth/register", async (req, res, params, body) => {
   const cookies = parseCookies(req);
   const inviteToken = cookies["invite_token"];
   if (inviteToken) {
-    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
+    const inv = await query("SELECT trip_id, role FROM trip_invites WHERE token = $1", [inviteToken]);
     if (inv.rows.length > 0) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, userId]);
+      await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, userId, inv.rows[0].role]);
     }
     res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
   }
@@ -672,9 +734,9 @@ route("POST", "/auth/login/password", async (req, res, params, body) => {
   const cookies = parseCookies(req);
   const inviteToken = cookies["invite_token"];
   if (inviteToken) {
-    const inv = await query("SELECT trip_id FROM trip_invites WHERE token = $1", [inviteToken]);
+    const inv = await query("SELECT trip_id, role FROM trip_invites WHERE token = $1", [inviteToken]);
     if (inv.rows.length > 0) {
-      await query("INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, user.id]);
+      await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [inv.rows[0].trip_id, user.id, inv.rows[0].role]);
     }
     res.setHeader("Set-Cookie", [...(Array.isArray(res.getHeader("Set-Cookie")) ? res.getHeader("Set-Cookie") : [res.getHeader("Set-Cookie")]), "invite_token=; Path=/; Max-Age=0; HttpOnly"]);
   }
@@ -990,10 +1052,12 @@ Only include items actually present. Use null for missing values. Return empty a
   } catch {
     sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
   }
-});
+}, { tripScope: "param" });
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
+  const role = await getTripRole(params.id, req.user.id);
+  if (role === "viewer") return sendJson(res, 200, []);
   const { rows } = await query("SELECT * FROM expenses WHERE trip_id = $1 ORDER BY date ASC NULLS LAST, id ASC", [params.id]);
   sendJson(res, 200, rows);
 });
@@ -1005,7 +1069,7 @@ route("POST", "/api/trips/:id/expenses", async (req, res, params, body) => {
     [params.id, date||null, category||null, description, amount, paid_by||null]
   );
   sendJson(res, 201, rows[0]);
-});
+}, { tripScope: "param" });
 
 route("PUT", "/api/expenses/:id", async (req, res, params, body) => {
   const { date, category, description, amount, paid_by } = body;
@@ -1014,12 +1078,12 @@ route("PUT", "/api/expenses/:id", async (req, res, params, body) => {
     [date||null, category||null, description, amount, paid_by||null, params.id]
   );
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "expenses" });
 
 route("DELETE", "/api/expenses/:id", async (req, res, params) => {
   await query("DELETE FROM expenses WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "expenses" });
 
 // ---------- Packing list ----------
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {
@@ -1035,7 +1099,7 @@ route("POST", "/api/trips/:id/packing", async (req, res, params, body) => {
     [params.id, category || "Overig", item]
   );
   sendJson(res, 201, rows[0]);
-});
+}, { tripScope: "param" });
 
 route("PUT", "/api/packing/:id", async (req, res, params, body) => {
   const { category, item, checked } = body;
@@ -1044,12 +1108,12 @@ route("PUT", "/api/packing/:id", async (req, res, params, body) => {
     [category ?? null, item ?? null, checked ?? null, params.id]
   );
   sendJson(res, 200, rows[0]);
-});
+}, { tripScope: "packing_items" });
 
 route("DELETE", "/api/packing/:id", async (req, res, params) => {
   await query("DELETE FROM packing_items WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-});
+}, { tripScope: "packing_items" });
 
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
@@ -1093,6 +1157,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
       req.user = user;
+      if (match.tripScope && req.method !== "GET") {
+        const tripId = await resolveTripIdForWrite(match.tripScope, match.params);
+        const role = tripId ? await getTripRole(tripId, user.id) : null;
+        if (!role) return sendError(res, 403, "Geen toegang tot deze reis");
+        if (role === "viewer") return sendError(res, 403, "Alleen-lezen toegang: wijzigen kan niet");
+      }
       await match.handler(req, res, match.params, body);
     } catch (err) {
       console.error(err);
