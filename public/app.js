@@ -1497,10 +1497,13 @@ function JournalEntryBox({ entry, placeholder, onSave, onDelete, photos, photoCa
       ) : entry?.body ? (
         <div onClick={(e) => e.stopPropagation()} className="group">
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{entry.body}</p>
-          <button type="button" onClick={() => setEditing(true)}
-            className="mt-1 text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
-            ✏️ Bewerken
-          </button>
+          <div className="flex items-center gap-2 mt-1">
+            {entry.author && <span className="text-xs text-gray-400">— {entry.author}</span>}
+            <button type="button" onClick={() => setEditing(true)}
+              className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
+              ✏️ Bewerken
+            </button>
+          </div>
         </div>
       ) : (
         <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}

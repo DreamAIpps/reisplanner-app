@@ -560,9 +560,26 @@ route("DELETE", "/api/photos/:id", async (req, res, params) => {
 });
 
 // ---------- Journal (dagboek) ----------
+function firstName(user) {
+  if (!user) return null;
+  if (user.given_name) return user.given_name;
+  if (user.name) return user.name.trim().split(/\s+/)[0];
+  return null;
+}
+
 route("GET", "/api/trips/:id/journal", async (req, res, params) => {
-  const { rows } = await query("SELECT * FROM journal_entries WHERE trip_id = $1 ORDER BY created_at ASC", [params.id]);
-  sendJson(res, 200, rows);
+  const { rows } = await query(
+    `SELECT je.*, u.given_name, u.name AS user_name
+     FROM journal_entries je
+     LEFT JOIN users u ON u.id = je.user_id
+     WHERE je.trip_id = $1
+     ORDER BY je.created_at ASC`,
+    [params.id]
+  );
+  sendJson(res, 200, rows.map((r) => {
+    const { given_name, user_name, ...entry } = r;
+    return { ...entry, author: firstName({ given_name, name: user_name }) };
+  }));
 });
 
 route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
@@ -571,20 +588,21 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const targets = [["day_id", day_id], ["activity_id", activity_id], ["transport_id", transport_id], ["accommodation_id", accommodation_id]].filter(([, v]) => v);
   if (targets.length !== 1) return sendError(res, 400, "Koppel het verhaal aan precies één dag, activiteit, vervoer of verblijf");
   const [col, val] = targets[0];
+  const author = firstName(req.user);
 
   const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1`, [val]);
   if (existing.rows.length) {
     const { rows } = await query(
-      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
-      [title || null, text, existing.rows[0].id]
+      "UPDATE journal_entries SET title=$1, body=$2, user_id=$3, updated_at=NOW() WHERE id=$4 RETURNING *",
+      [title || null, text, req.user.id, existing.rows[0].id]
     );
-    return sendJson(res, 200, rows[0]);
+    return sendJson(res, 200, { ...rows[0], author });
   }
   const { rows } = await query(
-    "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text]
+    "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body, user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text, req.user.id]
   );
-  sendJson(res, 201, rows[0]);
+  sendJson(res, 201, { ...rows[0], author });
 });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
