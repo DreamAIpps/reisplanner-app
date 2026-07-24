@@ -822,7 +822,7 @@ function readExif(file) {
   });
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -830,6 +830,10 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const [dragging, setDragging] = useState(false);
   const touchStart = useRef(null);
   const viewing = viewingIndex != null ? photos[viewingIndex] : null;
+  const canAssign = !readOnly && !!days;
+  const { dayGroups, otherTransports, otherAccommodations } = canAssign
+    ? computeDayGroups(days, transports || [], accommodations || [])
+    : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
 
   function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
   function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
@@ -915,6 +919,12 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     onChange();
   }
 
+  async function handleAssign(photo, value) {
+    await api.updatePhoto(photo.id, assignPhotoPayload(days, value));
+    setViewingIndex(null);
+    onChange();
+  }
+
   return (
     <div className="flex gap-2 overflow-x-auto pb-1" onClick={(e) => e.stopPropagation()}>
       {photos.map((p, i) => (
@@ -940,8 +950,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewing && ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
-          <div className="max-w-full max-h-full flex flex-col items-center gap-2 relative"
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
+          <div className="max-w-full flex flex-col items-center gap-2 relative py-6"
             onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {photos.length > 1 && (
               <>
@@ -955,7 +965,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
                 </button>
               </>
             )}
-            <img src={viewing.url} alt="" className="max-w-full max-h-[75vh] rounded-lg select-none" draggable={false}
+            <img src={viewing.url} alt="" className="max-w-full max-h-[60vh] rounded-lg select-none" draggable={false}
               style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
             {photos.length > 1 && (
               <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>
@@ -963,6 +973,38 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
             {viewing.taken_at && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
                 <span>🕐 {fmtDatetime(viewing.taken_at)}</span>
+              </div>
+            )}
+            {canAssign && (
+              <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2" onClick={(e) => e.stopPropagation()}>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toewijzen aan</label>
+                <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
+                  <option value="">— Niet toegewezen —</option>
+                  {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
+                    <optgroup key={day.id} label={dayOptionLabel(day)}>
+                      <option value={`day:${day.id}`}>Hele dag</option>
+                      {dayT.map((t) => (
+                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                      ))}
+                      {dayA.map((a) => (
+                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                      ))}
+                      {(day.activities || []).map((act) => (
+                        <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
+                    <optgroup label="Overig (geen datum gekoppeld)">
+                      {otherTransports.map((t) => (
+                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                      ))}
+                      {otherAccommodations.map((a) => (
+                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </Select>
               </div>
             )}
           </div>
@@ -1502,7 +1544,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 }
 
 // ---------- Journal (dagboek) ----------
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly }) {
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -1572,7 +1614,8 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
 
       {tripId != null && (photos?.length > 0 || !readOnly) && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly} />
+          <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
+            days={days} transports={transports} accommodations={accommodations} />
           {!readOnly && <ExistingPhotoPicker candidates={photoCandidates || []} onAssign={handleAssignExisting} />}
         </div>
       )}
@@ -1668,7 +1711,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   onDelete={deleteEntry}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
-                  tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
+                  tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                  days={days} transports={transports} accommodations={accommodations} />
 
                 {hasSubItems && (
                   <div className="pt-3 space-y-3 border-t border-gray-50">
@@ -1682,7 +1726,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
-                            tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
+                            tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
                     })}
@@ -1696,7 +1741,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
-                            tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
+                            tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
                     })}
@@ -1711,7 +1757,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onDelete={deleteEntry}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
-                            tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly} />
+                            tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
                     })}
@@ -3008,6 +3055,38 @@ function photoTargetValue(photo) {
   return "";
 }
 
+function computeDayGroups(days, transports, accommodations) {
+  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
+  const dayGroups = days.map((day) => {
+    const dayStr = day.date ? day.date.slice(0, 10) : null;
+    return {
+      day,
+      transports: transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr),
+      accommodations: accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr),
+    };
+  });
+  const matchedTransportIds = new Set(dayGroups.flatMap((g) => g.transports.map((t) => t.id)));
+  const matchedAccommodationIds = new Set(dayGroups.flatMap((g) => g.accommodations.map((a) => a.id)));
+  const otherTransports = transports.filter((t) => !matchedTransportIds.has(t.id));
+  const otherAccommodations = accommodations.filter((a) => !matchedAccommodationIds.has(a.id));
+  return { dayGroups, otherTransports, otherAccommodations };
+}
+
+function assignPhotoPayload(days, value) {
+  const payload = { day_id: null, activity_id: null, transport_id: null, accommodation_id: null };
+  if (!value) return payload;
+  const [type, idStr] = value.split(":");
+  const id = Number(idStr);
+  if (type === "day") payload.day_id = id;
+  else if (type === "activity") {
+    payload.activity_id = id;
+    const day = days.find((d) => (d.activities || []).some((a) => a.id === id));
+    if (day) payload.day_id = day.id;
+  } else if (type === "transport") payload.transport_id = id;
+  else if (type === "accommodation") payload.accommodation_id = id;
+  return payload;
+}
+
 function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3022,18 +3101,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
-  const dayGroups = days.map((day) => {
-    const dayStr = day.date ? day.date.slice(0, 10) : null;
-    return {
-      day,
-      transports: transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr),
-      accommodations: accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr),
-    };
-  });
-  const matchedTransportIds = new Set(dayGroups.flatMap((g) => g.transports.map((t) => t.id)));
-  const matchedAccommodationIds = new Set(dayGroups.flatMap((g) => g.accommodations.map((a) => a.id)));
-  const otherTransports = transports.filter((t) => !matchedTransportIds.has(t.id));
-  const otherAccommodations = accommodations.filter((a) => !matchedAccommodationIds.has(a.id));
+  const { dayGroups, otherTransports, otherAccommodations } = computeDayGroups(days, transports, accommodations);
 
   const todayGroup = dayGroups.find((g) => isoDate(g.day.date) === todayIso());
   const todayPhoto = todayGroup && photos.find((p) => {
@@ -3096,19 +3164,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   }, [viewingIndex, photos.length]);
 
   async function handleAssign(photo, value) {
-    const payload = { day_id: null, activity_id: null, transport_id: null, accommodation_id: null };
-    if (value) {
-      const [type, idStr] = value.split(":");
-      const id = Number(idStr);
-      if (type === "day") payload.day_id = id;
-      else if (type === "activity") {
-        payload.activity_id = id;
-        const day = days.find((d) => (d.activities || []).some((a) => a.id === id));
-        if (day) payload.day_id = day.id;
-      } else if (type === "transport") payload.transport_id = id;
-      else if (type === "accommodation") payload.accommodation_id = id;
-    }
-    const updated = await api.updatePhoto(photo.id, payload);
+    const updated = await api.updatePhoto(photo.id, assignPhotoPayload(days, value));
     setPhotos((prev) => prev.map((p) => (p.id === photo.id ? updated : p)));
   }
 
