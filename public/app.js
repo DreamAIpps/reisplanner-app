@@ -3474,7 +3474,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
               </div>
             </div>
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
-              {!readOnly && (
+              {!readOnly && tab !== "journal" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
                   📧 Planning toevoegen
                 </button>
@@ -3503,7 +3503,7 @@ function TripDetail({ tripId, onBack, onChanged }) {
                 {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
                 {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
               </div>
-              {!readOnly && (
+              {!readOnly && tab !== "journal" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
                   📧 Planning toevoegen
                 </button>
