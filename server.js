@@ -440,10 +440,17 @@ route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
 }, { tripScope: "days" });
 
 route("PUT", "/api/activities/:id", async (req, res, params, body) => {
-  const { time, title, location, notes, category, cost } = body;
+  const { day_id, time, title, location, notes, category, cost } = body;
+  if (day_id) {
+    const { rows: valid } = await query(
+      "SELECT 1 FROM activities a JOIN days d ON d.id = $2 WHERE a.id = $1 AND d.trip_id = a.trip_id",
+      [params.id, day_id]
+    );
+    if (!valid.length) return sendError(res, 400, "Ongeldige dag voor deze reis");
+  }
   const { rows } = await query(
-    "UPDATE activities SET time=$1, title=$2, location=$3, notes=$4, category=$5, cost=$6 WHERE id=$7 RETURNING *",
-    [time||null, title, location||null, notes||null, category||"activity", cost||null, params.id]
+    "UPDATE activities SET day_id=COALESCE($1, day_id), time=$2, title=$3, location=$4, notes=$5, category=$6, cost=$7 WHERE id=$8 RETURNING *",
+    [day_id || null, time||null, title, location||null, notes||null, category||"activity", cost||null, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "activities" });

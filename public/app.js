@@ -551,8 +551,12 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly }) {
-  const [form, setForm] = useState(initial || { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "" });
+function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly }) {
+  const [form, setForm] = useState(() => {
+    if (initial) return initial;
+    const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso());
+    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", day_id: todayDay ? todayDay.id : dayId };
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -561,7 +565,7 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
     try {
       const saved = initial?.id
         ? await api.updateActivity(initial.id, form)
-        : await api.addActivity(dayId, { ...form, trip_id: tripId });
+        : await api.addActivity(form.day_id || dayId, { ...form, trip_id: tripId });
       onSaved(saved);
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
@@ -582,6 +586,13 @@ function ActivityForm({ dayId, tripId, initial, onSaved, onClose, onImport, onDe
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
+        {days?.length > 0 && (
+          <Field label="Datum">
+            <Select value={form.day_id} onChange={set("day_id")} disabled={readOnly}>
+              {days.map((d) => <option key={d.id} value={d.id}>{dayOptionLabel(d)}</option>)}
+            </Select>
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Tijd"><Input type="time" value={form.time} onChange={set("time")} disabled={readOnly} /></Field>
           <Field label="Categorie">
@@ -1514,13 +1525,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           onUploaded={loadPhotos} />
       )}
       {showActivityForm && (
-        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id}
+        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id} days={days}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
           onClose={() => setShowActivityForm(null)}
           onImport={() => { setShowActivityForm(null); setImporting(true); }} />
       )}
       {editingActivity && (
-        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity}
+        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity} days={days}
           photos={tripPhotos} onPhotosChange={loadPhotos}
           journalEntries={tripJournal.filter((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
