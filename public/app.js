@@ -893,18 +893,18 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       {photos.map((p, i) => (
         <div key={p.id} className="relative shrink-0 group">
           <img src={p.url} alt="" onClick={() => setViewingIndex(i)}
-            className="w-16 h-16 rounded-lg object-cover cursor-pointer border border-gray-100" />
+            className="w-24 h-24 rounded-lg object-cover cursor-pointer border border-gray-100" />
           {p.latitude != null && p.longitude != null && (
-            <span className="absolute bottom-0.5 left-0.5 text-[9px] leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
+            <span className="absolute bottom-0.5 left-0.5 text-xs leading-none bg-black/50 text-white rounded px-1 py-0.5">📍</span>
           )}
           <button type="button" onClick={() => handleDelete(p.id)}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white shadow text-red-500 text-xs leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
+            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow text-red-500 text-sm leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center">
             ×
           </button>
         </div>
       ))}
       <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-        className="shrink-0 w-16 h-16 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-xl transition-colors">
+        className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
         {uploading ? "…" : "＋"}
       </button>
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
@@ -968,7 +968,7 @@ function ExistingPhotoPicker({ candidates, onAssign }) {
         <div className="flex gap-2 overflow-x-auto pt-2 pb-1">
           {candidates.map((p) => (
             <button key={p.id} type="button" disabled={assigning === p.id} onClick={() => handlePick(p)}
-              className="shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-gray-100 hover:ring-2 hover:ring-sky-400 transition-all disabled:opacity-50">
+              className="shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-gray-100 hover:ring-2 hover:ring-sky-400 transition-all disabled:opacity-50">
               <img src={p.url} alt="" className="w-full h-full object-cover" />
             </button>
           ))}
@@ -1084,9 +1084,9 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
             {items.map((it) => (
               <div key={it.key} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
                 {it.dataUrl ? (
-                  <img src={it.dataUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                  <img src={it.dataUrl} alt="" className="w-20 h-20 rounded-lg object-cover shrink-0" />
                 ) : (
-                  <div className="w-14 h-14 rounded-lg bg-red-50 flex items-center justify-center text-red-400 text-lg shrink-0">⚠</div>
+                  <div className="w-20 h-20 rounded-lg bg-red-50 flex items-center justify-center text-red-400 text-xl shrink-0">⚠</div>
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-gray-700 truncate">{it.name}</div>
@@ -2947,7 +2947,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
           <div className="text-sm mt-1">Upload foto's via een dag, activiteit, vervoer of verblijf</div>
         </div>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {photos.map((p, i) => {
             const assignment = photoAssignmentInfo(p, days, transports, accommodations);
             return (
@@ -2956,11 +2956,11 @@ function PhotoGalleryTab({ trip, days, transports, accommodations }) {
                 <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 {assignment ? (
-                  <div className="absolute bottom-1 left-1 right-1 text-white text-[10px] font-medium truncate flex items-center gap-1">
+                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white text-xs font-medium truncate flex items-center gap-1">
                     <span className="shrink-0">{assignment.icon}</span><span className="truncate">{assignment.text}</span>
                   </div>
                 ) : (
-                  <div className="absolute bottom-1 left-1 right-1 text-amber-200 text-[10px] font-semibold">Niet toegewezen</div>
+                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-amber-200 text-xs font-semibold">Niet toegewezen</div>
                 )}
               </button>
             );
