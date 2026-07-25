@@ -4,7 +4,6 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
-const heicConvert = require("heic-convert");
 // sharp is a native module. If its prebuilt binary is unavailable on the host it
 // must not take the whole app down — it is only used for thumbnails, and there is
 // a pure-JS fallback below. It is an optionalDependency for the same reason: a
@@ -13,6 +12,7 @@ let sharp = null;
 try { sharp = require("sharp"); }
 catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnails:", err.message); }
 const jpegJs = require("jpeg-js");
+const heicDecode = require("heic-decode");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
@@ -663,9 +663,15 @@ function looksLikeHeic(buffer, mediaType) {
 
 async function normalizeImage(buffer, mediaType) {
   if (!looksLikeHeic(buffer, mediaType)) return { buffer, mediaType };
+  const orientation = readHeicOrientation(buffer);
+  // Decode and encode here rather than via heic-convert, so the Exif rotation
+  // can be applied to the pixels in between. The stored JPEG carries no Exif of
+  // its own, so if the rotation is not baked in now it is lost for good.
   try {
-    const jpegBuffer = await heicConvert({ buffer, format: "JPEG", quality: 0.9 });
-    return { buffer: Buffer.from(jpegBuffer), mediaType: "image/jpeg" };
+    const img = await heicDecode({ buffer });
+    const oriented = applyOrientation(Buffer.from(img.data), img.width, img.height, orientation);
+    const jpeg = jpegJs.encode({ data: oriented.data, width: oriented.width, height: oriented.height }, 90).data;
+    return { buffer: Buffer.from(jpeg), mediaType: "image/jpeg" };
   } catch (err) {
     console.error("HEIC conversion failed:", err.message);
     return { buffer, mediaType };
@@ -685,6 +691,31 @@ const THUMB_REV = 1;
 // Phones store portrait shots as landscape pixels plus an EXIF Orientation tag.
 // Browsers honour that tag on the original, but re-encoding drops it, so the
 // rotation has to be baked into the pixels or thumbnails come out sideways.
+// Walks a TIFF/Exif block for the Orientation tag (0x0112).
+function readTiffOrientation(buf, tiff) {
+  if (tiff < 0 || tiff + 8 > buf.length) return 1;
+  const marker = buf.toString("ascii", tiff, tiff + 2);
+  if (marker !== "II" && marker !== "MM") return 1;
+  const le = marker === "II";
+  const u16 = (p) => (le ? buf.readUInt16LE(p) : buf.readUInt16BE(p));
+  const u32 = (p) => (le ? buf.readUInt32LE(p) : buf.readUInt32BE(p));
+  const ifd = tiff + u32(tiff + 4);
+  if (ifd + 2 > buf.length) return 1;
+  const count = u16(ifd);
+  for (let i = 0; i < count; i++) {
+    const e = ifd + 2 + i * 12;
+    if (e + 12 > buf.length) break;
+    if (u16(e) !== 0x0112) continue;
+    // SHORT sits in the first two bytes of the value field; LONG spans four.
+    // Reading a big-endian LONG as a 16-bit word picks up the high half — zero —
+    // and silently reported "no rotation".
+    const type = u16(e + 2);
+    const value = type === 4 ? u32(e + 8) : u16(e + 8);
+    return value >= 1 && value <= 8 ? value : 1;
+  }
+  return 1;
+}
+
 function readExifOrientation(buf) {
   if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return 1;
   let off = 2;
@@ -693,25 +724,24 @@ function readExifOrientation(buf) {
     const marker = buf[off + 1];
     const size = buf.readUInt16BE(off + 2);
     if (marker === 0xe1 && buf.toString("ascii", off + 4, off + 10) === "Exif\0\0") {
-      const tiff = off + 10;
-      if (tiff + 8 > buf.length) return 1;
-      const le = buf.toString("ascii", tiff, tiff + 2) === "II";
-      const u16 = (p) => (le ? buf.readUInt16LE(p) : buf.readUInt16BE(p));
-      const u32 = (p) => (le ? buf.readUInt32LE(p) : buf.readUInt32BE(p));
-      const ifd = tiff + u32(tiff + 4);
-      if (ifd + 2 > buf.length) return 1;
-      const count = u16(ifd);
-      for (let i = 0; i < count; i++) {
-        const e = ifd + 2 + i * 12;
-        if (e + 12 > buf.length) break;
-        if (u16(e) === 0x0112) return u16(e + 8) || 1;
-      }
-      return 1;
+      return readTiffOrientation(buf, off + 10);
     }
     if (marker === 0xda) break; // start of scan; no EXIF before the image data
     off += 2 + size;
   }
   return 1;
+}
+
+// iPhones record a HEIC's rotation in its embedded Exif, not as a container
+// transform, and libheif only applies the latter — so a straight decode yields
+// sideways pixels. Locate the Exif block in the HEIF boxes and read it.
+function readHeicOrientation(buf) {
+  const tag = buf.indexOf(Buffer.from("Exif\0\0", "binary"));
+  if (tag >= 0) return readTiffOrientation(buf, tag + 6);
+  const ii = buf.indexOf(Buffer.from([0x49, 0x49, 0x2a, 0x00]));
+  const mm = buf.indexOf(Buffer.from([0x4d, 0x4d, 0x00, 0x2a]));
+  const tiff = ii >= 0 && (mm < 0 || ii < mm) ? ii : mm;
+  return readTiffOrientation(buf, tiff);
 }
 
 // Applies EXIF orientations 1-8 to an RGBA buffer.
@@ -913,6 +943,42 @@ route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
   if (etag) headers.ETag = etag;
   res.writeHead(200, headers);
   res.end(thumb);
+}, { tripScope: "photos" });
+
+// Rotate a stored photo a quarter turn. HEIC uploads converted before the Exif
+// rotation was applied are stored sideways with no orientation tag left to read,
+// so there is nothing to detect and correct automatically — this lets them be
+// fixed without re-uploading.
+route("POST", "/api/photos/:id/rotate", async (req, res, params, body) => {
+  const quarterTurns = ((Number(body?.turns) || 1) % 4 + 4) % 4;
+  if (!quarterTurns) return sendJson(res, 200, { ok: true });
+  const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+  if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
+  let { data, mime_type } = rows[0];
+  if (looksLikeHeic(data, mime_type)) {
+    const converted = await normalizeImage(data, mime_type);
+    data = converted.buffer; mime_type = converted.mediaType;
+  }
+  try {
+    const img = jpegJs.decode(data, { useTArray: true });
+    // Orientation 6 is a quarter turn clockwise; apply it as many times as asked.
+    let cur = { data: Buffer.from(img.data), width: img.width, height: img.height };
+    for (let i = 0; i < quarterTurns; i++) cur = applyOrientation(cur.data, cur.width, cur.height, 6);
+    const rotated = Buffer.from(jpegJs.encode({ data: cur.data, width: cur.width, height: cur.height }, 90).data);
+    const contentHash = crypto.createHash("md5").update(rotated).digest("hex");
+    try {
+      await query("UPDATE photos SET data=$1, mime_type='image/jpeg', content_hash=$2, thumb_data=NULL, thumb_rev=0 WHERE id=$3",
+        [rotated, contentHash, params.id]);
+    } catch (err) {
+      if (err.code !== "23505") throw err;
+      await query("UPDATE photos SET data=$1, mime_type='image/jpeg', content_hash=NULL, thumb_data=NULL, thumb_rev=0 WHERE id=$2",
+        [rotated, params.id]);
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error(`Rotating photo ${params.id} failed:`, err.message);
+    sendError(res, 500, "Foto kon niet gedraaid worden");
+  }
 }, { tripScope: "photos" });
 
 route("PUT", "/api/photos/:id", async (req, res, params, body) => {
@@ -1694,7 +1760,7 @@ const server = http.createServer(async (req, res) => {
 
 // Legacy HEIC photos and missing thumbnails are repaired lazily on first view
 // by the /raw and /thumb handlers, so there is deliberately no startup backfill:
-// heic-convert is pure JS and blocks the event loop for seconds per photo, which
+// HEIC decoding is pure JS and blocks the event loop for seconds per photo, which
 // made every deploy stall the server for minutes and retried permanent failures
 // on every single boot.
 initDb()
