@@ -223,12 +223,14 @@ const routes = [];
 // Only tables named here may be interpolated into resolveTripId's SQL.
 const TRIP_SCOPE_TABLES = new Set([
   "days", "activities", "accommodations", "transports",
-  "photos", "journal_entries", "expenses", "packing_items",
+  "photos", "journal_entries", "journal_comments", "expenses", "packing_items",
 ]);
 function route(method, pattern, handler, opts) {
   const keys = [];
   const re = new RegExp("^" + pattern.replace(/:([^/]+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
-  routes.push({ method, re, keys, handler, tripScope: opts?.tripScope });
+  // allowViewer opts a write out of the viewer block — commenting on someone's
+  // journal entry is the one thing a read-only member is allowed to do.
+  routes.push({ method, re, keys, handler, tripScope: opts?.tripScope, allowViewer: opts?.allowViewer === true });
 }
 
 function matchRoute(method, pathname) {
@@ -238,7 +240,7 @@ function matchRoute(method, pathname) {
     if (!m) continue;
     const params = {};
     r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
-    return { handler: r.handler, params, tripScope: r.tripScope };
+    return { handler: r.handler, params, tripScope: r.tripScope, allowViewer: r.allowViewer };
   }
   return null;
 }
@@ -831,20 +833,138 @@ function firstName(user) {
   return null;
 }
 
-route("GET", "/api/trips/:id/journal", async (req, res, params) => {
-  const { rows } = await query(
-    `SELECT je.*, u.given_name, u.name AS user_name
-     FROM journal_entries je
-     LEFT JOIN users u ON u.id = je.user_id
-     WHERE je.trip_id = $1
-     ORDER BY je.created_at ASC`,
-    [params.id]
+// A "visit" ends once someone has been away this long. Refreshing or navigating
+// around inside one sitting keeps the same marker, so the "nieuw" badges don't
+// disappear the moment the page reloads; come back tomorrow and the marker moves
+// up to where you left off.
+const JOURNAL_VISIT_GAP_MINUTES = 30;
+
+// Returns the boundary to mark entries against, then records this visit.
+// Deliberately independent of login: people stay signed in for weeks, so a
+// login timestamp would mark everything as seen forever.
+async function advanceJournalRead(tripId, userId) {
+  const { rows } = await query("SELECT marker_at, last_seen_at FROM journal_reads WHERE trip_id = $1 AND user_id = $2", [tripId, userId]);
+  if (!rows.length) {
+    // First ever visit: start the clock now rather than flagging the whole
+    // trip's backlog as new.
+    await query("INSERT INTO journal_reads (trip_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [tripId, userId]);
+    return new Date();
+  }
+  const { marker_at, last_seen_at } = rows[0];
+  const gapMs = Date.now() - new Date(last_seen_at).getTime();
+  const newVisit = gapMs > JOURNAL_VISIT_GAP_MINUTES * 60 * 1000;
+  // On a new visit the boundary becomes the end of the previous visit, so
+  // "new" means everything written since you last had this page open.
+  const marker = newVisit ? last_seen_at : marker_at;
+  await query(
+    "UPDATE journal_reads SET marker_at = $3, last_seen_at = NOW() WHERE trip_id = $1 AND user_id = $2",
+    [tripId, userId, marker]
   );
+  return marker;
+}
+
+route("GET", "/api/trips/:id/journal", async (req, res, params) => {
+  const marker = await advanceJournalRead(params.id, req.user.id);
+  const [{ rows }, { rows: comments }, { rows: likes }] = await Promise.all([
+    query(
+      `SELECT je.*, u.given_name, u.name AS user_name
+       FROM journal_entries je
+       LEFT JOIN users u ON u.id = je.user_id
+       WHERE je.trip_id = $1
+       ORDER BY je.created_at ASC`,
+      [params.id]
+    ),
+    query(
+      `SELECT c.*, u.given_name, u.name AS user_name
+       FROM journal_comments c
+       LEFT JOIN users u ON u.id = c.user_id
+       WHERE c.trip_id = $1
+       ORDER BY c.created_at ASC`,
+      [params.id]
+    ),
+    query("SELECT entry_id, comment_id, user_id FROM journal_likes WHERE trip_id = $1", [params.id]),
+  ]);
+
+  const likeIndex = { entry: new Map(), comment: new Map() };
+  for (const l of likes) {
+    const kind = l.entry_id ? "entry" : "comment";
+    const key = l.entry_id || l.comment_id;
+    if (!likeIndex[kind].has(key)) likeIndex[kind].set(key, { count: 0, mine: false });
+    const agg = likeIndex[kind].get(key);
+    agg.count += 1;
+    if (l.user_id === req.user.id) agg.mine = true;
+  }
+  const likesFor = (kind, id) => {
+    const agg = likeIndex[kind].get(id);
+    return { like_count: agg ? agg.count : 0, liked_by_me: agg ? agg.mine : false };
+  };
+  const isNew = (ts, authorId) =>
+    authorId !== req.user.id && !!ts && new Date(ts) > new Date(marker);
+  const byEntry = new Map();
+  for (const c of comments) {
+    const { given_name, user_name, ...comment } = c;
+    if (!byEntry.has(c.entry_id)) byEntry.set(c.entry_id, []);
+    byEntry.get(c.entry_id).push({
+      ...comment,
+      author: firstName({ given_name, name: user_name }),
+      is_new: isNew(c.created_at, c.user_id),
+      ...likesFor("comment", c.id),
+    });
+  }
   sendJson(res, 200, rows.map((r) => {
     const { given_name, user_name, ...entry } = r;
-    return { ...entry, author: firstName({ given_name, name: user_name }) };
+    return {
+      ...entry,
+      author: firstName({ given_name, name: user_name }),
+      comments: byEntry.get(r.id) || [],
+      // updated_at, not created_at: the journal upserts per (slot, author), so
+      // someone adding to a story they already started is an edit, not a new
+      // row — flagging only creations would silently miss most of the writing.
+      is_new: isNew(r.updated_at || r.created_at, r.user_id),
+      ...likesFor("entry", r.id),
+    };
   }));
 }, { tripScope: "param" });
+
+route("POST", "/api/trips/:id/journal-comments", async (req, res, params, body) => {
+  const { entry_id, body: text } = body;
+  if (!text || !text.trim()) return sendError(res, 400, "Reactie mag niet leeg zijn");
+  if (String(text).length > 2000) return sendError(res, 400, "Reactie is te lang (max 2000 tekens)");
+  const { rows: entry } = await query("SELECT 1 FROM journal_entries WHERE id = $1 AND trip_id = $2", [entry_id, params.id]);
+  if (!entry.length) return sendError(res, 404, "Verhaal niet gevonden");
+  const { rows } = await query(
+    "INSERT INTO journal_comments (entry_id, trip_id, user_id, body) VALUES ($1,$2,$3,$4) RETURNING *",
+    [entry_id, params.id, req.user.id, text.trim()]
+  );
+  sendJson(res, 201, { ...rows[0], author: firstName(req.user), is_new: false });
+}, { tripScope: "param", allowViewer: true });
+
+// Toggle a thumbs-up on a story or a reaction. Viewers may like, same as they
+// may comment — it is the point of sharing a trip read-only.
+route("POST", "/api/trips/:id/journal-likes", async (req, res, params, body) => {
+  const entryId = body.entry_id || null;
+  const commentId = body.comment_id || null;
+  if (!entryId === !commentId) return sendError(res, 400, "Geef precies één doel op");
+  const table = entryId ? "journal_entries" : "journal_comments";
+  const targetId = entryId || commentId;
+  const { rows: target } = await query(`SELECT 1 FROM ${table} WHERE id = $1 AND trip_id = $2`, [targetId, params.id]);
+  if (!target.length) return sendError(res, 404, "Niet gevonden");
+
+  const col = entryId ? "entry_id" : "comment_id";
+  const { rowCount } = await query(`DELETE FROM journal_likes WHERE ${col} = $1 AND user_id = $2`, [targetId, req.user.id]);
+  if (rowCount) return sendJson(res, 200, { liked: false });
+  await query(
+    `INSERT INTO journal_likes (trip_id, user_id, ${col}) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+    [params.id, req.user.id, targetId]
+  );
+  sendJson(res, 201, { liked: true });
+}, { tripScope: "param", allowViewer: true });
+
+route("DELETE", "/api/journal-comments/:id", async (req, res, params) => {
+  const { rowCount } = await query("DELETE FROM journal_comments WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!rowCount) return sendError(res, 403, "Je kunt alleen je eigen reactie verwijderen");
+  res.writeHead(204); res.end();
+}, { tripScope: "journal_comments", allowViewer: true });
 
 route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, title, body: text } = body;
@@ -1419,7 +1539,7 @@ const server = http.createServer(async (req, res) => {
         const role = tripId ? await getTripRole(tripId, user.id) : null;
         // Reads require membership; writes additionally require more than viewer.
         if (!role) return sendError(res, 403, "Geen toegang tot deze reis");
-        if (role === "viewer" && req.method !== "GET") {
+        if (role === "viewer" && req.method !== "GET" && !match.allowViewer) {
           return sendError(res, 403, "Alleen-lezen toegang: wijzigen kan niet");
         }
         req.tripRole = role;
