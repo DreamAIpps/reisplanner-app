@@ -983,6 +983,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   }
 
   const thumbClass = large ? "w-[70vw] h-[70vw] max-w-80 max-h-80 sm:w-72 sm:h-72" : "w-24 h-24";
+  // The add tile keeps its own compact size — at photo size it dominated the
+  // dagboek. self-center keeps it aligned beside much taller photos.
+  const addClass = large ? "w-24 h-24 self-center" : "w-24 h-24";
 
   return (
     <div className={`flex ${large ? "gap-4" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
@@ -1003,7 +1006,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       ))}
       {!readOnly && (
         <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-          className={`shrink-0 ${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors`}>
+          className={`shrink-0 ${addClass} rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors`}>
           {uploading ? "…" : "＋"}
         </button>
       )}
