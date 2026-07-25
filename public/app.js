@@ -558,7 +558,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly }) {
+function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false }) {
   const [form, setForm] = useState(() => {
     if (initial) {
       // `initial` is the raw DB row, where empty columns are null. Feeding null
@@ -631,7 +631,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.activity_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
-              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={false} />
+              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
         <div className="flex justify-between items-center pt-2">
@@ -1665,9 +1665,10 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh }) {
   const [entries, setEntries] = useState([]);
   const [tripPhotos, setTripPhotos] = useState([]);
+  const [addingActivity, setAddingActivity] = useState(null);
   const accent = trip.cover_color || "#0369a1";
 
   const loadEntries = useCallback(async () => {
@@ -1768,6 +1769,13 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   </div>
                   {day.title && <div className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</div>}
                 </div>
+                {!readOnly && (
+                  <button onClick={() => setAddingActivity({ dayId: day.id })}
+                    className="ml-auto shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg text-white hover:opacity-80 transition-opacity"
+                    style={{ background: accent }}>
+                    + Activiteit
+                  </button>
+                )}
               </div>
 
               <div className="p-4 space-y-4">
@@ -1835,6 +1843,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           });
         })()}
       </div>
+
+      {addingActivity && (
+        <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} days={days} showPhotos
+          onSaved={() => { setAddingActivity(null); onRefresh?.(); }}
+          onClose={() => setAddingActivity(null)} />
+      )}
     </div>
   );
 }
@@ -3702,11 +3716,11 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       })()}
 
       {readOnly ? (
-        <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />
+        <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} />
       ) : (
         <>
           {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} />}
           {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
           {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
