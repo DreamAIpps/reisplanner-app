@@ -1085,9 +1085,6 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   }
 
   const thumbClass = large ? "w-[70vw] h-[70vw] max-w-80 max-h-80 sm:w-72 sm:h-72" : "w-24 h-24";
-  // The add tile keeps its own compact size — at photo size it dominated the
-  // dagboek. self-center keeps it aligned beside much taller photos.
-  const addClass = large ? "w-24 h-24 self-center" : "w-24 h-24";
 
   return (
     <div className={`flex ${large ? "gap-4" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
@@ -1107,10 +1104,22 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         </div>
       ))}
       {!readOnly && (
-        <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-          className={`shrink-0 ${addClass} rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors`}>
-          {uploading ? "…" : "＋"}
-        </button>
+        // In the dagboek this is a small labelled button, not a tile: photos
+        // there are ~70vw, and a matching dashed square dominated the entry —
+        // especially before any photo had been added. The compact grid keeps
+        // its square tile, where it lines up with the thumbnails.
+        large ? (
+          <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+            className="shrink-0 self-center inline-flex items-center gap-1.5 h-9 px-3 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors disabled:opacity-50">
+            <span className="text-base leading-none">＋</span>
+            {uploading ? "Uploaden..." : "Foto"}
+          </button>
+        ) : (
+          <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+            className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
+            {uploading ? "…" : "＋"}
+          </button>
+        )
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewingIndex != null && (
