@@ -4141,7 +4141,7 @@ function App() {
             ) : (
               <>
                 <a href="/login" className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">Inloggen</a>
-                <a href="/login?tab=register" className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-sky-500 text-white hover:bg-sky-400 transition-colors whitespace-nowrap">Account aanmaken</a>
+
               </>
             )}
           </div>
@@ -4163,7 +4163,7 @@ function App() {
                   <span className="text-xl shrink-0">👤</span>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-amber-800 text-sm">Je gebruikt de app als gast</div>
-                    <div className="text-xs text-amber-700 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in</a> of <a href="/login?tab=register" className="underline font-medium">maak een account</a> om ze overal beschikbaar te hebben.</div>
+                    <div className="text-xs text-amber-700 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in met Google of Apple</a> om ze overal beschikbaar te hebben.</div>
                   </div>
                 </div>
               )}
