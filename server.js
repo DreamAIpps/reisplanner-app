@@ -11,6 +11,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
 
 const PORT = process.env.PORT || 3002;
+const STARTED_AT = new Date();
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 const MIME = {
@@ -1569,6 +1570,23 @@ const server = http.createServer(async (req, res) => {
       console.error(err);
       if (!res.headersSent) sendError(res, err.statusCode || 500, err.message);
     }
+    return;
+  }
+
+  // Tells you at a glance which build is actually live — a failed deploy leaves
+  // the previous release serving, which is otherwise hard to spot from outside.
+  if (pathname === "/version") {
+    let assetVersion = null;
+    try {
+      const shell = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+      assetVersion = (shell.match(/app\.js\?v=(\d+)/) || [])[1] || null;
+    } catch {}
+    sendJson(res, 200, {
+      asset_version: assetVersion,
+      started_at: STARTED_AT.toISOString(),
+      uptime_seconds: Math.round(process.uptime()),
+      node: process.version,
+    });
     return;
   }
 
