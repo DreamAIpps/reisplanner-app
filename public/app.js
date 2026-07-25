@@ -197,6 +197,11 @@ const guestApi = {
   deletePhoto(id) {
     const d = _gr(); d.photos = (d.photos || []).filter(p => p.id !== id); _gw(d); return Promise.resolve(null);
   },
+  setPhotoCaption(id, caption) {
+    const d = _gr(); let found;
+    d.photos = (d.photos || []).map(p => p.id === id ? (found = { ...p, caption: caption || null }) : p);
+    _gw(d); return Promise.resolve(found);
+  },
   updatePhoto(id, data) {
     const d = _gr(); let found;
     d.photos = (d.photos || []).map(p => p.id === id ? (found = { ...p, day_id: data.day_id || null, activity_id: data.activity_id || null, transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null }) : p);
@@ -285,6 +290,7 @@ const api = {
   addJournalComment: (tripId, d) => _guestMode ? guestApi.addJournalComment(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-comments`, { method: "POST", body: JSON.stringify(d) }),
   deleteJournalComment: (id) => _guestMode ? guestApi.deleteJournalComment(id) : apiFetch(`/api/journal-comments/${id}`, { method: "DELETE" }),
   rotatePhoto: (id) => _guestMode ? Promise.reject(new Error("Log in om foto's te draaien")) : apiFetch(`/api/photos/${id}/rotate`, { method: "POST", body: JSON.stringify({ turns: 1 }) }),
+  setPhotoCaption: (id, caption) => _guestMode ? guestApi.setPhotoCaption(id, caption) : apiFetch(`/api/photos/${id}/caption`, { method: "PUT", body: JSON.stringify({ caption }) }),
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
@@ -891,12 +897,15 @@ function readExif(file) {
 // Fullscreen photo viewer, shared by the dagboek strips and the Foto's grid.
 // The image fills the screen; everything else floats over it, so tapping a
 // photo gives you the photo rather than a boxed preview with panels under it.
-function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete, onRotate }) {
+function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete, onRotate, onCaption }) {
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotated, setRotated] = useState(0);
+  const [editingCaption, setEditingCaption] = useState(false);
+  const [captionText, setCaptionText] = useState("");
+  const [savingCaption, setSavingCaption] = useState(false);
   const touchStart = useRef(null);
 
   const safeIndex = photos.length ? Math.min(index, photos.length - 1) : null;
@@ -1002,6 +1011,41 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
           </button>
         ) : <span className="w-9" />}
       </div>
+
+      {(viewing.caption || onCaption) && !showAssign && (
+        <div className="absolute left-0 right-0 bottom-0 px-4 bg-gradient-to-t from-black/70 to-transparent"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)", paddingTop: "2rem" }}
+          onClick={(e) => e.stopPropagation()}>
+          {editingCaption ? (
+            <div className="space-y-2 max-w-lg mx-auto">
+              <Textarea rows={2} autoFocus value={captionText} maxLength={500}
+                onChange={(e) => setCaptionText(e.target.value)} placeholder="Waar gaat deze foto over?" />
+              <div className="flex gap-2">
+                <Button disabled={savingCaption}
+                  onClick={async () => {
+                    setSavingCaption(true);
+                    try { await onCaption(viewing, captionText); setEditingCaption(false); }
+                    finally { setSavingCaption(false); }
+                  }}>{savingCaption ? "Opslaan..." : "Opslaan"}</Button>
+                <Button variant="secondary" onClick={() => setEditingCaption(false)}>Annuleren</Button>
+              </div>
+            </div>
+          ) : viewing.caption ? (
+            <p className="text-white text-sm text-center max-w-lg mx-auto leading-relaxed whitespace-pre-wrap">
+              {viewing.caption}
+              {onCaption && (
+                <button type="button" onClick={() => { setCaptionText(viewing.caption || ""); setEditingCaption(true); }}
+                  className="ml-2 text-white/60 hover:text-white text-xs">✏️</button>
+              )}
+            </p>
+          ) : onCaption ? (
+            <div className="text-center">
+              <button type="button" onClick={() => { setCaptionText(""); setEditingCaption(true); }}
+                className="text-white/70 hover:text-white text-xs">+ Tekst toevoegen</button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {photos.length > 1 && (
         <>
@@ -1121,8 +1165,11 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     <div className={`flex ${large ? "gap-4" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
       {photos.map((p, i) => (
         <div key={p.id} className="relative shrink-0 group">
-          <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
+          <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
+          {large && p.caption && (
+            <p className="mt-1.5 text-xs text-gray-600 leading-snug line-clamp-2" style={{ maxWidth: "70vw" }}>{p.caption}</p>
+          )}
           {!readOnly && (
             <button type="button" onClick={() => handleDelete(p.id)}
               className={`absolute -top-1.5 -right-1.5 rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "w-8 h-8 text-base" : "w-6 h-6 text-sm"}`}>
@@ -1155,7 +1202,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
           assign={canAssign ? { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign } : null}
           onDelete={readOnly ? null : (p) => handleDelete(p.id)}
-          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await onChange(); }} />
+          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await onChange(); }}
+          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await onChange(); }} />
       )}
     </div>
   );
@@ -3584,7 +3632,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
           onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
           assign={readOnly ? null : { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign }}
           onDelete={readOnly ? null : handleDelete}
-          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await loadPhotos(); }} />
+          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await loadPhotos(); }}
+          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await loadPhotos(); }} />
       )}
     </div>
   );

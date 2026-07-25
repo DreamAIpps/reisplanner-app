@@ -986,6 +986,20 @@ route("POST", "/api/photos/:id/rotate", async (req, res, params, body) => {
   }
 }, { tripScope: "photos" });
 
+// Separate from PUT /api/photos/:id on purpose: that route sets all four target
+// columns from the body, so folding the caption in would blank it every time a
+// photo is reassigned.
+route("PUT", "/api/photos/:id/caption", async (req, res, params, body) => {
+  const caption = typeof body?.caption === "string" ? body.caption.trim() : "";
+  if (caption.length > 500) return sendError(res, 400, "Tekst is te lang (max 500 tekens)");
+  const { rows } = await query(
+    "UPDATE photos SET caption = $1 WHERE id = $2 RETURNING id, caption",
+    [caption || null, params.id]
+  );
+  if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
+  sendJson(res, 200, rows[0]);
+}, { tripScope: "photos" });
+
 route("PUT", "/api/photos/:id", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id } = body;
   const { rows: owner } = await query("SELECT trip_id FROM photos WHERE id = $1", [params.id]);
