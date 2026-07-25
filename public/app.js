@@ -667,7 +667,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly }) {
+function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
   const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -711,7 +711,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.accommodation_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.accommodation_id !== initial.id)}
-              tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
+              tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
         <div className="flex justify-end gap-2 pt-2">
@@ -724,7 +724,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly }) {
+function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
   const [form, setForm] = useState(initial ? {
     ...initial,
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
@@ -783,7 +783,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.transport_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.transport_id !== initial.id)}
-              tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
+              tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
         <div className="flex items-center justify-between pt-2">
@@ -1522,11 +1522,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                               {act.location && (
                                 <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
                               )}
-                              {actPhotos.length > 0 && (
-                                <div className="absolute top-2 right-2 bg-black/50 text-white text-xs font-medium px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                                  📷 {actPhotos.length}
-                                </div>
-                              )}
                             </div>
                           )}
                           <div className="flex items-start gap-3 px-4 py-3">
@@ -2091,7 +2086,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
       {editing && (
         <AccommodationForm tripId={trip.id} initial={editing}
           journalEntries={journal.filter((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
-          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
+          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly} showPhotos
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
@@ -2168,7 +2163,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
       {editing && (
         <TransportForm tripId={trip.id} initial={editing}
           journalEntries={journal.filter((e) => e.transport_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
-          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly}
+          photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly} showPhotos
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
