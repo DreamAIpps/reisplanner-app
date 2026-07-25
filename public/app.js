@@ -672,7 +672,6 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
               onSave={(text) => api.saveJournalEntry(tripId, { activity_id: activity.id, body: text }).then(onJournalChange)}
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.activity_id === activity.id)}
-              photoCandidates={(photos || []).filter((p) => p.activity_id !== activity.id)}
               tripId={tripId} dayId={dayId} activityId={activity.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
@@ -737,7 +736,6 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
               onSave={(text) => api.saveJournalEntry(tripId, { accommodation_id: initial.id, body: text }).then(onJournalChange)}
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.accommodation_id === initial.id)}
-              photoCandidates={(photos || []).filter((p) => p.accommodation_id !== initial.id)}
               tripId={tripId} accommodationId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
@@ -809,7 +807,6 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
               onSave={(text) => api.saveJournalEntry(tripId, { transport_id: initial.id, body: text }).then(onJournalChange)}
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.transport_id === initial.id)}
-              photoCandidates={(photos || []).filter((p) => p.transport_id !== initial.id)}
               tripId={tripId} transportId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
@@ -1247,38 +1244,6 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           onDelete={readOnly ? null : (p) => handleDelete(p.id)}
           onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await onChange(); }}
           onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await onChange(); }} />
-      )}
-    </div>
-  );
-}
-
-// ---------- Link an existing trip photo to an activity/transport/accommodation ----------
-function ExistingPhotoPicker({ candidates, onAssign }) {
-  const [open, setOpen] = useState(false);
-  const [assigning, setAssigning] = useState(null);
-  if (!candidates.length) return null;
-
-  async function handlePick(photo) {
-    setAssigning(photo.id);
-    try { await onAssign(photo); setOpen(false); }
-    finally { setAssigning(null); }
-  }
-
-  return (
-    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-      <button type="button" onClick={() => setOpen((v) => !v)}
-        className="text-xs font-medium text-sky-600 hover:text-sky-700 transition-colors">
-        {open ? "Sluiten" : "+ Bestaande foto koppelen"}
-      </button>
-      {open && (
-        <div className="flex gap-2 overflow-x-auto pt-2 pb-1">
-          {candidates.map((p) => (
-            <button key={p.id} type="button" disabled={assigning === p.id} onClick={() => handlePick(p)}
-              className="shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-gray-100 hover:ring-2 hover:ring-sky-400 transition-all disabled:opacity-50">
-              <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
-            </button>
-          ))}
-        </div>
       )}
     </div>
   );
@@ -1960,7 +1925,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
 }
 
 
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -1984,11 +1949,6 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
     setText(""); setEditing(false);
   }
 
-  function handleAssignExisting(photo) {
-    return api.updatePhoto(photo.id, {
-      day_id: dayId || null, activity_id: activityId || null, transport_id: transportId || null, accommodation_id: accommodationId || null,
-    }).then(onPhotosChange);
-  }
 
   return (
     <div className="space-y-2">
@@ -2042,7 +2002,6 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
           <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
             days={days} transports={transports} accommodations={accommodations} large />
-          {!readOnly && <ExistingPhotoPicker candidates={photoCandidates || []} onAssign={handleAssignExisting} />}
         </div>
       )}
     </div>
@@ -2243,7 +2202,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
-                  photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                   reactions={reactionsFor({ day_id: day.id })}
                   days={days} transports={transports} accommodations={accommodations} />
@@ -2259,7 +2217,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onSave={(text) => saveEntry({ transport_id: t.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
-                            photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
                             tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ transport_id: t.id })}
                             days={days} transports={transports} accommodations={accommodations} />
@@ -2275,7 +2232,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
-                            photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
                             tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ accommodation_id: a.id })}
                             days={days} transports={transports} accommodations={accommodations} />
@@ -2292,7 +2248,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
-                            photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
                             tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ activity_id: act.id })}
                             days={days} transports={transports} accommodations={accommodations} />
