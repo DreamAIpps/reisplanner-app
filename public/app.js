@@ -867,31 +867,39 @@ function readExif(file) {
   });
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large }) {
-  const fileRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-  const [viewingIndex, setViewingIndex] = useState(null);
+// Fullscreen photo viewer, shared by the dagboek strips and the Foto's grid.
+// The image fills the screen; everything else floats over it, so tapping a
+// photo gives you the photo rather than a boxed preview with panels under it.
+function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete }) {
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [showAssign, setShowAssign] = useState(false);
   const touchStart = useRef(null);
-  // Clamp: the parent can reload photos while the lightbox is open (an upload or
-  // reassign elsewhere), and an out-of-range index made the overlay silently
-  // vanish mid-view while still swallowing arrow keys.
-  const safeIndex = viewingIndex == null || !photos.length
-    ? null
-    : Math.min(viewingIndex, photos.length - 1);
-  const viewing = safeIndex != null ? photos[safeIndex] : null;
-  const canAssign = !readOnly && !!days;
-  const { dayGroups, otherTransports, otherAccommodations } = canAssign
-    ? computeDayGroups(days, transports || [], accommodations || [])
-    : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
+
+  const safeIndex = photos.length ? Math.min(index, photos.length - 1) : null;
+  const viewing = safeIndex == null ? null : photos[safeIndex];
+
+  const showNext = useCallback(() => onIndexChange((i) => (Math.min(i, photos.length - 1) + 1) % photos.length), [photos.length, onIndexChange]);
+  const showPrev = useCallback(() => onIndexChange((i) => (Math.min(i, photos.length - 1) - 1 + photos.length) % photos.length), [photos.length, onIndexChange]);
+
+  useEffect(() => { if (!photos.length) onClose(); }, [photos.length, onClose]);
 
   useEffect(() => {
-    if (viewingIndex != null && !photos.length) setViewingIndex(null);
-  }, [photos.length, viewingIndex]);
+    function handleKey(e) {
+      if (e.key === "ArrowRight") showNext();
+      else if (e.key === "ArrowLeft") showPrev();
+      else if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [showNext, showPrev, onClose]);
 
-  function showNext() { setViewingIndex((i) => (Math.min(i, photos.length - 1) + 1) % photos.length); }
-  function showPrev() { setViewingIndex((i) => (Math.min(i, photos.length - 1) - 1 + photos.length) % photos.length); }
+  // Lock the page behind the viewer so a swipe doesn't scroll the dagboek.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
 
   function handleTouchStart(e) {
     const t = e.touches[0];
@@ -909,12 +917,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     if (touchStart.current.locked === "x") setDragX(dx);
   }
   function handleTouchCancel() {
-    // iOS fires touchcancel (not touchend) when a drag turns into a system
-    // edge-swipe or a notification interrupts; without this the photo stayed
-    // frozen at its last offset with the transition still disabled.
-    touchStart.current = null;
-    setDragging(false);
-    setDragX(0);
+    touchStart.current = null; setDragging(false); setDragX(0);
   }
   function handleTouchEnd(e) {
     if (!touchStart.current) return;
@@ -924,27 +927,111 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     const wasHorizontal = touchStart.current.locked === "x";
     touchStart.current = null;
     if (wasHorizontal && Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
-      // Completed swipe: cut straight to the new photo — stay "dragging" this
-      // tick so the transition is suppressed and nothing animates backwards.
       if (dx < 0) showNext(); else showPrev();
       setDragX(0);
     } else {
-      // Cancelled: ease back to center.
-      setDragging(false);
-      setDragX(0);
+      setDragging(false); setDragX(0);
     }
   }
 
-  useEffect(() => {
-    if (viewingIndex == null) return;
-    function handleKey(e) {
-      if (e.key === "ArrowRight") showNext();
-      else if (e.key === "ArrowLeft") showPrev();
-      else if (e.key === "Escape") setViewingIndex(null);
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [viewingIndex, photos.length]);
+  if (!viewing) return null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[200] bg-black select-none" style={{ height: "100dvh" }}
+      onClick={onClose} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
+
+      <img src={viewing.url} alt="" draggable={false}
+        className="absolute inset-0 w-full h-full object-contain"
+        style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
+
+      {/* Top chrome */}
+      <div className="absolute top-0 left-0 right-0 flex items-center gap-2 px-3 pb-3 bg-gradient-to-b from-black/70 to-transparent"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+        onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={onClose}
+          className="w-9 h-9 rounded-full bg-black/50 text-white text-xl leading-none flex items-center justify-center hover:bg-black/70 transition-colors">
+          ×
+        </button>
+        <div className="flex-1 text-center text-white/80 text-xs">
+          {photos.length > 1 && <span>{safeIndex + 1} / {photos.length}</span>}
+          {viewing.taken_at && <span className="ml-2">🕐 {fmtDatetime(viewing.taken_at)}</span>}
+        </div>
+        {onDelete && (
+          <button type="button" onClick={() => onDelete(viewing)}
+            className="w-9 h-9 rounded-full bg-black/50 text-white text-base flex items-center justify-center hover:bg-red-600 transition-colors"
+            title="Foto verwijderen">
+            🗑
+          </button>
+        )}
+        {assign ? (
+          <button type="button" onClick={() => setShowAssign((v) => !v)}
+            className={`text-xs font-medium px-3 py-2 rounded-full transition-colors ${showAssign ? "bg-white text-gray-800" : "bg-black/50 text-white hover:bg-black/70"}`}>
+            Toewijzen
+          </button>
+        ) : <span className="w-9" />}
+      </div>
+
+      {photos.length > 1 && (
+        <>
+          <button type="button" onClick={(e) => { e.stopPropagation(); showPrev(); }}
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 text-white text-2xl flex items-center justify-center hover:bg-black/70 transition-colors">
+            ‹
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); showNext(); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 text-white text-2xl flex items-center justify-center hover:bg-black/70 transition-colors">
+            ›
+          </button>
+        </>
+      )}
+
+      {assign && showAssign && (
+        <div className="absolute left-0 right-0 bottom-0 bg-white p-4 space-y-2 rounded-t-2xl"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
+          onClick={(e) => e.stopPropagation()}>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toewijzen aan</label>
+          <Select value={photoTargetValue(viewing)} onChange={(e) => assign.onChange(viewing, e.target.value)}>
+            <option value="">— Niet toegewezen —</option>
+            {assign.dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
+              <optgroup key={day.id} label={dayOptionLabel(day)}>
+                <option value={`day:${day.id}`}>Hele dag</option>
+                {dayT.map((t) => (
+                  <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                ))}
+                {dayA.map((a) => (
+                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                ))}
+                {(day.activities || []).map((act) => (
+                  <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                ))}
+              </optgroup>
+            ))}
+            {(assign.otherTransports.length > 0 || assign.otherAccommodations.length > 0) && (
+              <optgroup label="Overig (geen datum gekoppeld)">
+                {assign.otherTransports.map((t) => (
+                  <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                ))}
+                {assign.otherAccommodations.map((a) => (
+                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                ))}
+              </optgroup>
+            )}
+          </Select>
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large }) {
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [viewingIndex, setViewingIndex] = useState(null);
+  const canAssign = !readOnly && !!days;
+  const { dayGroups, otherTransports, otherAccommodations } = canAssign
+    ? computeDayGroups(days, transports || [], accommodations || [])
+    : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
 
   function readAsDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -1026,67 +1113,11 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         </button>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
-      {viewing && ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
-          <div className="max-w-full flex flex-col items-center gap-2 relative py-6"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
-            {photos.length > 1 && (
-              <>
-                <button type="button" onClick={showPrev}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
-                  ‹
-                </button>
-                <button type="button" onClick={showNext}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
-                  ›
-                </button>
-              </>
-            )}
-            <img src={viewing.url} alt="" className="max-w-full max-h-[60vh] rounded-lg select-none" draggable={false}
-              style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
-            {photos.length > 1 && (
-              <div className="text-white/70 text-xs">{safeIndex + 1} / {photos.length}</div>
-            )}
-            {viewing.taken_at && (
-              <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
-                <span>🕐 {fmtDatetime(viewing.taken_at)}</span>
-              </div>
-            )}
-            {canAssign && (
-              <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2" onClick={(e) => e.stopPropagation()}>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toewijzen aan</label>
-                <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
-                  <option value="">— Niet toegewezen —</option>
-                  {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
-                    <optgroup key={day.id} label={dayOptionLabel(day)}>
-                      <option value={`day:${day.id}`}>Hele dag</option>
-                      {dayT.map((t) => (
-                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                      ))}
-                      {dayA.map((a) => (
-                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                      ))}
-                      {(day.activities || []).map((act) => (
-                        <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                  {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
-                    <optgroup label="Overig (geen datum gekoppeld)">
-                      {otherTransports.map((t) => (
-                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                      ))}
-                      {otherAccommodations.map((a) => (
-                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </Select>
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
+      {viewingIndex != null && (
+        <PhotoLightbox photos={photos} index={viewingIndex}
+          onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
+          assign={canAssign ? { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign } : null}
+          onDelete={readOnly ? null : (p) => handleDelete(p.id)} />
       )}
     </div>
   );
@@ -3272,10 +3303,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewingIndex, setViewingIndex] = useState(null);
-  const [dragX, setDragX] = useState(0);
-  const [dragging, setDragging] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
-  const touchStart = useRef(null);
 
   const loadPhotos = useCallback(async () => {
     try { setPhotos(await api.getPhotos(trip.id)); } catch {} finally { setLoading(false); }
@@ -3299,59 +3327,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
     document.getElementById(`gallery-photo-${todayPhoto.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  const viewing = viewingIndex != null ? photos[viewingIndex] : null;
-  function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
-  function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
 
-  function handleTouchStart(e) {
-    const t = e.touches[0];
-    touchStart.current = { x: t.clientX, y: t.clientY, locked: null };
-    setDragging(true);
-  }
-  function handleTouchMove(e) {
-    if (!touchStart.current) return;
-    const t = e.touches[0];
-    const dx = t.clientX - touchStart.current.x;
-    const dy = t.clientY - touchStart.current.y;
-    if (touchStart.current.locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-      touchStart.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    }
-    if (touchStart.current.locked === "x") setDragX(dx);
-  }
-  function handleTouchCancel() {
-    // iOS fires touchcancel (not touchend) when a drag turns into a system
-    // edge-swipe or a notification interrupts; without this the photo stayed
-    // frozen at its last offset with the transition still disabled.
-    touchStart.current = null;
-    setDragging(false);
-    setDragX(0);
-  }
-  function handleTouchEnd(e) {
-    if (!touchStart.current) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - touchStart.current.x;
-    const dy = t.clientY - touchStart.current.y;
-    const wasHorizontal = touchStart.current.locked === "x";
-    touchStart.current = null;
-    if (wasHorizontal && Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
-      if (dx < 0) showNext(); else showPrev();
-      setDragX(0);
-    } else {
-      setDragging(false);
-      setDragX(0);
-    }
-  }
 
-  useEffect(() => {
-    if (viewingIndex == null) return;
-    function handleKey(e) {
-      if (e.key === "ArrowRight") showNext();
-      else if (e.key === "ArrowLeft") showPrev();
-      else if (e.key === "Escape") setViewingIndex(null);
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [viewingIndex, photos.length]);
 
   async function handleAssign(photo, value) {
     const updated = await api.updatePhoto(photo.id, assignPhotoPayload(days, value));
@@ -3412,77 +3389,11 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
         </div>
       )}
 
-      {viewing && ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
-          <div className="max-w-full flex flex-col items-center gap-3 relative py-8"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
-            {photos.length > 1 && (
-              <>
-                <button type="button" onClick={showPrev}
-                  className="absolute left-2 top-40 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
-                  ‹
-                </button>
-                <button type="button" onClick={showNext}
-                  className="absolute right-2 top-40 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 text-white text-xl flex items-center justify-center hover:bg-black/70 transition-colors z-10">
-                  ›
-                </button>
-              </>
-            )}
-            <img src={viewing.url} alt="" className="max-w-full max-h-[50vh] rounded-lg select-none" draggable={false}
-              style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
-            {photos.length > 1 && <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>}
-            {viewing.taken_at && (
-              <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
-                <span>🕐 {fmtDatetime(viewing.taken_at)}</span>
-              </div>
-            )}
-            {readOnly ? (
-              (() => {
-                const info = photoAssignmentInfo(viewing, days, transports, accommodations);
-                return info ? (
-                  <div className="bg-white rounded-xl px-3 py-2 text-sm text-gray-600 flex items-center gap-1.5">
-                    <span>{info.icon}</span><span>{info.text}</span>
-                  </div>
-                ) : null;
-              })()
-            ) : (
-              <div className="bg-white rounded-xl p-3 w-full max-w-sm space-y-2">
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Toegewezen aan</label>
-                <Select value={photoTargetValue(viewing)} onChange={(e) => handleAssign(viewing, e.target.value)}>
-                  <option value="">— Niet toegewezen —</option>
-                  {dayGroups.map(({ day, transports: dayT, accommodations: dayA }) => (
-                    <optgroup key={day.id} label={dayOptionLabel(day)}>
-                      <option value={`day:${day.id}`}>Hele dag</option>
-                      {dayT.map((t) => (
-                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                      ))}
-                      {dayA.map((a) => (
-                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                      ))}
-                      {(day.activities || []).map((act) => (
-                        <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                  {(otherTransports.length > 0 || otherAccommodations.length > 0) && (
-                    <optgroup label="Overig (geen datum gekoppeld)">
-                      {otherTransports.map((t) => (
-                        <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
-                      ))}
-                      {otherAccommodations.map((a) => (
-                        <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </Select>
-                <button type="button" onClick={() => handleDelete(viewing)} className="text-xs text-red-500 hover:text-red-700 font-medium">
-                  🗑 Foto verwijderen
-                </button>
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
+      {viewingIndex != null && (
+        <PhotoLightbox photos={photos} index={viewingIndex}
+          onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
+          assign={readOnly ? null : { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign }}
+          onDelete={readOnly ? null : handleDelete} />
       )}
     </div>
   );
