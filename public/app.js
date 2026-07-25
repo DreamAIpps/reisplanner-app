@@ -1668,7 +1668,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer }) {
   const [entries, setEntries] = useState([]);
   const [tripPhotos, setTripPhotos] = useState([]);
   const [addingActivity, setAddingActivity] = useState(null);
@@ -1715,7 +1715,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     <div>
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagboek</h3>
-        {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+        <div className="flex gap-2">
+          {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+          {onPreviewViewer && !readOnly && (
+            <Button onClick={onPreviewViewer} variant="secondary">👀 Bekijk als gast</Button>
+          )}
+        </div>
       </div>
       <div className="space-y-4">
         {(() => {
@@ -3509,6 +3514,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const [sharing, setSharing] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [previewViewer, setPreviewViewer] = useState(false);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -3536,6 +3542,8 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   }, [tripId]);
 
   useEffect(() => { load(); }, [load]);
+  // Don't carry the guest preview over into another trip.
+  useEffect(() => { setPreviewViewer(false); }, [tripId]);
 
   async function handleDelete() {
     if (!confirm(`"${trip.name}" definitief verwijderen?`)) return;
@@ -3559,7 +3567,18 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
   const accent = trip.cover_color || "#0369a1";
-  const readOnly = trip.role === "viewer";
+  const readOnly = trip.role === "viewer" || previewViewer;
+  const isOwnerActions = trip.is_owner && !previewViewer;
+
+  // What a shared viewer actually receives: no budget, no per-item costs, no
+  // expense list. Mirrors stripCosts() on the server.
+  const viewTrip = previewViewer ? { ...trip, budget: null, role: "viewer" } : trip;
+  const viewDays = previewViewer
+    ? days.map((d) => ({ ...d, activities: (d.activities || []).map((a) => ({ ...a, cost: null })) }))
+    : days;
+  const viewTransports = previewViewer ? transports.map((t) => ({ ...t, cost: null })) : transports;
+  const viewAccommodations = previewViewer ? accommodations.map((a) => ({ ...a, cost: null })) : accommodations;
+  const viewExpenses = previewViewer ? [] : expenses;
 
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
@@ -3587,6 +3606,22 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
   return (
     <div className="pb-2">
+      {previewViewer && (
+        // In preview the tab bar and bottom nav disappear (that is what a
+        // viewer gets), so this banner is the only way back — hence sticky.
+        <div className="sticky z-30 mb-4 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 flex items-center gap-3 shadow-sm"
+          style={{ top: "calc(3.5rem + env(safe-area-inset-top) + 0.5rem)" }}>
+          <span className="text-lg leading-none shrink-0">👀</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-amber-900">Gastweergave</div>
+            <div className="text-xs text-amber-700">Zo ziet iemand met een alleen-lezen link deze reis. Kosten en budget zijn verborgen.</div>
+          </div>
+          <button onClick={() => { setPreviewViewer(false); if (tab === "budget") setTab("days"); }}
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors">
+            Sluiten
+          </button>
+        </div>
+      )}
       {/* Back button — only on desktop, except for read-only viewers who have no bottom nav */}
       <button onClick={onBack} className={`${readOnly ? "inline-flex" : "hidden sm:inline-flex"} mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity`} style={{ color: accent }}>
         ← Alle reizen
@@ -3607,7 +3642,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
                 <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
                   {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {trip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(viewTrip.budget, trip.currency)}</span>}
                 </div>
                 {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
@@ -3620,9 +3655,9 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto">
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
+                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
                 </div>
               )}
             </div>
@@ -3642,7 +3677,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <div className="bg-white px-4 py-3">
               <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
                 {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {trip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+                {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(viewTrip.budget, trip.currency)}</span>}
               </div>
               {!readOnly && tab !== "journal" && tab !== "photos" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
@@ -3651,9 +3686,9 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
-                  {trip.is_owner && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
-                  {trip.is_owner && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
+                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
                 </div>
               )}
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
@@ -3681,12 +3716,12 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       )}
 
       {/* Budget balk */}
-      {trip.budget && tab !== "journal" && tab !== "photos" && (() => {
-        const transportTotal = transports.reduce((s, t) => s + Number(t.cost || 0), 0);
-        const accommodationTotal = accommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
-        const activityTotal = days.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
-        const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
-        const total = Number(trip.budget);
+      {viewTrip.budget && tab !== "journal" && tab !== "photos" && (() => {
+        const transportTotal = viewTransports.reduce((s, t) => s + Number(t.cost || 0), 0);
+        const accommodationTotal = viewAccommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
+        const activityTotal = viewDays.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
+        const expenseTotal = viewExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+        const total = Number(viewTrip.budget);
         const spent = transportTotal + accommodationTotal + activityTotal + expenseTotal;
         const pct = (v) => Math.min((v / total) * 100, 100);
         const tPct = pct(transportTotal);
@@ -3719,15 +3754,15 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       })()}
 
       {readOnly ? (
-        <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} />
+        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} />
       ) : (
         <>
-          {tab === "days" && <DayPlanningTab trip={trip} days={days} transports={transports} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "journal" && <JournalTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} />}
-          {tab === "photos" && <PhotoGalleryTab trip={trip} days={days} transports={transports} accommodations={accommodations} readOnly={readOnly} />}
-          {tab === "accommodation" && <AccommodationTab trip={trip} accommodations={accommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "transport" && <TransportTab trip={trip} transports={transports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "budget" && !readOnly && <BudgetTab trip={trip} expenses={expenses} transports={transports} accommodations={accommodations} days={days} onRefresh={load} />}
+          {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} />}
+          {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} />}
+          {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
+          {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
           {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
           {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
         </>
