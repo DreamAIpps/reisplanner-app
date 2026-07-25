@@ -241,8 +241,21 @@ async function initDb() {
       body TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    -- Reactions hang off the dagboek *slot* (a day, activity, transport or
+    -- stay), not off someone's entry. Attaching them to an entry meant a day
+    -- nobody had written about yet — or one with only photos — offered a
+    -- reader no way to react at all.
+    ALTER TABLE journal_comments ALTER COLUMN entry_id DROP NOT NULL;
+    ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS day_id INTEGER REFERENCES days(id) ON DELETE CASCADE;
+    ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE;
+    ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
+    ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
+    UPDATE journal_comments c SET day_id = e.day_id, activity_id = e.activity_id,
+           transport_id = e.transport_id, accommodation_id = e.accommodation_id
+      FROM journal_entries e
+     WHERE c.entry_id = e.id AND c.day_id IS NULL AND c.activity_id IS NULL
+       AND c.transport_id IS NULL AND c.accommodation_id IS NULL;
     CREATE INDEX IF NOT EXISTS journal_comments_trip_idx ON journal_comments(trip_id);
-    CREATE INDEX IF NOT EXISTS journal_comments_entry_idx ON journal_comments(entry_id, created_at);
 
     -- Drives the "new since your last visit" markers. Deliberately not tied to
     -- login: people stay signed in for weeks, so a login timestamp would mark
@@ -257,11 +270,25 @@ async function initDb() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       entry_id INTEGER REFERENCES journal_entries(id) ON DELETE CASCADE,
       comment_id INTEGER REFERENCES journal_comments(id) ON DELETE CASCADE,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      CONSTRAINT journal_likes_one_target CHECK ((entry_id IS NULL) <> (comment_id IS NULL))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_entry_user ON journal_likes(entry_id, user_id) WHERE entry_id IS NOT NULL;
+    -- Likes follow comments onto the slot, for the same reason.
+    ALTER TABLE journal_likes DROP CONSTRAINT IF EXISTS journal_likes_one_target;
+    ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS day_id INTEGER REFERENCES days(id) ON DELETE CASCADE;
+    ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE;
+    ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
+    ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
+    UPDATE journal_likes l SET day_id = e.day_id, activity_id = e.activity_id,
+           transport_id = e.transport_id, accommodation_id = e.accommodation_id
+      FROM journal_entries e
+     WHERE l.entry_id = e.id AND l.day_id IS NULL AND l.activity_id IS NULL
+       AND l.transport_id IS NULL AND l.accommodation_id IS NULL;
+    ALTER TABLE journal_likes DROP COLUMN IF EXISTS entry_id;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_comment_user ON journal_likes(comment_id, user_id) WHERE comment_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_day_user ON journal_likes(day_id, user_id) WHERE day_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_activity_user ON journal_likes(activity_id, user_id) WHERE activity_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_transport_user ON journal_likes(transport_id, user_id) WHERE transport_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_accommodation_user ON journal_likes(accommodation_id, user_id) WHERE accommodation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS journal_likes_trip_idx ON journal_likes(trip_id);
 
     CREATE TABLE IF NOT EXISTS journal_reads (

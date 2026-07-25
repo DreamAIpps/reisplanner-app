@@ -204,9 +204,11 @@ const guestApi = {
   },
   getJournal(tripId) {
     const d = _gr();
-    const comments = d.journal_comments || [];
-    return Promise.resolve((d.journal_entries || []).filter(e => e.trip_id === tripId)
-      .map(e => ({ ...e, comments: comments.filter(c => c.entry_id === e.id), is_new: false })));
+    return Promise.resolve({
+      entries: (d.journal_entries || []).filter(e => e.trip_id === tripId).map(e => ({ ...e, is_new: false })),
+      comments: (d.journal_comments || []).filter(c => c.trip_id === tripId),
+      slot_likes: {},
+    });
   },
   saveJournalEntry(tripId, data) {
     const d = _gr();
@@ -230,7 +232,10 @@ const guestApi = {
   },
   addJournalComment(tripId, data) {
     const d = _gr();
-    const c = { id: _gid(), entry_id: data.entry_id, trip_id: tripId, body: data.body, created_at: new Date().toISOString(), author: null, is_new: false };
+    const c = { id: _gid(), trip_id: tripId, body: data.body, created_at: new Date().toISOString(),
+      author: null, is_new: false, like_count: 0, liked_by_me: false,
+      day_id: data.day_id || null, activity_id: data.activity_id || null,
+      transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null };
     d.journal_comments = [...(d.journal_comments || []), c]; _gw(d); return Promise.resolve(c);
   },
   deleteJournalComment(id) {
@@ -1325,7 +1330,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const accent = trip.cover_color || "#0369a1";
 
   const loadJournal = useCallback(async () => {
-    try { setTripJournal(await api.getJournal(trip.id)); } catch {}
+    try { setTripJournal((await api.getJournal(trip.id)).entries || []); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
@@ -1664,19 +1669,18 @@ function LikeButton({ tripId, target, count, liked, onChanged, disabled }) {
 
 // Reactions under a story. Read-only members can post these — it is the one
 // write a viewer is allowed, so family following a trip can respond.
-function JournalComments({ entry, tripId, currentUserId, onChanged }) {
+function JournalComments({ slot, comments, like, tripId, currentUserId, onChanged }) {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const comments = entry.comments || [];
 
   async function handleAdd(e) {
     e.preventDefault();
     if (!text.trim()) return;
     setSaving(true); setError(null);
     try {
-      await api.addJournalComment(tripId, { entry_id: entry.id, body: text.trim() });
+      await api.addJournalComment(tripId, { ...slot, body: text.trim() });
       setText(""); setOpen(false);
       await onChanged();
     } catch (err) { setError(err.message || "Reactie plaatsen mislukt"); }
@@ -1717,6 +1721,16 @@ function JournalComments({ entry, tripId, currentUserId, onChanged }) {
 
       {error && <div className="text-xs text-red-600">{error}</div>}
 
+      {currentUserId && !open && (
+        <div className="flex items-center gap-2">
+          <LikeButton tripId={tripId} target={slot} count={like.like_count} liked={like.liked_by_me} onChanged={onChanged} />
+          <button type="button" onClick={() => setOpen(true)}
+            className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
+            💬 {comments.length ? "Reageer ook" : "Reageer"}
+          </button>
+        </div>
+      )}
+
       {!currentUserId ? null : open ? (
         <form onSubmit={handleAdd} className="space-y-1.5">
           <Textarea rows={2} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Schrijf een reactie..." />
@@ -1725,18 +1739,13 @@ function JournalComments({ entry, tripId, currentUserId, onChanged }) {
             <Button type="button" variant="secondary" onClick={() => { setOpen(false); setText(""); setError(null); }}>Annuleren</Button>
           </div>
         </form>
-      ) : (
-        <button type="button" onClick={() => setOpen(true)}
-          className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
-          💬 {comments.length ? "Reageer ook" : "Reageer"}
-        </button>
-      )}
+      ) : null}
     </div>
   );
 }
 
 
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -1776,14 +1785,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
             {e.is_new && (
               <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500 text-white">Nieuw</span>
             )}
-            {onCommentsChange && tripId != null && currentUserId && (
-              <LikeButton tripId={tripId} target={{ entry_id: e.id }}
-                count={e.like_count || 0} liked={!!e.liked_by_me} onChanged={onCommentsChange} />
-            )}
           </div>
-          {onCommentsChange && tripId != null && (
-            <JournalComments entry={e} tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
-          )}
         </div>
       ))}
 
@@ -1801,9 +1803,6 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{myEntry.body}</p>
           <div className="flex items-center gap-2 mt-1">
             {myEntry.author && currentUserId && <span className="text-xs text-gray-400">— {myEntry.author}</span>}
-            {(myEntry.like_count || 0) > 0 && (
-              <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5 leading-none">👍 {myEntry.like_count}</span>
-            )}
             {!readOnly && (
               <button type="button" onClick={() => setEditing(true)}
                 className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
@@ -1811,15 +1810,17 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
               </button>
             )}
           </div>
-          {onCommentsChange && tripId != null && myEntry && (
-            <JournalComments entry={myEntry} tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
-          )}
         </div>
       ) : readOnly ? null : (
         <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
           className="text-xs text-gray-400 hover:text-sky-600 italic transition-colors">
           + {othersEntries.length > 0 ? "Jouw verhaal toevoegen" : "Verhaal schrijven"}
         </button>
+      )}
+
+      {reactions && tripId != null && (
+        <JournalComments slot={reactions.slot} comments={reactions.comments} like={reactions.like}
+          tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
       )}
 
       {showPhotos && tripId != null && (photos?.length > 0 || !readOnly) && (
@@ -1835,12 +1836,19 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
 
 function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer }) {
   const [entries, setEntries] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [slotLikes, setSlotLikes] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
   const [addingActivity, setAddingActivity] = useState(null);
   const accent = trip.cover_color || "#0369a1";
 
   const loadEntries = useCallback(async () => {
-    try { setEntries(await api.getJournal(trip.id)); } catch {}
+    try {
+      const d = await api.getJournal(trip.id);
+      setEntries(d.entries || []);
+      setComments(d.comments || []);
+      setSlotLikes(d.slot_likes || {});
+    } catch {}
   }, [trip.id]);
   useEffect(() => { loadEntries(); }, [loadEntries]);
 
@@ -1868,17 +1876,24 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
   // Anything written by someone else since this user's previous visit. The
   // server decides what counts as "previous visit" — see advanceJournalRead.
-  const newCount = entries.reduce(
-    (sum, e) => sum + (e.is_new ? 1 : 0) + (e.comments || []).filter((c) => c.is_new).length,
-    0
-  );
-  const firstNewEntry = entries.find((e) => e.is_new || (e.comments || []).some((c) => c.is_new));
+  const newCount = entries.filter((e) => e.is_new).length + comments.filter((c) => c.is_new).length;
+  const firstNew = entries.find((e) => e.is_new) || comments.find((c) => c.is_new);
   function scrollToFirstNew() {
-    if (!firstNewEntry) return;
-    const dayId = firstNewEntry.day_id
-      || days.find((d) => (d.activities || []).some((a) => a.id === firstNewEntry.activity_id))?.id;
+    if (!firstNew) return;
+    const dayId = firstNew.day_id
+      || days.find((d) => (d.activities || []).some((a) => a.id === firstNew.activity_id))?.id;
     document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  // Everything a block needs to show and post reactions for its own slot.
+  const reactionsFor = (slot) => {
+    const [col, id] = Object.entries(slot)[0];
+    return {
+      slot,
+      comments: comments.filter((c) => c[col] === id),
+      like: slotLikes[`${col}:${id}`] || { like_count: 0, liked_by_me: false },
+    };
+  };
 
   if (days.length === 0) {
     return (
@@ -1944,6 +1959,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const dayName = d ? DAY_NAMES[d.getUTCDay()] : "";
           const monthName = d ? MONTH_NAMES[d.getUTCMonth()] : "";
           const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
+          // Where you sleep that night — the same rule the planning tab uses, so
+          // the dagboek reads with the same sense of place.
+          const nightAccommodation = dayStr ? accommodations.find((a) => {
+            if (!a.check_in || !a.check_out) return false;
+            return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
+          }) : null;
           const isToday = dayStr === todayIso();
 
           return (
@@ -1963,7 +1984,15 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     )}
                     <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
                   </div>
-                  {day.title && <div className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</div>}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {day.title && <span className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</span>}
+                    {nightAccommodation && (
+                      <span className="text-xs text-amber-700 flex items-center gap-1 min-w-0">
+                        <span>🏨</span>
+                        <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {!readOnly && (
                   <button onClick={() => setAddingActivity({ dayId: day.id })}
@@ -1981,6 +2010,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                  reactions={reactionsFor({ day_id: day.id })}
                   days={days} transports={transports} accommodations={accommodations} />
 
                 {hasSubItems && (
@@ -1996,6 +2026,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
                             tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            reactions={reactionsFor({ transport_id: t.id })}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -2011,6 +2042,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
                             tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            reactions={reactionsFor({ accommodation_id: a.id })}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -2027,6 +2059,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
                             tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                            reactions={reactionsFor({ activity_id: act.id })}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -2058,7 +2091,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
   const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
-    try { setJournal(await api.getJournal(trip.id)); } catch {}
+    try { setJournal((await api.getJournal(trip.id)).entries || []); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
@@ -2148,7 +2181,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
   const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
-    try { setJournal(await api.getJournal(trip.id)); } catch {}
+    try { setJournal((await api.getJournal(trip.id)).entries || []); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
