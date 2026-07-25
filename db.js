@@ -278,12 +278,20 @@ async function initDb() {
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE;
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
-    UPDATE journal_likes l SET day_id = e.day_id, activity_id = e.activity_id,
-           transport_id = e.transport_id, accommodation_id = e.accommodation_id
-      FROM journal_entries e
-     WHERE l.entry_id = e.id AND l.day_id IS NULL AND l.activity_id IS NULL
-       AND l.transport_id IS NULL AND l.accommodation_id IS NULL;
-    ALTER TABLE journal_likes DROP COLUMN IF EXISTS entry_id;
+    -- Guarded: after the column is dropped this block must not reference it
+    -- again, or every later boot fails and the server never starts.
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = 'journal_likes' AND column_name = 'entry_id') THEN
+        UPDATE journal_likes l SET day_id = e.day_id, activity_id = e.activity_id,
+               transport_id = e.transport_id, accommodation_id = e.accommodation_id
+          FROM journal_entries e
+         WHERE l.entry_id = e.id AND l.day_id IS NULL AND l.activity_id IS NULL
+           AND l.transport_id IS NULL AND l.accommodation_id IS NULL;
+        ALTER TABLE journal_likes DROP COLUMN entry_id;
+      END IF;
+    END $$;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_comment_user ON journal_likes(comment_id, user_id) WHERE comment_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_day_user ON journal_likes(day_id, user_id) WHERE day_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_activity_user ON journal_likes(activity_id, user_id) WHERE activity_id IS NOT NULL;
