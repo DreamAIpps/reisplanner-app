@@ -1885,12 +1885,15 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     <div>
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagboek</h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           {newCount > 0 && (
             <button onClick={scrollToFirstNew}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors">
               ✨ {newCount} nieuw
             </button>
+          )}
+          {!readOnly && todayDay && (
+            <Button onClick={() => setAddingActivity({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>
           )}
           {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
           {onPreviewViewer && !readOnly && (
@@ -1955,7 +1958,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                 </div>
                 {!readOnly && (
                   <button onClick={() => setAddingActivity({ dayId: day.id })}
-                    className="ml-auto shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg text-white hover:opacity-80 transition-opacity"
+                    className="ml-auto shrink-0 text-xs font-semibold px-3 py-2 rounded-lg text-white shadow-sm hover:opacity-80 active:scale-95 transition-all"
                     style={{ background: accent }}>
                     + Activiteit
                   </button>
