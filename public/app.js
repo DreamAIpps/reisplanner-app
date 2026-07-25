@@ -40,7 +40,14 @@ async function apiFetch(url, options = {}) {
 // ---------- Guest Storage ----------
 const _GK = "rp_guest";
 function _gr() { try { return JSON.parse(localStorage.getItem(_GK) || "{}"); } catch { return {}; } }
-function _gw(d) { try { localStorage.setItem(_GK, JSON.stringify(d)); } catch {} }
+function _gw(d) {
+  try { localStorage.setItem(_GK, JSON.stringify(d)); }
+  catch (err) {
+    // Quota exceeded. Swallowing this made writes look successful while the
+    // data was thrown away, so a guest's photo just vanished with no message.
+    throw new Error("Opslagruimte vol. Log in om je reis op de server te bewaren, of verwijder enkele foto's.");
+  }
+}
 function _gid() { return "g" + Date.now() + Math.random().toString(36).slice(2, 5); }
 
 let _guestMode = false;
@@ -223,7 +230,7 @@ const guestApi = {
   getAdminTrips() { return Promise.resolve([]); },
   getAdminUsers() { return Promise.resolve([]); },
   assignTrip() { return Promise.resolve(null); },
-  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
+  suggestPhoto() { return Promise.reject(new Error("Log in om automatisch foto's te zoeken")); },
 };
 
 const api = {
@@ -852,14 +859,24 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const touchStart = useRef(null);
-  const viewing = viewingIndex != null ? photos[viewingIndex] : null;
+  // Clamp: the parent can reload photos while the lightbox is open (an upload or
+  // reassign elsewhere), and an out-of-range index made the overlay silently
+  // vanish mid-view while still swallowing arrow keys.
+  const safeIndex = viewingIndex == null || !photos.length
+    ? null
+    : Math.min(viewingIndex, photos.length - 1);
+  const viewing = safeIndex != null ? photos[safeIndex] : null;
   const canAssign = !readOnly && !!days;
   const { dayGroups, otherTransports, otherAccommodations } = canAssign
     ? computeDayGroups(days, transports || [], accommodations || [])
     : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
 
-  function showNext() { setViewingIndex((i) => (i + 1) % photos.length); }
-  function showPrev() { setViewingIndex((i) => (i - 1 + photos.length) % photos.length); }
+  useEffect(() => {
+    if (viewingIndex != null && !photos.length) setViewingIndex(null);
+  }, [photos.length, viewingIndex]);
+
+  function showNext() { setViewingIndex((i) => (Math.min(i, photos.length - 1) + 1) % photos.length); }
+  function showPrev() { setViewingIndex((i) => (Math.min(i, photos.length - 1) - 1 + photos.length) % photos.length); }
 
   function handleTouchStart(e) {
     const t = e.touches[0];
@@ -875,6 +892,14 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       touchStart.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
     }
     if (touchStart.current.locked === "x") setDragX(dx);
+  }
+  function handleTouchCancel() {
+    // iOS fires touchcancel (not touchend) when a drag turns into a system
+    // edge-swipe or a notification interrupts; without this the photo stayed
+    // frozen at its last offset with the transition still disabled.
+    touchStart.current = null;
+    setDragging(false);
+    setDragX(0);
   }
   function handleTouchEnd(e) {
     if (!touchStart.current) return;
@@ -920,9 +945,13 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     e.target.value = "";
     if (!files.length) return;
     setUploading(true);
-    try {
-      for (const file of files) {
-        if (file.size > MAX_PHOTO_BYTES) { alert(`"${file.name}" is te groot (max 8 MB)`); continue; }
+    // Each file stands alone: one failure used to abort the whole batch AND skip
+    // the refresh, so already-uploaded photos stayed invisible and the rest were
+    // never attempted.
+    const failed = [];
+    for (const file of files) {
+      if (file.size > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); continue; }
+      try {
         const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
         const base64 = dataUrl.split(",")[1];
         await api.addPhoto(tripId, {
@@ -930,10 +959,15 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           image: { data: base64, mediaType: file.type },
           taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
         });
+      } catch (err) {
+        failed.push(`${file.name} (${err.message || "mislukt"})`);
       }
-      onChange();
-    } catch (err) { alert(err.message || "Uploaden mislukt"); }
-    finally { setUploading(false); }
+    }
+    setUploading(false);
+    onChange();
+    if (failed.length) {
+      alert(`${files.length - failed.length} van ${files.length} foto's geüpload.\n\nNiet gelukt:\n${failed.join("\n")}`);
+    }
   }
 
   async function handleDelete(id) {
@@ -977,7 +1011,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       {viewing && ReactDOM.createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full flex flex-col items-center gap-2 relative py-6"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
             {photos.length > 1 && (
               <>
                 <button type="button" onClick={showPrev}
@@ -993,7 +1027,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
             <img src={viewing.url} alt="" className="max-w-full max-h-[60vh] rounded-lg select-none" draggable={false}
               style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
             {photos.length > 1 && (
-              <div className="text-white/70 text-xs">{viewingIndex + 1} / {photos.length}</div>
+              <div className="text-white/70 text-xs">{safeIndex + 1} / {photos.length}</div>
             )}
             {viewing.taken_at && (
               <div className="flex items-center gap-3 text-white text-xs bg-black/40 rounded-lg px-3 py-1.5">
@@ -1245,14 +1279,25 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
   useEffect(() => {
+    if (_guestMode) return; // /api/photo-suggest requires a session
     const locs = new Set();
     days.forEach((day) => (day.activities || []).forEach((a) => { if (a.location) locs.add(a.location); }));
     [...locs].slice(0, 10).forEach(async (loc) => {
       if (fetchedRef.current.has(loc)) return;
       fetchedRef.current.add(loc);
+      // Cached in localStorage, not just a ref: the ref died on every tab switch,
+      // so returning to Dagplanning re-issued up to 10 Unsplash calls. Their demo
+      // tier allows 50/hour, so a handful of visits silently exhausted the quota
+      // and the card images stopped appearing for everyone.
+      const cacheKey = `locphoto:${loc}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) { setLocationPhotos((p) => ({ ...p, [loc]: cached })); return; }
       try {
         const d = await api.suggestPhoto(loc);
-        setLocationPhotos((p) => ({ ...p, [loc]: d.thumb }));
+        if (d?.thumb) {
+          try { localStorage.setItem(cacheKey, d.thumb); } catch {}
+          setLocationPhotos((p) => ({ ...p, [loc]: d.thumb }));
+        }
       } catch {}
     });
   }, [days]);
@@ -1332,9 +1377,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
             const dayAccommodations = accommodations.filter((a) => isoDate(a.check_in) === dayStr || isoDate(a.check_out) === dayStr);
 
             const d = day.date ? new Date(day.date) : null;
-            const dayNum = d ? d.getDate() : "?";
-            const dayName = d ? DAY_NAMES[d.getDay()] : "";
-            const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
+            const dayNum = d ? d.getUTCDate() : "?";
+            const dayName = d ? DAY_NAMES[d.getUTCDay()] : "";
+            const monthName = d ? MONTH_NAMES[d.getUTCMonth()] : "";
             const totalItems = dayTransports.length + dayAccommodations.length + day.activities.length;
             const nightAccommodation = dayStr ? accommodations.find(a => {
               if (!a.check_in || !a.check_out) return false;
@@ -1726,9 +1771,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           });
           const dayEntries = entries.filter((e) => e.day_id === day.id);
           const d = day.date ? new Date(day.date) : null;
-          const dayNum = d ? d.getDate() : "?";
-          const dayName = d ? DAY_NAMES[d.getDay()] : "";
-          const monthName = d ? MONTH_NAMES[d.getMonth()] : "";
+          const dayNum = d ? d.getUTCDate() : "?";
+          const dayName = d ? DAY_NAMES[d.getUTCDay()] : "";
+          const monthName = d ? MONTH_NAMES[d.getUTCMonth()] : "";
           const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
           const isToday = dayStr === todayIso();
 
@@ -2545,6 +2590,11 @@ function MapTab({ trip, accommodations, transports, days }) {
 
 // ---------- Import modal ----------
 function ImportModal({ tripId, onImported, onClose }) {
+  // Items added one at a time only updated local state; onImported ran solely
+  // from saveAll. Closing after individual adds therefore left the trip stale
+  // until the user navigated away and back. Track it and refresh on close.
+  const savedAnyRef = useRef(false);
+  const handleClose = () => (savedAnyRef.current ? onImported() : onClose());
   const [mode, setMode] = useState("text"); // "text" | "image"
   const [text, setText] = useState("");
   const [imagePreview, setImagePreview] = useState(null);
@@ -2629,6 +2679,7 @@ function ImportModal({ tripId, onImported, onClose }) {
       if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/transports/${e.id}`, { method: "DELETE" })));
       await api.addTransport(tripId, t);
       setSaved((s) => ({ ...s, transports: [...s.transports, idx] }));
+      savedAnyRef.current = true;
     } catch (err) { alert(err.message); }
     finally { setSaving(false); setConfirmReplace(null); }
   }
@@ -2645,6 +2696,7 @@ function ImportModal({ tripId, onImported, onClose }) {
       if (replace) await Promise.all(replace.map((e) => apiFetch(`/api/accommodations/${e.id}`, { method: "DELETE" })));
       await api.addAccommodation(tripId, a);
       setSaved((s) => ({ ...s, accommodations: [...s.accommodations, idx] }));
+      savedAnyRef.current = true;
     } catch (err) { alert(err.message); }
     finally { setSaving(false); setConfirmReplace(null); }
   }
@@ -2662,6 +2714,7 @@ function ImportModal({ tripId, onImported, onClose }) {
     try {
       await api.addActivity(dayId, { ...act, trip_id: tripId });
       setSaved((s) => ({ ...s, activities: [...s.activities, idx] }));
+      savedAnyRef.current = true;
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
   }
@@ -2722,7 +2775,7 @@ function ImportModal({ tripId, onImported, onClose }) {
   }
 
   return (
-    <Modal title="Bevestiging importeren" onClose={onClose} wide>
+    <Modal title="Bevestiging importeren" onClose={handleClose} wide>
       {!result ? (
         <form onSubmit={handleAnalyze} className="space-y-4">
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
@@ -2893,11 +2946,15 @@ function ShareModal({ tripId, onClose }) {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [stats, setStats] = useState(null);
+  const [error, setError] = useState(null);
 
   function generateLink(r) {
-    setRole(r); setLink(null); setLoading(true);
+    setRole(r); setLink(null); setLoading(true); setError(null);
     api.createInvite(tripId, r)
       .then((d) => setLink(d.link))
+      // Guest trips report is_owner, so the Delen button is offered and this
+      // rejected with no handler — an unhandled rejection and a blank modal.
+      .catch((err) => setError(err.message || "Delen is niet gelukt"))
       .finally(() => setLoading(false));
   }
 
@@ -2934,6 +2991,8 @@ function ShareModal({ tripId, onClose }) {
             </button>
           </div>
         </div>
+
+        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
 
         {loading ? (
           <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
@@ -3119,6 +3178,14 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
     }
     if (touchStart.current.locked === "x") setDragX(dx);
   }
+  function handleTouchCancel() {
+    // iOS fires touchcancel (not touchend) when a drag turns into a system
+    // edge-swipe or a notification interrupts; without this the photo stayed
+    // frozen at its last offset with the transition still disabled.
+    touchStart.current = null;
+    setDragging(false);
+    setDragX(0);
+  }
   function handleTouchEnd(e) {
     if (!touchStart.current) return;
     const t = e.changedTouches[0];
@@ -3199,7 +3266,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
       {viewing && ReactDOM.createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setViewingIndex(null)}>
           <div className="max-w-full flex flex-col items-center gap-3 relative py-8"
-            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+            onClick={(e) => e.stopPropagation()} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
             {photos.length > 1 && (
               <>
                 <button type="button" onClick={showPrev}
@@ -3442,6 +3509,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const [importing, setImporting] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -3451,14 +3519,21 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   }, [showMoreMenu]);
 
   const load = useCallback(async () => {
-    const [t, d, a, tr, ex] = await Promise.all([
-      api.getTrip(tripId),
-      api.getDays(tripId),
-      api.getAccommodations(tripId),
-      api.getTransports(tripId),
-      api.getExpenses(tripId),
-    ]);
-    setTrip(t); setDays(d); setAccommodations(a); setTransports(tr); setExpenses(ex);
+    try {
+      const [t, d, a, tr, ex] = await Promise.all([
+        api.getTrip(tripId),
+        api.getDays(tripId),
+        api.getAccommodations(tripId),
+        api.getTransports(tripId),
+        api.getExpenses(tripId),
+      ]);
+      setTrip(t); setDays(d); setAccommodations(a); setTransports(tr); setExpenses(ex);
+      setLoadError(null);
+    } catch (err) {
+      // Without this the screen sat on "Laden..." forever — the back button is
+      // inside the guarded return, so there was no way out but a reload.
+      setLoadError(err.message || "Reis kon niet worden geladen");
+    }
   }, [tripId]);
 
   useEffect(() => { load(); }, [load]);
@@ -3469,6 +3544,19 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     onBack(); onChanged();
   }
 
+  if (loadError && !trip) {
+    return (
+      <div className="text-center py-16">
+        <div className="text-5xl mb-3">😕</div>
+        <div className="font-medium text-gray-700">Reis kon niet worden geladen</div>
+        <div className="text-sm text-gray-400 mt-1 mb-5">{loadError}</div>
+        <div className="flex gap-2 justify-center">
+          <Button onClick={load}>Opnieuw proberen</Button>
+          <Button variant="secondary" onClick={onBack}>← Alle reizen</Button>
+        </div>
+      </div>
+    );
+  }
   if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
   const accent = trip.cover_color || "#0369a1";
@@ -3722,7 +3810,7 @@ function AdminView({ onBack }) {
 
   const byUser = trips.reduce((acc, t) => {
     const key = t.user_id || "unassigned";
-    if (!acc[key]) acc[key] = { name: t.user_name, email: t.user_email, avatar: t.user_avatar, trips: [] };
+    if (!acc[key]) acc[key] = { key: String(key), name: t.user_name, email: t.user_email, avatar: t.user_avatar, trips: [] };
     acc[key].trips.push(t);
     return acc;
   }, {});
@@ -3761,7 +3849,7 @@ function AdminView({ onBack }) {
       {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : tab === "trips" ? (
         <div className="space-y-8">
           {groups.map((group) => (
-            <div key={group.email || "unassigned"}>
+            <div key={group.key}>
               <div className="flex items-center gap-2 mb-3">
                 {group.avatar && <img src={group.avatar} className="w-7 h-7 rounded-full" />}
                 <span className="font-semibold text-gray-700">{group.name || group.email || "Niet gekoppeld"}</span>
