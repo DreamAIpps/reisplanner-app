@@ -1840,6 +1840,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const [slotLikes, setSlotLikes] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
   const [addingActivity, setAddingActivity] = useState(null);
+  const [entriesLoaded, setEntriesLoaded] = useState(false);
+  const didAutoScroll = useRef(false);
   const accent = trip.cover_color || "#0369a1";
 
   const loadEntries = useCallback(async () => {
@@ -1849,6 +1851,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
       setComments(d.comments || []);
       setSlotLikes(d.slot_likes || {});
     } catch {}
+    finally { setEntriesLoaded(true); }
   }, [trip.id]);
   useEffect(() => { loadEntries(); }, [loadEntries]);
 
@@ -1869,6 +1872,20 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   }
 
   const todayDay = days.find((d) => isoDate(d.date) === todayIso());
+
+  // Land on today when the dagboek opens — that is the entry you came to read
+  // or write. Guarded so it happens once per trip: re-running it after every
+  // refresh would yank you back to today mid-scroll whenever a comment or photo
+  // reloaded the entries.
+  useEffect(() => { didAutoScroll.current = false; }, [trip.id]);
+  useEffect(() => {
+    if (didAutoScroll.current || !entriesLoaded || !todayDay) return;
+    didAutoScroll.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ block: "start" });
+    });
+  }, [entriesLoaded, todayDay, trip.id]);
+
   function scrollToToday() {
     if (!todayDay) return;
     document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
