@@ -1,5 +1,12 @@
 require("dotenv").config();
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
+
+// A DATE column is a calendar day, not an instant. pg's default parser turns it
+// into a JS Date at *local* midnight, which JSON.stringify then serialises as
+// UTC — so on any server not running UTC every trip day shifted a day backwards
+// ("2027-03-28" arriving at the browser as "2027-03-27"). Hand DATE through as
+// the plain "YYYY-MM-DD" string the whole app already treats it as.
+types.setTypeParser(types.builtins.DATE, (v) => v);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

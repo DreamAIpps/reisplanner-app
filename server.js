@@ -73,11 +73,16 @@ function parseCookies(req) {
   );
 }
 
+// Must match the session cookie's Max-Age. The cookie lifetime is enforced only
+// by the client, so without a server-side check a leaked token never expired.
+const SESSION_TTL_DAYS = 30;
+
 async function getSession(req) {
   const { session } = parseCookies(req);
   if (!session) return null;
   const { rows } = await query(
-    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
+    `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token = $1 AND s.created_at > NOW() - INTERVAL '${SESSION_TTL_DAYS} days'`,
     [session]
   );
   return rows[0] || null;
@@ -130,11 +135,14 @@ async function findOrCreateUser({ google_id, apple_id, email, name, given_name, 
 async function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
   await query("INSERT INTO sessions (token, user_id) VALUES ($1, $2)", [token, userId]);
+  // Opportunistic prune so the table doesn't grow without bound.
+  query(`DELETE FROM sessions WHERE created_at < NOW() - INTERVAL '${SESSION_TTL_DAYS} days'`)
+    .catch((err) => console.error("Session prune failed:", err.message));
   return token;
 }
 
 function setSessionCookie(res, token) {
-  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`);
+  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_DAYS * 86400}`);
 }
 
 async function handlePostLogin(req, res, user) {
@@ -369,6 +377,11 @@ route("GET", "/api/admin/users", async (req, res) => {
 route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { user_id } = body;
+  // Without this, an omitted field became NULL and orphaned the trip: it then
+  // vanished from every /api/trips listing and only an admin could still see it.
+  if (!Number.isInteger(user_id)) return sendError(res, 400, "user_id is verplicht");
+  const { rows: exists } = await query("SELECT 1 FROM users WHERE id = $1", [user_id]);
+  if (!exists.length) return sendError(res, 400, "Onbekende gebruiker");
   const { rows } = await query("UPDATE trips SET user_id = $1 WHERE id = $2 RETURNING *", [user_id, params.id]);
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
@@ -419,25 +432,32 @@ route("GET", "/api/trips/:id", async (req, res, params) => {
 route("POST", "/api/trips", async (req, res, params, body) => {
   const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
   if (!name) return sendError(res, 400, "Name is required");
+  const dateErr = invalidDates({ start_date, end_date });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
     `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, req.user.id]
   );
-  // Auto-create day entries if dates are set
+  // Auto-create day entries if dates are set. Generated in SQL rather than by
+  // stepping a JS Date: "YYYY-MM-DD" parses as UTC midnight while setDate()
+  // advances local time, so a daylight-saving transition advanced only 23 hours
+  // and toISOString() repeated a date — producing a duplicate day card and
+  // dropping the last day of the trip.
   if (start_date && end_date) {
-    const trip = rows[0];
-    const start = new Date(start_date);
-    const end = new Date(end_date);
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      await query("INSERT INTO days (trip_id, date) VALUES ($1, $2)", [trip.id, d.toISOString().slice(0, 10)]);
-    }
+    await query(
+      `INSERT INTO days (trip_id, date)
+       SELECT $1, gs::date FROM generate_series($2::date, $3::date, interval '1 day') gs`,
+      [rows[0].id, start_date, end_date]
+    );
   }
   sendJson(res, 201, rows[0]);
 });
 
 route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
+  const dateErr = invalidDates({ start_date, end_date });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
     `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
      WHERE id=$11 AND user_id=$12 RETURNING *`,
@@ -518,8 +538,17 @@ route("DELETE", "/api/activities/:id", async (req, res, params) => {
 }, { tripScope: "activities" });
 
 // ---------- Date validation helper ----------
+// An unparseable date used to reach Postgres verbatim and surface as a 500
+// ("invalid input syntax for type date"). Reject it as a 400 up front.
+function invalidDates(fields) {
+  const bad = Object.entries(fields).filter(([, v]) => v && Number.isNaN(new Date(v).getTime()));
+  return bad.length ? `Ongeldige datum bij: ${bad.map(([k]) => k).join(", ")}` : null;
+}
+
 function checkDateInRange(dateStr, tripStart, tripEnd) {
   if (!dateStr || !tripStart || !tripEnd) return null;
+  // An unparseable date threw RangeError here and surfaced as a generic 500.
+  if ([dateStr, tripStart, tripEnd].some((d) => Number.isNaN(new Date(d).getTime()))) return null;
   const date = new Date(dateStr).toISOString().slice(0, 10);
   const start = new Date(tripStart).toISOString().slice(0, 10);
   const end = new Date(tripEnd).toISOString().slice(0, 10);
@@ -537,6 +566,8 @@ route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
 
 route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
   const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
+  const dateErr = invalidDates({ check_in, check_out });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
   const trip = tripRows[0];
   const err = checkDateInRange(check_in, trip?.start_date, trip?.end_date) || checkDateInRange(check_out, trip?.start_date, trip?.end_date);
@@ -550,6 +581,8 @@ route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) =>
 
 route("PUT", "/api/accommodations/:id", async (req, res, params, body) => {
   const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
+  const dateErr = invalidDates({ check_in, check_out });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
     "UPDATE accommodations SET name=$1, check_in=$2, check_out=$3, address=$4, booking_ref=$5, cost=$6, notes=$7 WHERE id=$8 RETURNING *",
     [name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, params.id]
@@ -570,6 +603,8 @@ route("GET", "/api/trips/:id/transports", async (req, res, params) => {
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
   const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
+  const dateErr = invalidDates({ departure_time, arrival_time });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
   const trip = tripRows[0];
   const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
@@ -583,6 +618,8 @@ route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
 
 route("PUT", "/api/transports/:id", async (req, res, params, body) => {
   const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
+  const dateErr = invalidDates({ departure_time, arrival_time });
+  if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
     "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9 WHERE id=$10 RETURNING *",
     [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, params.id]
@@ -836,7 +873,10 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
 }, { tripScope: "param" });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
-  await query("DELETE FROM journal_entries WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  // Scoped to the author: deleting someone else's entry must not silently
+  // report success, so report 403 rather than a 204 that did nothing.
+  const { rowCount } = await query("DELETE FROM journal_entries WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!rowCount) return sendError(res, 403, "Je kunt alleen je eigen verhaal verwijderen");
   res.writeHead(204); res.end();
 }, { tripScope: "journal_entries" });
 
@@ -973,8 +1013,13 @@ route("GET", "/auth/google/callback", async (req, res) => {
 });
 
 route("GET", "/auth/apple/config-check", async (req, res) => {
-  const redirectUri = `${appUrl(req)}/auth/apple/callback`;
-  const clientId = process.env.APPLE_CLIENT_ID || "(niet ingesteld)";
+  // Diagnostic page: admin-only. It discloses the Service ID and reflects the
+  // Host header into HTML, neither of which belongs on a public endpoint.
+  const user = await getSession(req);
+  if (!user?.is_admin) { res.writeHead(404); res.end("Not found"); return; }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const redirectUri = esc(`${appUrl(req)}/auth/apple/callback`);
+  const clientId = esc(process.env.APPLE_CLIENT_ID || "(niet ingesteld)");
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(`<!DOCTYPE html><html><body style="font-family:monospace;padding:24px;max-width:600px">
     <h2>Apple Sign In configuratie</h2>
