@@ -684,9 +684,11 @@ async function normalizeImage(buffer, mediaType) {
 // every thumbnail size in the UI at 2x density and lands around 30–60 KB.
 const THUMB_MAX_EDGE = 600;
 // Raise this whenever makeThumbnail's output changes; anything stored at a lower
-// revision is regenerated on first view. Rev 1 bakes in EXIF orientation, which
-// the pure-JS path previously dropped, leaving portrait photos on their side.
-const THUMB_REV = 1;
+// revision is regenerated on first view. Rev 1 baked in EXIF orientation, which
+// the pure-JS path previously dropped. Rev 2 covers HEIC photos, whose rotation
+// lives in embedded Exif that the decoder ignores — their thumbnails were built
+// from sideways pixels and would otherwise never be rebuilt.
+const THUMB_REV = 2;
 
 // Phones store portrait shots as landscape pixels plus an EXIF Orientation tag.
 // Browsers honour that tag on the original, but re-encoding drops it, so the
@@ -861,8 +863,8 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
        taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
        latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
        longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
-       thumb_data = COALESCE(photos.thumb_data, EXCLUDED.thumb_data),
-       thumb_rev = GREATEST(photos.thumb_rev, EXCLUDED.thumb_rev)
+       thumb_data = COALESCE(EXCLUDED.thumb_data, photos.thumb_data),
+       thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END
      RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
     [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
   );
@@ -877,11 +879,14 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
 // instead of leaving the row as HEIC and re-converting it on every single view.
 async function persistConvertedPhoto(id, mediaType, buffer) {
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
+  // Clear the thumbnail too: it was derived from the bytes being replaced, so
+  // keeping it leaves a correct original next to a stale, differently-oriented
+  // thumbnail.
   try {
-    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3 WHERE id=$4", [mediaType, buffer, contentHash, id]);
+    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3, thumb_data=NULL, thumb_rev=0 WHERE id=$4", [mediaType, buffer, contentHash, id]);
   } catch (err) {
     if (err.code !== "23505") throw err;
-    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=NULL WHERE id=$3", [mediaType, buffer, id]);
+    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=NULL, thumb_data=NULL, thumb_rev=0 WHERE id=$3", [mediaType, buffer, id]);
   }
 }
 
