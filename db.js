@@ -193,6 +193,9 @@ async function initDb() {
     -- Downscaled copy served to grids and strips. Without it every 150px
     -- thumbnail downloads the full multi-megabyte original.
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_data BYTEA;
+    -- Bumped when the thumbnail generator changes so existing thumbnails are
+    -- regenerated lazily on next view, rather than needing a migration pass.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_rev SMALLINT NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS photos_trip_idx ON photos(trip_id);
     CREATE INDEX IF NOT EXISTS days_trip_idx ON days(trip_id);
     CREATE INDEX IF NOT EXISTS activities_trip_idx ON activities(trip_id);
