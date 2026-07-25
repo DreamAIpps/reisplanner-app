@@ -677,12 +677,78 @@ async function normalizeImage(buffer, mediaType) {
 // photos downloads hundreds of MB to draw one screen. 600px longest edge covers
 // every thumbnail size in the UI at 2x density and lands around 30–60 KB.
 const THUMB_MAX_EDGE = 600;
+// Raise this whenever makeThumbnail's output changes; anything stored at a lower
+// revision is regenerated on first view. Rev 1 bakes in EXIF orientation, which
+// the pure-JS path previously dropped, leaving portrait photos on their side.
+const THUMB_REV = 1;
 
-// Box-average downscale of a JPEG, no native code. Slower than sharp and it
-// ignores EXIF orientation, but it keeps thumbnails working on a host where the
-// native binary is missing rather than serving multi-megabyte originals.
+// Phones store portrait shots as landscape pixels plus an EXIF Orientation tag.
+// Browsers honour that tag on the original, but re-encoding drops it, so the
+// rotation has to be baked into the pixels or thumbnails come out sideways.
+function readExifOrientation(buf) {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return 1;
+  let off = 2;
+  while (off + 4 <= buf.length) {
+    if (buf[off] !== 0xff) break;
+    const marker = buf[off + 1];
+    const size = buf.readUInt16BE(off + 2);
+    if (marker === 0xe1 && buf.toString("ascii", off + 4, off + 10) === "Exif\0\0") {
+      const tiff = off + 10;
+      if (tiff + 8 > buf.length) return 1;
+      const le = buf.toString("ascii", tiff, tiff + 2) === "II";
+      const u16 = (p) => (le ? buf.readUInt16LE(p) : buf.readUInt16BE(p));
+      const u32 = (p) => (le ? buf.readUInt32LE(p) : buf.readUInt32BE(p));
+      const ifd = tiff + u32(tiff + 4);
+      if (ifd + 2 > buf.length) return 1;
+      const count = u16(ifd);
+      for (let i = 0; i < count; i++) {
+        const e = ifd + 2 + i * 12;
+        if (e + 12 > buf.length) break;
+        if (u16(e) === 0x0112) return u16(e + 8) || 1;
+      }
+      return 1;
+    }
+    if (marker === 0xda) break; // start of scan; no EXIF before the image data
+    off += 2 + size;
+  }
+  return 1;
+}
+
+// Applies EXIF orientations 1-8 to an RGBA buffer.
+function applyOrientation(data, width, height, orientation) {
+  if (orientation === 1) return { data, width, height };
+  const swap = orientation >= 5;
+  const w = swap ? height : width;
+  const h = swap ? width : height;
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let nx, ny;
+      switch (orientation) {
+        case 2: nx = width - 1 - x; ny = y; break;
+        case 3: nx = width - 1 - x; ny = height - 1 - y; break;
+        case 4: nx = x; ny = height - 1 - y; break;
+        case 5: nx = y; ny = x; break;
+        case 6: nx = height - 1 - y; ny = x; break;
+        case 7: nx = height - 1 - y; ny = width - 1 - x; break;
+        case 8: nx = y; ny = width - 1 - x; break;
+        default: nx = x; ny = y;
+      }
+      const src = (y * width + x) * 4;
+      const dst = (ny * w + nx) * 4;
+      out[dst] = data[src]; out[dst + 1] = data[src + 1];
+      out[dst + 2] = data[src + 2]; out[dst + 3] = data[src + 3];
+    }
+  }
+  return { data: out, width: w, height: h };
+}
+
+// Box-average downscale of a JPEG, no native code. Slower than sharp, but it
+// keeps thumbnails working on a host where the native binary is missing rather
+// than serving multi-megabyte originals.
 function makeThumbnailPureJs(buffer) {
-  const img = jpegJs.decode(buffer, { useTArray: true });
+  const decoded = jpegJs.decode(buffer, { useTArray: true });
+  const img = applyOrientation(decoded.data, decoded.width, decoded.height, readExifOrientation(buffer));
   const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(img.width, img.height));
   if (scale >= 1) return jpegJs.encode(img, 75).data;
   const w = Math.max(1, Math.round(img.width * scale));
@@ -754,8 +820,8 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const thumb = await makeThumbnail(buffer);
   const { rows } = await query(
-    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
        day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
        activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
@@ -765,9 +831,10 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
        taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
        latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
        longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
-       thumb_data = COALESCE(photos.thumb_data, EXCLUDED.thumb_data)
+       thumb_data = COALESCE(photos.thumb_data, EXCLUDED.thumb_data),
+       thumb_rev = GREATEST(photos.thumb_rev, EXCLUDED.thumb_rev)
      RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb]
+    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
   );
   const { inserted, ...photo } = rows[0];
   sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw`, thumb_url: `/api/photos/${photo.id}/thumb` });
@@ -822,12 +889,13 @@ route("GET", "/api/photos/:id/raw", async (req, res, params) => {
 }, { tripScope: "photos" });
 
 route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
-  const { rows } = await query("SELECT thumb_data, content_hash FROM photos WHERE id = $1", [params.id]);
+  const { rows } = await query("SELECT thumb_data, thumb_rev, content_hash FROM photos WHERE id = $1", [params.id]);
   if (!rows.length) { res.writeHead(404); res.end(); return; }
   let thumb = rows[0].thumb_data;
-  // Generated lazily for photos that predate thumbnails (or whose generation
-  // failed at upload). Only the first viewer pays for it.
-  if (!thumb) {
+  // Generated lazily for photos that predate thumbnails, whose generation failed
+  // at upload, or that were built by an older generator. Only the first viewer
+  // after the change pays for it.
+  if (!thumb || rows[0].thumb_rev < THUMB_REV) {
     const full = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
     let { data, mime_type } = full.rows[0];
     if (looksLikeHeic(data, mime_type)) {
@@ -836,7 +904,7 @@ route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
     }
     thumb = await makeThumbnail(data);
     if (!thumb) { res.writeHead(302, { Location: `/api/photos/${params.id}/raw` }); res.end(); return; }
-    await query("UPDATE photos SET thumb_data = $1 WHERE id = $2", [thumb, params.id])
+    await query("UPDATE photos SET thumb_data = $1, thumb_rev = $2 WHERE id = $3", [thumb, THUMB_REV, params.id])
       .catch((err) => console.error(`Failed to persist thumbnail for photo ${params.id}:`, err.message));
   }
   const etag = rows[0].content_hash ? `"t${rows[0].content_hash}"` : null;
