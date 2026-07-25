@@ -1099,6 +1099,49 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
   );
 }
 
+function PhotoCaption({ photo, readOnly, onChanged, maxWidth }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(photo.caption || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (!editing) setText(photo.caption || ""); }, [photo.caption, editing]);
+
+  async function save() {
+    setSaving(true);
+    try { await api.setPhotoCaption(photo.id, text.trim()); setEditing(false); await onChanged(); }
+    catch (err) { alert(err.message || "Opslaan mislukt"); }
+    finally { setSaving(false); }
+  }
+
+  if (readOnly) {
+    return photo.caption
+      ? <p className="mt-1.5 text-xs text-gray-600 leading-snug whitespace-pre-wrap" style={{ maxWidth }}>{photo.caption}</p>
+      : null;
+  }
+
+  if (editing) {
+    return (
+      <div className="mt-1.5 space-y-1.5" style={{ maxWidth }} onClick={(e) => e.stopPropagation()}>
+        <Textarea rows={2} autoFocus value={text} maxLength={500}
+          onChange={(e) => setText(e.target.value)} placeholder="Korte beschrijving..." />
+        <div className="flex gap-2">
+          <Button onClick={save} disabled={saving} className="!text-xs !px-2.5 !py-1">{saving ? "Opslaan..." : "Opslaan"}</Button>
+          <Button variant="secondary" onClick={() => { setText(photo.caption || ""); setEditing(false); }} className="!text-xs !px-2.5 !py-1">Annuleren</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      className="mt-1.5 block text-left text-xs leading-snug w-full" style={{ maxWidth }}>
+      {photo.caption
+        ? <span className="text-gray-600 whitespace-pre-wrap">{photo.caption}</span>
+        : <span className="text-gray-400 italic hover:text-sky-600 transition-colors">+ Beschrijving</span>}
+    </button>
+  );
+}
+
 function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -1167,8 +1210,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         <div key={p.id} className="relative shrink-0 group">
           <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
-          {large && p.caption && (
-            <p className="mt-1.5 text-xs text-gray-600 leading-snug line-clamp-2" style={{ maxWidth: "70vw" }}>{p.caption}</p>
+          {large && (
+            <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth="70vw" />
           )}
           {!readOnly && (
             <button type="button" onClick={() => handleDelete(p.id)}
