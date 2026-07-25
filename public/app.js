@@ -578,7 +578,11 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false }) {
+function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated }) {
+  // Once created, the activity behaves like an existing one for the rest of this
+  // dialog, which is what unlocks the dagboek section below.
+  const [created, setCreated] = useState(null);
+  const activity = initial || created;
   const [form, setForm] = useState(() => {
     if (initial) {
       // `initial` is the raw DB row, where empty columns are null. Feeding null
@@ -602,16 +606,22 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
   async function handleSubmit(e) {
     e.preventDefault(); setSaving(true); setError(null);
     try {
-      const saved = initial?.id
-        ? await api.updateActivity(initial.id, form)
+      const target = initial?.id || created?.id;
+      const saved = target
+        ? await api.updateActivity(target, form)
         : await api.addActivity(form.day_id || dayId, { ...form, trip_id: tripId });
-      onSaved(saved);
+      if (!target && stayOpenAfterCreate) {
+        setCreated(saved);
+        onCreated?.(saved);   // refresh the timeline behind the dialog
+      } else {
+        onSaved(saved);
+      }
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   }
   return (
-    <Modal title={initial?.id ? "Activiteit bewerken" : "Activiteit toevoegen"} onClose={onClose}>
-      {!initial && onImport && (
+    <Modal title={activity?.id ? "Activiteit bewerken" : "Activiteit toevoegen"} onClose={() => (created ? onSaved(created) : onClose())}>
+      {!activity && onImport && (
         <>
           <button type="button" onClick={onImport}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
@@ -644,14 +654,19 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" disabled={readOnly} /></Field>
         {!readOnly && <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
-        {initial?.id && (
+        {activity?.id && (
           <Field label="Dagboek">
-            <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
-              onSave={(text) => api.saveJournalEntry(tripId, { activity_id: initial.id, body: text }).then(onJournalChange)}
+            {created && (
+              <div className="bg-green-50 text-green-700 text-xs px-3 py-2 rounded-lg mb-2">
+                Activiteit toegevoegd. Schrijf er meteen iets bij of voeg een foto toe.
+              </div>
+            )}
+            <JournalEntryBox entries={(journalEntries || []).filter((e) => e.activity_id === activity.id)} currentUserId={currentUserId} placeholder={`Vertel over ${form.title || "deze activiteit"}...`}
+              onSave={(text) => api.saveJournalEntry(tripId, { activity_id: activity.id, body: text }).then(onJournalChange)}
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
-              photos={(photos || []).filter((p) => p.activity_id === initial.id)}
-              photoCandidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
-              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
+              photos={(photos || []).filter((p) => p.activity_id === activity.id)}
+              photoCandidates={(photos || []).filter((p) => p.activity_id !== activity.id)}
+              tripId={tripId} dayId={dayId} activityId={activity.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={showPhotos} />
           </Field>
         )}
         <div className="flex justify-between items-center pt-2">
@@ -2192,6 +2207,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
       {addingActivity && (
         <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} days={days} showPhotos
+          stayOpenAfterCreate
+          onCreated={onRefresh}
+          photos={tripPhotos} onPhotosChange={loadPhotos}
+          journalEntries={entries} onJournalChange={loadEntries} currentUserId={currentUserId}
           onSaved={() => { setAddingActivity(null); onRefresh?.(); }}
           onClose={() => setAddingActivity(null)} />
       )}
