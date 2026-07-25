@@ -2006,7 +2006,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer, onShare }) {
   const [entries, setEntries] = useState([]);
   const [comments, setComments] = useState([]);
   const [slotLikes, setSlotLikes] = useState({});
@@ -2109,6 +2109,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
             <Button onClick={() => setAddingActivity({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>
           )}
           {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+          {onShare && !readOnly && (
+            <Button onClick={onShare} variant="secondary">🔗 Delen</Button>
+          )}
           {onPreviewViewer && !readOnly && (
             <Button onClick={onPreviewViewer} variant="secondary">👀 Bekijk als gast</Button>
           )}
@@ -3951,7 +3954,6 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">🔗 Delen</Button>}
                   {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
                   {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
                 </div>
@@ -3982,7 +3984,6 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setSharing(true)} className="shrink-0">🔗 Delen</Button>}
                   {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
                   {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
                 </div>
@@ -4050,11 +4051,11 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       })()}
 
       {readOnly ? (
-        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} />
+        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing(true) : null} />
       ) : (
         <>
           {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} />}
+          {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing(true) : null} />}
           {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} />}
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
