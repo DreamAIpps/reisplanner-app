@@ -1151,7 +1151,38 @@ route("POST", "/auth/login/password", async (req, res) => {
 route("GET", "/auth/me", async (req, res) => {
   const user = await getSession(req);
   if (!user) return sendError(res, 401, "Niet ingelogd");
-  sendJson(res, 200, { id: user.id, name: user.name, email: user.email, avatar: user.avatar, is_admin: user.is_admin });
+  sendJson(res, 200, {
+    id: user.id, name: user.name, email: user.email, avatar: user.avatar, is_admin: user.is_admin,
+    linked: { google: !!user.google_id, apple: !!user.apple_id },
+  });
+});
+
+// Attach an Apple ID to the account you are already signed in to.
+//
+// Apple's `sub` is stable per user per app, so repeat sign-ins always find the
+// right account — that part needs nothing. The gap is the first Apple sign-in by
+// someone who already had an account: with "hide my e-mail" Apple sends a relay
+// address that matches nothing, so they land on a new empty account instead of
+// their trips. There is no way to recover the real address from the relay one,
+// so the link has to be made deliberately from inside an authenticated session.
+route("POST", "/auth/apple/link", async (req, res, params, body) => {
+  const user = await getSession(req);
+  if (!user) return sendError(res, 401, "Niet ingelogd");
+  if (!body?.id_token) return sendError(res, 400, "Geen id_token ontvangen");
+
+  let payload;
+  try { payload = await verifyAppleIdToken(body.id_token); }
+  catch (err) { return sendError(res, 401, "Apple-token kon niet worden geverifieerd"); }
+
+  const { rows: owner } = await query("SELECT id FROM users WHERE apple_id = $1", [payload.sub]);
+  if (owner.length && owner[0].id !== user.id) {
+    return sendError(res, 409, "Dit Apple-account is al aan een andere gebruiker gekoppeld.");
+  }
+  if (user.apple_id && user.apple_id !== payload.sub) {
+    return sendError(res, 409, "Er is al een ander Apple-account aan dit profiel gekoppeld.");
+  }
+  await query("UPDATE users SET apple_id = $1 WHERE id = $2", [payload.sub, user.id]);
+  sendJson(res, 200, { ok: true, linked: { google: !!user.google_id, apple: true } });
 });
 
 route("POST", "/auth/logout", async (req, res) => {

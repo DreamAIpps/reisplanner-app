@@ -1643,6 +1643,106 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   );
 }
 
+// Apple's JS SDK is only on the login page; pull it in on demand so the app
+// shell doesn't carry another blocking CDN script for a rarely-used action.
+function loadAppleSdk() {
+  if (window.AppleID) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
+    el.onload = () => resolve();
+    el.onerror = () => reject(new Error("Apple kon niet worden geladen"));
+    document.head.appendChild(el);
+  });
+}
+
+function AccountModal({ user, onClose, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+  const linked = user.linked || {};
+
+  async function linkApple() {
+    setBusy(true); setError(null);
+    try {
+      await loadAppleSdk();
+      const cfg = await fetch("/auth/apple/client-id").then((r) => r.json());
+      if (!cfg.clientId) throw new Error("Apple Sign In is niet geconfigureerd op de server.");
+      window.AppleID.auth.init({
+        clientId: cfg.clientId, scope: "name email",
+        redirectURI: window.location.origin + "/auth/apple/callback", usePopup: true,
+      });
+      const response = await window.AppleID.auth.signIn();
+      const idToken = response.authorization?.id_token;
+      if (!idToken) throw new Error("Apple stuurde geen token.");
+      const res = await fetch("/auth/apple/link", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Koppelen mislukt");
+      setDone(true);
+      await onChanged();
+    } catch (err) {
+      if (err && (err.error === "popup_closed_by_user" || err.error === "user_trigger_new_signin_flow")) {
+        // dismissed — say nothing
+      } else setError(err.message || "Koppelen mislukt");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal title="Account" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          {user.avatar
+            ? <img src={user.avatar} alt="" className="w-12 h-12 rounded-full" />
+            : <div className="w-12 h-12 rounded-full bg-sky-600 text-white flex items-center justify-center font-bold">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>}
+          <div className="min-w-0">
+            <div className="font-semibold text-gray-800 truncate">{user.name || "—"}</div>
+            <div className="text-xs text-gray-500 truncate">{user.email || "geen e-mailadres bekend"}</div>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Inlogmethoden</label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-gray-50">
+              <span>🔵</span><span className="flex-1">Google</span>
+              <span className={linked.google ? "text-green-600 text-xs font-semibold" : "text-gray-400 text-xs"}>
+                {linked.google ? "gekoppeld" : "niet gekoppeld"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-gray-50">
+              <span></span><span className="flex-1">Apple</span>
+              {linked.apple || done ? (
+                <span className="text-green-600 text-xs font-semibold">gekoppeld</span>
+              ) : (
+                <Button onClick={linkApple} disabled={busy} className="!text-xs !px-2.5 !py-1">
+                  {busy ? "Bezig..." : "Koppelen"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
+        {done && <div className="bg-green-50 text-green-700 text-sm px-3 py-2 rounded-lg">Apple is gekoppeld. Je kunt voortaan met Apple inloggen op dit account, ook met een verborgen e-mailadres.</div>}
+
+        {!linked.apple && !done && (
+          <p className="text-xs text-gray-500 leading-relaxed">
+            Koppel Apple terwijl je hier ingelogd bent. Doe je dat niet en log je later met Apple in met een
+            verborgen e-mailadres, dan kan de app je niet herkennen en krijg je een leeg account.
+          </p>
+        )}
+
+        <div className="flex justify-end pt-1">
+          <Button variant="secondary" onClick={onClose}>Sluiten</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------- Journal (dagboek) ----------
 function LikeButton({ tripId, target, count, liked, onChanged, disabled }) {
   const [busy, setBusy] = useState(false);
@@ -4077,13 +4177,16 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState({ name: "list" });
   const [showTripForm, setShowTripForm] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
 
-  useEffect(() => {
-    fetch("/auth/me")
-      .then((r) => r.ok ? r.json() : null)
-      .then((u) => { setUser(u); setAuthLoading(false); })
-      .catch(() => { setUser(null); setAuthLoading(false); });
+  const loadUser = useCallback(async () => {
+    try {
+      const r = await fetch("/auth/me");
+      setUser(r.ok ? await r.json() : null);
+    } catch { setUser(null); }
+    finally { setAuthLoading(false); }
   }, []);
+  useEffect(() => { loadUser(); }, [loadUser]);
 
   const loadTrips = useCallback(async () => {
     setLoading(true);
@@ -4133,10 +4236,12 @@ function App() {
                 <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
                   Uitloggen
                 </button>
-                {user.avatar
-                  ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400 shrink-0" />
-                  : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm shrink-0">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
-                }
+                <button onClick={() => setShowAccount(true)} title="Account" className="shrink-0">
+                  {user.avatar
+                    ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400" />
+                    : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+                  }
+                </button>
               </>
             ) : (
               <>
@@ -4199,6 +4304,9 @@ function App() {
         )}
       </main>
 
+      {showAccount && user && (
+        <AccountModal user={user} onClose={() => setShowAccount(false)} onChanged={loadUser} />
+      )}
       {showTripForm && (
         <TripForm
           onSaved={(trip) => { setShowTripForm(false); loadTrips(); setView({ name: "detail", id: trip.id }); }}
