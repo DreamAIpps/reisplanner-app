@@ -229,6 +229,48 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_transport_user_unique ON journal_entries(transport_id, user_id) WHERE transport_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_accommodation_user_unique ON journal_entries(accommodation_id, user_id) WHERE accommodation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS journal_entries_trip_idx ON journal_entries(trip_id);
+
+    -- Reactions to someone's story. Read-only members may post these; it is the
+    -- one write a viewer is allowed to make. trip_id is denormalised so the
+    -- router's tripScope can authorise a DELETE without a join.
+    CREATE TABLE IF NOT EXISTS journal_comments (
+      id SERIAL PRIMARY KEY,
+      entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS journal_comments_trip_idx ON journal_comments(trip_id);
+    CREATE INDEX IF NOT EXISTS journal_comments_entry_idx ON journal_comments(entry_id, created_at);
+
+    -- Drives the "new since your last visit" markers. Deliberately not tied to
+    -- login: people stay signed in for weeks, so a login timestamp would mark
+    -- everything as seen forever. Instead marker_at is the boundary shown to the
+    -- user and last_seen_at tracks activity; see advanceJournalRead in server.js.
+    -- Thumbs-up on either a story or a reaction. One table with two nullable
+    -- targets keeps the toggle endpoint and the counting query single-shot.
+    -- Viewers may like, same as they may comment.
+    CREATE TABLE IF NOT EXISTS journal_likes (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      entry_id INTEGER REFERENCES journal_entries(id) ON DELETE CASCADE,
+      comment_id INTEGER REFERENCES journal_comments(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      CONSTRAINT journal_likes_one_target CHECK ((entry_id IS NULL) <> (comment_id IS NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_entry_user ON journal_likes(entry_id, user_id) WHERE entry_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_comment_user ON journal_likes(comment_id, user_id) WHERE comment_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS journal_likes_trip_idx ON journal_likes(trip_id);
+
+    CREATE TABLE IF NOT EXISTS journal_reads (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      marker_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (trip_id, user_id)
+    );
   `);
 
   // Merge any photos already duplicated (same trip, identical bytes) before

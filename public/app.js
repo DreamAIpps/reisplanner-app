@@ -203,7 +203,10 @@ const guestApi = {
     _gw(d); return Promise.resolve(found);
   },
   getJournal(tripId) {
-    return Promise.resolve((_gr().journal_entries || []).filter(e => e.trip_id === tripId));
+    const d = _gr();
+    const comments = d.journal_comments || [];
+    return Promise.resolve((d.journal_entries || []).filter(e => e.trip_id === tripId)
+      .map(e => ({ ...e, comments: comments.filter(c => c.entry_id === e.id), is_new: false })));
   },
   saveJournalEntry(tripId, data) {
     const d = _gr();
@@ -225,6 +228,15 @@ const guestApi = {
   deleteJournalEntry(id) {
     const d = _gr(); d.journal_entries = (d.journal_entries || []).filter(e => e.id !== id); _gw(d); return Promise.resolve(null);
   },
+  addJournalComment(tripId, data) {
+    const d = _gr();
+    const c = { id: _gid(), entry_id: data.entry_id, trip_id: tripId, body: data.body, created_at: new Date().toISOString(), author: null, is_new: false };
+    d.journal_comments = [...(d.journal_comments || []), c]; _gw(d); return Promise.resolve(c);
+  },
+  deleteJournalComment(id) {
+    const d = _gr(); d.journal_comments = (d.journal_comments || []).filter(c => c.id !== id); _gw(d); return Promise.resolve(null);
+  },
+  toggleJournalLike() { return Promise.resolve({ liked: false }); },
   importEmail() { return Promise.reject(new Error("Log in om e-mailimport te gebruiken")); },
   createInvite() { return Promise.reject(new Error("Log in om reizen te delen")); },
   getAdminTrips() { return Promise.resolve([]); },
@@ -265,6 +277,9 @@ const api = {
   getJournal: (tripId) => _guestMode ? guestApi.getJournal(tripId) : apiFetch(`/api/trips/${tripId}/journal`),
   saveJournalEntry: (tripId, d) => _guestMode ? guestApi.saveJournalEntry(tripId, d) : apiFetch(`/api/trips/${tripId}/journal`, { method: "POST", body: JSON.stringify(d) }),
   deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
+  addJournalComment: (tripId, d) => _guestMode ? guestApi.addJournalComment(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-comments`, { method: "POST", body: JSON.stringify(d) }),
+  deleteJournalComment: (id) => _guestMode ? guestApi.deleteJournalComment(id) : apiFetch(`/api/journal-comments/${id}`, { method: "DELETE" }),
+  toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
@@ -1589,7 +1604,104 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 }
 
 // ---------- Journal (dagboek) ----------
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
+function LikeButton({ tripId, target, count, liked, onChanged, disabled }) {
+  const [busy, setBusy] = useState(false);
+  async function toggle(e) {
+    e.stopPropagation();
+    if (busy || disabled) return;
+    setBusy(true);
+    try { await api.toggleJournalLike(tripId, target); await onChanged(); }
+    catch (err) { alert(err.message || "Liken mislukt"); }
+    finally { setBusy(false); }
+  }
+  return (
+    <button type="button" onClick={toggle} disabled={busy || disabled}
+      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border transition-colors disabled:opacity-50 ${
+        liked ? "bg-sky-50 border-sky-300 text-sky-700" : "bg-white border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"
+      }`}
+      title={liked ? "Like weghalen" : "Vind ik leuk"}>
+      <span className="leading-none">👍</span>
+      {count > 0 && <span className="font-semibold leading-none">{count}</span>}
+    </button>
+  );
+}
+
+
+// Reactions under a story. Read-only members can post these — it is the one
+// write a viewer is allowed, so family following a trip can respond.
+function JournalComments({ entry, tripId, currentUserId, onChanged }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const comments = entry.comments || [];
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      await api.addJournalComment(tripId, { entry_id: entry.id, body: text.trim() });
+      setText(""); setOpen(false);
+      await onChanged();
+    } catch (err) { setError(err.message || "Reactie plaatsen mislukt"); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("Reactie verwijderen?")) return;
+    try { await api.deleteJournalComment(id); await onChanged(); }
+    catch (err) { alert(err.message || "Verwijderen mislukt"); }
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+      {comments.map((c) => (
+        <div key={c.id} className={`group flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-sm ${c.is_new ? "bg-amber-50 border border-amber-200" : "bg-gray-50"}`}>
+          <span className="shrink-0 text-xs mt-0.5">💬</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-gray-700 whitespace-pre-wrap leading-snug break-words">{c.body}</p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="text-[11px] text-gray-400">
+                {c.author || "Iemand"}{c.created_at ? ` · ${fmtDatetime(c.created_at)}` : ""}
+              </span>
+              {currentUserId && (
+                <LikeButton tripId={tripId} target={{ comment_id: c.id }}
+                  count={c.like_count || 0} liked={!!c.liked_by_me} onChanged={onChanged} />
+              )}
+            </div>
+          </div>
+          {c.user_id === currentUserId && (
+            <button type="button" onClick={() => handleDelete(c.id)}
+              className="shrink-0 text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
+              🗑
+            </button>
+          )}
+        </div>
+      ))}
+
+      {error && <div className="text-xs text-red-600">{error}</div>}
+
+      {!currentUserId ? null : open ? (
+        <form onSubmit={handleAdd} className="space-y-1.5">
+          <Textarea rows={2} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Schrijf een reactie..." />
+          <div className="flex gap-2">
+            <Button type="submit" disabled={saving || !text.trim()}>{saving ? "Plaatsen..." : "Plaatsen"}</Button>
+            <Button type="button" variant="secondary" onClick={() => { setOpen(false); setText(""); setError(null); }}>Annuleren</Button>
+          </div>
+        </form>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}
+          className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
+          💬 {comments.length ? "Reageer ook" : "Reageer"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -1622,9 +1734,21 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
   return (
     <div className="space-y-2">
       {othersEntries.map((e) => (
-        <div key={e.id} className="bg-gray-50 rounded-lg px-3 py-2">
+        <div key={e.id} className={`rounded-lg px-3 py-2 ${e.is_new ? "bg-amber-50 border border-amber-200" : "bg-gray-50"}`}>
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{e.body}</p>
-          {e.author && <div className="text-xs text-gray-400 mt-1">— {e.author}</div>}
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {e.author && <span className="text-xs text-gray-400">— {e.author}</span>}
+            {e.is_new && (
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500 text-white">Nieuw</span>
+            )}
+            {onCommentsChange && tripId != null && currentUserId && (
+              <LikeButton tripId={tripId} target={{ entry_id: e.id }}
+                count={e.like_count || 0} liked={!!e.liked_by_me} onChanged={onCommentsChange} />
+            )}
+          </div>
+          {onCommentsChange && tripId != null && (
+            <JournalComments entry={e} tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
+          )}
         </div>
       ))}
 
@@ -1642,6 +1766,9 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{myEntry.body}</p>
           <div className="flex items-center gap-2 mt-1">
             {myEntry.author && currentUserId && <span className="text-xs text-gray-400">— {myEntry.author}</span>}
+            {(myEntry.like_count || 0) > 0 && (
+              <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5 leading-none">👍 {myEntry.like_count}</span>
+            )}
             {!readOnly && (
               <button type="button" onClick={() => setEditing(true)}
                 className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
@@ -1649,6 +1776,9 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
               </button>
             )}
           </div>
+          {onCommentsChange && tripId != null && myEntry && (
+            <JournalComments entry={myEntry} tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
+          )}
         </div>
       ) : readOnly ? null : (
         <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(true); }}
@@ -1701,6 +1831,20 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Anything written by someone else since this user's previous visit. The
+  // server decides what counts as "previous visit" — see advanceJournalRead.
+  const newCount = entries.reduce(
+    (sum, e) => sum + (e.is_new ? 1 : 0) + (e.comments || []).filter((c) => c.is_new).length,
+    0
+  );
+  const firstNewEntry = entries.find((e) => e.is_new || (e.comments || []).some((c) => c.is_new));
+  function scrollToFirstNew() {
+    if (!firstNewEntry) return;
+    const dayId = firstNewEntry.day_id
+      || days.find((d) => (d.activities || []).some((a) => a.id === firstNewEntry.activity_id))?.id;
+    document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   if (days.length === 0) {
     return (
       <div className="text-center py-16 text-gray-400">
@@ -1716,6 +1860,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Dagboek</h3>
         <div className="flex gap-2">
+          {newCount > 0 && (
+            <button onClick={scrollToFirstNew}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors">
+              ✨ {newCount} nieuw
+            </button>
+          )}
           {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
           {onPreviewViewer && !readOnly && (
             <Button onClick={onPreviewViewer} variant="secondary">👀 Bekijk als gast</Button>
@@ -1789,7 +1939,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               <div className="p-4 space-y-4">
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} placeholder="Hoe was deze dag?"
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
-                  onDelete={deleteEntry}
+                  onDelete={deleteEntry} onCommentsChange={loadEntries}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   photoCandidates={tripPhotos.filter((p) => !(p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id))}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
@@ -1804,7 +1954,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold text-blue-700 mb-1">{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</div>
                           <JournalEntryBox entries={tEntries} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
                             onSave={(text) => saveEntry({ transport_id: t.id }, text)}
-                            onDelete={deleteEntry}
+                            onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             photoCandidates={tripPhotos.filter((p) => p.transport_id !== t.id)}
                             tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
@@ -1819,7 +1969,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold text-amber-700 mb-1">🏨 {a.name}</div>
                           <JournalEntryBox entries={aEntries} currentUserId={currentUserId} placeholder="Vertel over dit verblijf..."
                             onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
-                            onDelete={deleteEntry}
+                            onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             photoCandidates={tripPhotos.filter((p) => p.accommodation_id !== a.id)}
                             tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
@@ -1835,7 +1985,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold mb-1" style={{ color: catColor }}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</div>
                           <JournalEntryBox entries={actEntries} currentUserId={currentUserId} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
-                            onDelete={deleteEntry}
+                            onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             photoCandidates={tripPhotos.filter((p) => p.activity_id !== act.id)}
                             tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly}
