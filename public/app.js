@@ -1112,9 +1112,6 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         <div key={p.id} className="relative shrink-0 group">
           <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
-          {p.latitude != null && p.longitude != null && (
-            <span className={`absolute bottom-0.5 left-0.5 leading-none bg-black/50 text-white rounded px-1 py-0.5 ${large ? "text-base px-1.5 py-1" : "text-xs"}`}>📍</span>
-          )}
           {!readOnly && (
             <button type="button" onClick={() => handleDelete(p.id)}
               className={`absolute -top-1.5 -right-1.5 rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "w-8 h-8 text-base" : "w-6 h-6 text-sm"}`}>
