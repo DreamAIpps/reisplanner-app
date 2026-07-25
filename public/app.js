@@ -284,6 +284,7 @@ const api = {
   deleteJournalEntry: (id) => _guestMode ? guestApi.deleteJournalEntry(id) : apiFetch(`/api/journal/${id}`, { method: "DELETE" }),
   addJournalComment: (tripId, d) => _guestMode ? guestApi.addJournalComment(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-comments`, { method: "POST", body: JSON.stringify(d) }),
   deleteJournalComment: (id) => _guestMode ? guestApi.deleteJournalComment(id) : apiFetch(`/api/journal-comments/${id}`, { method: "DELETE" }),
+  rotatePhoto: (id) => _guestMode ? Promise.reject(new Error("Log in om foto's te draaien")) : apiFetch(`/api/photos/${id}/rotate`, { method: "POST", body: JSON.stringify({ turns: 1 }) }),
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
@@ -890,10 +891,12 @@ function readExif(file) {
 // Fullscreen photo viewer, shared by the dagboek strips and the Foto's grid.
 // The image fills the screen; everything else floats over it, so tapping a
 // photo gives you the photo rather than a boxed preview with panels under it.
-function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete }) {
+function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete, onRotate }) {
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [rotated, setRotated] = useState(0);
   const touchStart = useRef(null);
 
   const safeIndex = photos.length ? Math.min(index, photos.length - 1) : null;
@@ -961,7 +964,7 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
       onClick={onClose} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
 
-      <img src={viewing.url} alt="" draggable={false}
+      <img src={`${viewing.url}${rotated ? (viewing.url.includes("?") ? "&" : "?") + "r=" + rotated : ""}`} alt="" draggable={false}
         className="absolute inset-0 w-full h-full object-contain"
         style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
 
@@ -977,6 +980,14 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
           {photos.length > 1 && <span>{safeIndex + 1} / {photos.length}</span>}
           {viewing.taken_at && <span className="ml-2">🕐 {fmtDatetime(viewing.taken_at)}</span>}
         </div>
+        {onRotate && (
+          <button type="button" onClick={async () => { setRotating(true); try { await onRotate(viewing); setRotated(Date.now()); } finally { setRotating(false); } }}
+            disabled={rotating}
+            className="w-9 h-9 rounded-full bg-black/50 text-white text-base flex items-center justify-center hover:bg-black/70 transition-colors disabled:opacity-50"
+            title="Kwartslag draaien">
+            {rotating ? "…" : "↻"}
+          </button>
+        )}
         {onDelete && (
           <button type="button" onClick={() => onDelete(viewing)}
             className="w-9 h-9 rounded-full bg-black/50 text-white text-base flex items-center justify-center hover:bg-red-600 transition-colors"
@@ -1143,7 +1154,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         <PhotoLightbox photos={photos} index={viewingIndex}
           onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
           assign={canAssign ? { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign } : null}
-          onDelete={readOnly ? null : (p) => handleDelete(p.id)} />
+          onDelete={readOnly ? null : (p) => handleDelete(p.id)}
+          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await onChange(); }} />
       )}
     </div>
   );
@@ -3571,7 +3583,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
         <PhotoLightbox photos={photos} index={viewingIndex}
           onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
           assign={readOnly ? null : { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign }}
-          onDelete={readOnly ? null : handleDelete} />
+          onDelete={readOnly ? null : handleDelete}
+          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await loadPhotos(); }} />
       )}
     </div>
   );
