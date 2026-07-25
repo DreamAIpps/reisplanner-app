@@ -863,9 +863,24 @@ async function advanceJournalRead(tripId, userId) {
   return marker;
 }
 
+// A dagboek block is a day, activity, transport or stay. Reactions hang off the
+// block rather than off a particular person's entry, so a day nobody has written
+// about — or one with only photos — can still be commented on and liked.
+const SLOT_COLS = ["day_id", "activity_id", "transport_id", "accommodation_id"];
+const slotKey = (row) => {
+  const col = SLOT_COLS.find((c) => row[c]);
+  return col ? `${col}:${row[col]}` : null;
+};
+
+function slotFromBody(body) {
+  const present = SLOT_COLS.filter((c) => body[c]);
+  if (present.length !== 1) return null;
+  return { col: present[0], id: body[present[0]] };
+}
+
 route("GET", "/api/trips/:id/journal", async (req, res, params) => {
   const marker = await advanceJournalRead(params.id, req.user.id);
-  const [{ rows }, { rows: comments }, { rows: likes }] = await Promise.all([
+  const [{ rows: entries }, { rows: comments }, { rows: likes }] = await Promise.all([
     query(
       `SELECT je.*, u.given_name, u.name AS user_name
        FROM journal_entries je
@@ -882,80 +897,85 @@ route("GET", "/api/trips/:id/journal", async (req, res, params) => {
        ORDER BY c.created_at ASC`,
       [params.id]
     ),
-    query("SELECT entry_id, comment_id, user_id FROM journal_likes WHERE trip_id = $1", [params.id]),
+    query("SELECT day_id, activity_id, transport_id, accommodation_id, comment_id, user_id FROM journal_likes WHERE trip_id = $1", [params.id]),
   ]);
 
-  const likeIndex = { entry: new Map(), comment: new Map() };
+  const isNew = (ts, authorId) =>
+    authorId !== req.user.id && !!ts && new Date(ts) > new Date(marker);
+
+  const slotLikes = new Map();
+  const commentLikes = new Map();
   for (const l of likes) {
-    const kind = l.entry_id ? "entry" : "comment";
-    const key = l.entry_id || l.comment_id;
-    if (!likeIndex[kind].has(key)) likeIndex[kind].set(key, { count: 0, mine: false });
-    const agg = likeIndex[kind].get(key);
+    const [map, key] = l.comment_id ? [commentLikes, l.comment_id] : [slotLikes, slotKey(l)];
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, { count: 0, mine: false });
+    const agg = map.get(key);
     agg.count += 1;
     if (l.user_id === req.user.id) agg.mine = true;
   }
-  const likesFor = (kind, id) => {
-    const agg = likeIndex[kind].get(id);
+  const likesOf = (map, key) => {
+    const agg = map.get(key);
     return { like_count: agg ? agg.count : 0, liked_by_me: agg ? agg.mine : false };
   };
-  const isNew = (ts, authorId) =>
-    authorId !== req.user.id && !!ts && new Date(ts) > new Date(marker);
-  const byEntry = new Map();
-  for (const c of comments) {
-    const { given_name, user_name, ...comment } = c;
-    if (!byEntry.has(c.entry_id)) byEntry.set(c.entry_id, []);
-    byEntry.get(c.entry_id).push({
-      ...comment,
-      author: firstName({ given_name, name: user_name }),
-      is_new: isNew(c.created_at, c.user_id),
-      ...likesFor("comment", c.id),
-    });
-  }
-  sendJson(res, 200, rows.map((r) => {
-    const { given_name, user_name, ...entry } = r;
-    return {
-      ...entry,
-      author: firstName({ given_name, name: user_name }),
-      comments: byEntry.get(r.id) || [],
-      // updated_at, not created_at: the journal upserts per (slot, author), so
-      // someone adding to a story they already started is an edit, not a new
-      // row — flagging only creations would silently miss most of the writing.
-      is_new: isNew(r.updated_at || r.created_at, r.user_id),
-      ...likesFor("entry", r.id),
-    };
-  }));
+
+  sendJson(res, 200, {
+    entries: entries.map((r) => {
+      const { given_name, user_name, ...entry } = r;
+      return {
+        ...entry,
+        author: firstName({ given_name, name: user_name }),
+        // updated_at, not created_at: the journal upserts per (slot, author), so
+        // someone adding to a story they already started is an edit, not a new
+        // row — flagging only creations would silently miss most of the writing.
+        is_new: isNew(r.updated_at || r.created_at, r.user_id),
+      };
+    }),
+    comments: comments.map((c) => {
+      const { given_name, user_name, ...comment } = c;
+      return {
+        ...comment,
+        author: firstName({ given_name, name: user_name }),
+        is_new: isNew(c.created_at, c.user_id),
+        ...likesOf(commentLikes, c.id),
+      };
+    }),
+    slot_likes: Object.fromEntries([...slotLikes].map(([k, v]) => [k, { like_count: v.count, liked_by_me: v.mine }])),
+  });
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/journal-comments", async (req, res, params, body) => {
-  const { entry_id, body: text } = body;
+  const { body: text } = body;
   if (!text || !text.trim()) return sendError(res, 400, "Reactie mag niet leeg zijn");
   if (String(text).length > 2000) return sendError(res, 400, "Reactie is te lang (max 2000 tekens)");
-  const { rows: entry } = await query("SELECT 1 FROM journal_entries WHERE id = $1 AND trip_id = $2", [entry_id, params.id]);
-  if (!entry.length) return sendError(res, 404, "Verhaal niet gevonden");
+  const slot = slotFromBody(body);
+  if (!slot) return sendError(res, 400, "Koppel de reactie aan precies één dag, activiteit, vervoer of verblijf");
+  if (!(await targetsBelongToTrip(params.id, body))) return sendError(res, 400, "Ongeldige koppeling voor deze reis");
   const { rows } = await query(
-    "INSERT INTO journal_comments (entry_id, trip_id, user_id, body) VALUES ($1,$2,$3,$4) RETURNING *",
-    [entry_id, params.id, req.user.id, text.trim()]
+    `INSERT INTO journal_comments (trip_id, user_id, body, ${slot.col}) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [params.id, req.user.id, text.trim(), slot.id]
   );
-  sendJson(res, 201, { ...rows[0], author: firstName(req.user), is_new: false });
+  sendJson(res, 201, { ...rows[0], author: firstName(req.user), is_new: false, like_count: 0, liked_by_me: false });
 }, { tripScope: "param", allowViewer: true });
 
-// Toggle a thumbs-up on a story or a reaction. Viewers may like, same as they
-// may comment — it is the point of sharing a trip read-only.
+// Toggle a thumbs-up on a dagboek block or on a reaction. Viewers may like, same
+// as they may comment — it is the point of sharing a trip read-only.
 route("POST", "/api/trips/:id/journal-likes", async (req, res, params, body) => {
-  const entryId = body.entry_id || null;
-  const commentId = body.comment_id || null;
-  if (!entryId === !commentId) return sendError(res, 400, "Geef precies één doel op");
-  const table = entryId ? "journal_entries" : "journal_comments";
-  const targetId = entryId || commentId;
-  const { rows: target } = await query(`SELECT 1 FROM ${table} WHERE id = $1 AND trip_id = $2`, [targetId, params.id]);
-  if (!target.length) return sendError(res, 404, "Niet gevonden");
-
-  const col = entryId ? "entry_id" : "comment_id";
-  const { rowCount } = await query(`DELETE FROM journal_likes WHERE ${col} = $1 AND user_id = $2`, [targetId, req.user.id]);
+  let col, id;
+  if (body.comment_id) {
+    const { rows } = await query("SELECT 1 FROM journal_comments WHERE id = $1 AND trip_id = $2", [body.comment_id, params.id]);
+    if (!rows.length) return sendError(res, 404, "Reactie niet gevonden");
+    col = "comment_id"; id = body.comment_id;
+  } else {
+    const slot = slotFromBody(body);
+    if (!slot) return sendError(res, 400, "Geef precies één doel op");
+    if (!(await targetsBelongToTrip(params.id, body))) return sendError(res, 400, "Ongeldige koppeling voor deze reis");
+    col = slot.col; id = slot.id;
+  }
+  const { rowCount } = await query(`DELETE FROM journal_likes WHERE ${col} = $1 AND user_id = $2`, [id, req.user.id]);
   if (rowCount) return sendJson(res, 200, { liked: false });
   await query(
     `INSERT INTO journal_likes (trip_id, user_id, ${col}) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
-    [params.id, req.user.id, targetId]
+    [params.id, req.user.id, id]
   );
   sendJson(res, 201, { liked: true });
 }, { tripScope: "param", allowViewer: true });
