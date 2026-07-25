@@ -5,7 +5,14 @@ const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const heicConvert = require("heic-convert");
-const sharp = require("sharp");
+// sharp is a native module. If its prebuilt binary is unavailable on the host it
+// must not take the whole app down — it is only used for thumbnails, and there is
+// a pure-JS fallback below. It is an optionalDependency for the same reason: a
+// hard dependency that fails to build makes `npm ci` fail and nothing deploys.
+let sharp = null;
+try { sharp = require("sharp"); }
+catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnails:", err.message); }
+const jpegJs = require("jpeg-js");
 const { query, initDb } = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
@@ -671,15 +678,51 @@ async function normalizeImage(buffer, mediaType) {
 // every thumbnail size in the UI at 2x density and lands around 30–60 KB.
 const THUMB_MAX_EDGE = 600;
 
+// Box-average downscale of a JPEG, no native code. Slower than sharp and it
+// ignores EXIF orientation, but it keeps thumbnails working on a host where the
+// native binary is missing rather than serving multi-megabyte originals.
+function makeThumbnailPureJs(buffer) {
+  const img = jpegJs.decode(buffer, { useTArray: true });
+  const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(img.width, img.height));
+  if (scale >= 1) return jpegJs.encode(img, 75).data;
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const out = Buffer.alloc(w * h * 4);
+  const bx = img.width / w, by = img.height / h;
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.floor(y * by), y1 = Math.min(img.height, Math.max(y0 + 1, Math.floor((y + 1) * by)));
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.floor(x * bx), x1 = Math.min(img.width, Math.max(x0 + 1, Math.floor((x + 1) * bx)));
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const i = (sy * img.width + sx) * 4;
+          r += img.data[i]; g += img.data[i + 1]; b += img.data[i + 2]; n++;
+        }
+      }
+      const o = (y * w + x) * 4;
+      out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n; out[o + 3] = 255;
+    }
+  }
+  return jpegJs.encode({ data: out, width: w, height: h }, 75).data;
+}
+
 async function makeThumbnail(buffer) {
-  try {
-    return await sharp(buffer)
-      .rotate() // honour EXIF orientation, otherwise phone photos come out sideways
-      .resize(THUMB_MAX_EDGE, THUMB_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 75 })
-      .toBuffer();
-  } catch (err) {
-    console.error("Thumbnail generation failed:", err.message);
+  if (sharp) {
+    try {
+      return await sharp(buffer)
+        .rotate() // honour EXIF orientation, otherwise phone photos come out sideways
+        .resize(THUMB_MAX_EDGE, THUMB_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 75 })
+        .toBuffer();
+    } catch (err) {
+      console.error("Thumbnail generation failed:", err.message);
+      return null;
+    }
+  }
+  try { return makeThumbnailPureJs(buffer); }
+  catch (err) {
+    console.error("Pure-JS thumbnail failed:", err.message);
     return null;
   }
 }

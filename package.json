@@ -15,6 +15,9 @@
     "heic-convert": "^2.1.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.21.0",
+    "jpeg-js": "^0.4.4"
+  },
+  "optionalDependencies": {
     "sharp": "^0.35.3"
   }
 }
