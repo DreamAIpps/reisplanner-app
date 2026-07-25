@@ -631,7 +631,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
               onDelete={(id) => api.deleteJournalEntry(id).then(onJournalChange)}
               photos={(photos || []).filter((p) => p.activity_id === initial.id)}
               photoCandidates={(photos || []).filter((p) => p.activity_id !== initial.id)}
-              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} />
+              tripId={tripId} dayId={dayId} activityId={initial.id} onPhotosChange={onPhotosChange} readOnly={readOnly} showPhotos={false} />
           </Field>
         )}
         <div className="flex justify-between items-center pt-2">
@@ -1261,17 +1261,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState("");
   const [locationPhotos, setLocationPhotos] = useState({});
-  const [tripPhotos, setTripPhotos] = useState([]);
   const [tripJournal, setTripJournal] = useState([]);
-  const [bulkUploading, setBulkUploading] = useState(false);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#0369a1";
-
-  const loadPhotos = useCallback(async () => {
-    try { setTripPhotos(await api.getPhotos(trip.id)); } catch {}
-  }, [trip.id]);
-  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   const loadJournal = useCallback(async () => {
     try { setTripJournal(await api.getJournal(trip.id)); } catch {}
@@ -1334,7 +1327,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           {/* Quick-add while on the trip: opens the form pre-set to today.
               The per-day "+ Activiteit" buttons keep using their own day. */}
           {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
-          {!readOnly && <Button onClick={() => setBulkUploading(true)} variant="secondary">📷 Foto's uploaden</Button>}
           {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
         </div>
       </div>
@@ -1354,13 +1346,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           <div className="text-5xl mb-3">🗓</div>
           <div className="font-medium">Nog geen dagen gepland</div>
           <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
-        </div>
-      )}
-
-      {tripPhotos.some((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id) && (
-        <div className="mb-6">
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overige foto's (geen dag gekoppeld)</h4>
-          <PhotoStrip photos={tripPhotos.filter((p) => !p.day_id && !p.activity_id && !p.transport_id && !p.accommodation_id)} tripId={trip.id} onChange={loadPhotos} readOnly={readOnly} />
         </div>
       )}
 
@@ -1506,8 +1491,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
                     {/* Activity cards */}
                     {day.activities.map((act) => {
-                      const actPhotos = tripPhotos.filter((p) => p.activity_id === act.id);
-                      const photo = actPhotos[0]?.url || (act.location ? locationPhotos[act.location] : null);
+                      const photo = act.location ? locationPhotos[act.location] : null;
                       const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={act.id}
@@ -1562,12 +1546,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                       </button>
                     )}
 
-                    {/* Day photos (not linked to a specific activity) */}
-                    <div onClick={(e) => e.stopPropagation()}>
-                      <PhotoStrip
-                        photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id)}
-                        tripId={trip.id} dayId={day.id} onChange={loadPhotos} readOnly={readOnly} />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1576,11 +1554,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         </div>
       </div>
 
-      {bulkUploading && (
-        <BulkPhotoUpload tripId={trip.id} days={days}
-          onClose={() => setBulkUploading(false)}
-          onUploaded={loadPhotos} />
-      )}
       {showActivityForm && (
         <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id} days={days}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
@@ -1589,7 +1562,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
       )}
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity} days={days}
-          photos={tripPhotos} onPhotosChange={loadPhotos}
           journalEntries={tripJournal.filter((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
@@ -1614,7 +1586,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 }
 
 // ---------- Journal (dagboek) ----------
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations }) {
+function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, photos, photoCandidates, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -1682,7 +1654,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
         </button>
       )}
 
-      {tripId != null && (photos?.length > 0 || !readOnly) && (
+      {showPhotos && tripId != null && (photos?.length > 0 || !readOnly) && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
           <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
             days={days} transports={transports} accommodations={accommodations} large />
@@ -3135,6 +3107,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   const [viewingIndex, setViewingIndex] = useState(null);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
   const touchStart = useRef(null);
 
   const loadPhotos = useCallback(async () => {
@@ -3231,14 +3204,23 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
     <div>
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <h3 className="font-semibold text-gray-700">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
-        {todayPhoto && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+        <div className="flex gap-2">
+          {todayPhoto && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+          {!readOnly && <Button onClick={() => setBulkUploading(true)}>📷 Foto's uploaden</Button>}
+        </div>
       </div>
+
+      {bulkUploading && (
+        <BulkPhotoUpload tripId={trip.id} days={days}
+          onClose={() => setBulkUploading(false)}
+          onUploaded={loadPhotos} />
+      )}
 
       {photos.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <div className="text-5xl mb-3">📷</div>
           <div className="font-medium">Nog geen foto's</div>
-          <div className="text-sm mt-1">Upload foto's via een dag, activiteit, vervoer of verblijf</div>
+          <div className="text-sm mt-1">Gebruik "Foto's uploaden" hierboven, of voeg ze toe bij een verhaal in het Dagboek</div>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
