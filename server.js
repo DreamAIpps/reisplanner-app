@@ -260,16 +260,19 @@ async function sendMail({ to, subject, text }) {
   return true;
 }
 
-// Everyone who manages the trip: its owner plus editors. Viewers are the ones
-// reacting, so they are not notified, and neither is whoever caused the event.
-async function notifyTripManagers(tripId, actorId, kind, summary, actorName) {
+// Notifications run both ways: viewers hear when the trip is updated, managers
+// hear when someone reacts. Whoever caused the event is never told about it.
+async function notifyTripMembers(tripId, actorId, audience, kind, summary, actorName) {
   try {
-    const { rows } = await query(
-      `SELECT DISTINCT id FROM (
-         SELECT user_id AS id FROM trips WHERE id = $1
+    const sql = audience === "viewers"
+      ? `SELECT user_id AS id FROM trip_members WHERE trip_id = $1 AND role = 'viewer'`
+      : `SELECT user_id AS id FROM trips WHERE id = $1
          UNION
-         SELECT user_id FROM trip_members WHERE trip_id = $1 AND role <> 'viewer'
-       ) m WHERE id IS NOT NULL AND id <> $2`,
+         SELECT user_id FROM trip_members WHERE trip_id = $1 AND role <> 'viewer'`;
+    const { rows } = await query(
+      `SELECT DISTINCT m.id FROM (${sql}) m
+         JOIN users u ON u.id = m.id
+        WHERE m.id IS NOT NULL AND m.id <> $2 AND u.notify_email`,
       [tripId, actorId]
     );
     for (const { id } of rows) {
@@ -284,6 +287,11 @@ async function notifyTripManagers(tripId, actorId, kind, summary, actorName) {
   }
 }
 
+const notifyTripManagers = (tripId, actorId, kind, summary, actorName) =>
+  notifyTripMembers(tripId, actorId, "managers", kind, summary, actorName);
+const notifyTripViewers = (tripId, actorId, kind, summary, actorName) =>
+  notifyTripMembers(tripId, actorId, "viewers", kind, summary, actorName);
+
 // Wait for a lull before sending, so a run of likes in one sitting arrives as a
 // single mail instead of one per tap.
 const NOTIFY_QUIET_MINUTES = 5;
@@ -296,6 +304,8 @@ async function flushNotifications() {
             t.name AS trip_name,
             COUNT(*) FILTER (WHERE n.kind = 'comment') AS comments,
             COUNT(*) FILTER (WHERE n.kind = 'like') AS likes,
+            COUNT(*) FILTER (WHERE n.kind = 'entry') AS entries,
+            COUNT(*) FILTER (WHERE n.kind = 'photo') AS photos,
             ARRAY_AGG(n.summary ORDER BY n.created_at) AS lines
        FROM notifications n
        JOIN users u ON u.id = n.user_id
@@ -306,20 +316,36 @@ async function flushNotifications() {
   );
 
   for (const g of rows) {
-    const counts = [
-      Number(g.comments) ? `${g.comments} reactie${Number(g.comments) === 1 ? "" : "s"}` : null,
-      Number(g.likes) ? `${g.likes} duimpje${Number(g.likes) === 1 ? "" : "s"}` : null,
-    ].filter(Boolean).join(" en ");
+    const parts = [
+      [Number(g.entries), "nieuw verhaal", "nieuwe verhalen"],
+      [Number(g.photos), "nieuwe foto", "nieuwe foto's"],
+      [Number(g.comments), "reactie", "reacties"],
+      [Number(g.likes), "duimpje", "duimpjes"],
+    ].filter(([c]) => c > 0).map(([c, one, many]) => `${c} ${c === 1 ? one : many}`);
+    const counts = parts.length > 1
+      ? parts.slice(0, -1).join(", ") + " en " + parts[parts.length - 1]
+      : parts[0];
+    const total = Number(g.entries) + Number(g.photos) + Number(g.comments) + Number(g.likes);
+
+    // Collapse repeats: uploading twenty photos should read as one line with a
+    // count, not twenty identical bullets.
+    const tally = new Map();
+    for (const line of g.lines) tally.set(line, (tally.get(line) || 0) + 1);
+    const bullets = [...tally].slice(0, 15)
+      .map(([line, count]) => (count > 1 ? `• ${line} (${count}x)` : `• ${line}`));
+    if (tally.size > 15) bullets.push(`• … en nog ${tally.size - 15}`);
+
     const body = [
       `Hoi ${g.greeting},`,
       "",
-      `Er ${Number(g.comments) + Number(g.likes) === 1 ? "is" : "zijn"} ${counts} bij het dagboek van "${g.trip_name}":`,
+      `Er ${total === 1 ? "is" : "zijn"} ${counts} bij "${g.trip_name}":`,
       "",
-      ...g.lines.slice(0, 20).map((l) => `• ${l}`),
-      g.lines.length > 20 ? `• … en nog ${g.lines.length - 20}` : null,
+      ...bullets,
       "",
-      `Bekijk ze in Reisplanner: ${process.env.APP_URL || ""}`,
-    ].filter((l) => l !== null).join("\n");
+      `Bekijk het in Reisplanner: ${process.env.APP_URL || ""}`,
+      "",
+      "Geen berichten meer ontvangen? Zet ze uit bij je account in de app.",
+    ].join("\n");
 
     try {
       await sendMail({ to: g.email, subject: `${counts} bij "${g.trip_name}"`, text: body });
@@ -1001,6 +1027,10 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
     [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
   );
   const { inserted, ...photo } = rows[0];
+  if (inserted) {
+    const who = firstName(req.user) || "Iemand";
+    notifyTripViewers(params.id, req.user.id, "photo", `${who} voegde een foto toe`, who);
+  }
   sendJson(res, inserted ? 201 : 200, { ...photo, url: `/api/photos/${photo.id}/raw`, thumb_url: `/api/photos/${photo.id}/thumb` });
 }, { tripScope: "param" });
 
@@ -1338,12 +1368,14 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
       "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
       [title || null, text, existing.rows[0].id]
     );
+    notifyTripViewers(params.id, req.user.id, "entry", `${author || "Iemand"} werkte een verhaal bij`, author);
     return sendJson(res, 200, { ...rows[0], author });
   }
   const { rows } = await query(
     "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body, user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
     [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text, req.user.id]
   );
+  notifyTripViewers(params.id, req.user.id, "entry", `${author || "Iemand"} schreef een nieuw verhaal`, author);
   sendJson(res, 201, { ...rows[0], author });
 }, { tripScope: "param" });
 
@@ -1377,6 +1409,7 @@ route("GET", "/auth/me", async (req, res) => {
   sendJson(res, 200, {
     id: user.id, name: user.name, email: user.email, avatar: user.avatar, is_admin: user.is_admin,
     linked: { google: !!user.google_id, apple: !!user.apple_id },
+    notify_email: user.notify_email !== false,
   });
 });
 
@@ -1388,6 +1421,15 @@ route("GET", "/auth/me", async (req, res) => {
 // address that matches nothing, so they land on a new empty account instead of
 // their trips. There is no way to recover the real address from the relay one,
 // so the link has to be made deliberately from inside an authenticated session.
+// Recipients can turn notification mail off for themselves.
+route("PUT", "/auth/notify-email", async (req, res, params, body) => {
+  const user = await getSession(req);
+  if (!user) return sendError(res, 401, "Niet ingelogd");
+  const enabled = body?.enabled !== false;
+  await query("UPDATE users SET notify_email = $1 WHERE id = $2", [enabled, user.id]);
+  sendJson(res, 200, { notify_email: enabled });
+});
+
 route("POST", "/auth/apple/link", async (req, res, params, body) => {
   const user = await getSession(req);
   if (!user) return sendError(res, 401, "Niet ingelogd");

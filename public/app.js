@@ -293,6 +293,7 @@ const api = {
   setPhotoCaption: (id, caption) => _guestMode ? guestApi.setPhotoCaption(id, caption) : apiFetch(`/api/photos/${id}/caption`, { method: "PUT", body: JSON.stringify({ caption }) }),
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   sendTestMail: () => apiFetch("/api/admin/test-mail", { method: "POST", body: "{}" }),
+  setNotifyEmail: (enabled) => apiFetch("/auth/notify-email", { method: "PUT", body: JSON.stringify({ enabled }) }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
@@ -1743,6 +1744,8 @@ function AccountModal({ user, onClose, onChanged }) {
   const [done, setDone] = useState(false);
   const [mailBusy, setMailBusy] = useState(false);
   const [mailResult, setMailResult] = useState(null);
+  const [notify, setNotify] = useState(user.notify_email !== false);
+  const [notifyBusy, setNotifyBusy] = useState(false);
   const linked = user.linked || {};
 
   async function linkApple() {
@@ -1808,9 +1811,24 @@ function AccountModal({ user, onClose, onChanged }) {
           </div>
         </div>
 
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notificaties</label>
+          <label className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-gray-50 cursor-pointer">
+            <input type="checkbox" checked={notify} disabled={notifyBusy}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                setNotify(next); setNotifyBusy(true);
+                try { await api.setNotifyEmail(next); await onChanged(); }
+                catch { setNotify(!next); }
+                finally { setNotifyBusy(false); }
+              }} />
+            <span className="flex-1">Mail me bij nieuwe verhalen, foto's en reacties</span>
+          </label>
+        </div>
+
         {user.is_admin && (
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notificaties</label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Testmail</label>
             <Button variant="secondary" disabled={mailBusy} onClick={async () => {
               setMailBusy(true); setMailResult(null);
               try {
