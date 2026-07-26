@@ -482,6 +482,25 @@ route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
 });
 
 // ---------- Admin routes ----------
+// Lets an admin confirm the mail setup from the app, instead of waiting for a
+// real comment to find out the key or sender is wrong.
+route("POST", "/api/admin/test-mail", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  if (!req.user.email) return sendError(res, 400, "Je account heeft geen e-mailadres");
+  const provider = mailProvider();
+  if (!provider) return sendError(res, 400, "Geen mailprovider ingesteld (RESEND_API_KEY of POSTMARK_TOKEN ontbreekt)");
+  try {
+    await sendMail({
+      to: req.user.email,
+      subject: "Reisplanner: testmail",
+      text: `Hoi,\n\nDeze testmail bevestigt dat notificaties werken via ${provider}.\nAfzender: ${MAIL_FROM}\n\nJe krijgt voortaan bericht als er een reactie of duimpje bij je dagboek komt.`,
+    });
+    sendJson(res, 200, { ok: true, provider, to: req.user.email, from: MAIL_FROM });
+  } catch (err) {
+    sendError(res, 502, `Versturen mislukt: ${err.message}`);
+  }
+});
+
 route("GET", "/api/admin/users", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { rows } = await query(`

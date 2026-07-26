@@ -292,6 +292,7 @@ const api = {
   rotatePhoto: (id) => _guestMode ? Promise.reject(new Error("Log in om foto's te draaien")) : apiFetch(`/api/photos/${id}/rotate`, { method: "POST", body: JSON.stringify({ turns: 1 }) }),
   setPhotoCaption: (id, caption) => _guestMode ? guestApi.setPhotoCaption(id, caption) : apiFetch(`/api/photos/${id}/caption`, { method: "PUT", body: JSON.stringify({ caption }) }),
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
+  sendTestMail: () => apiFetch("/api/admin/test-mail", { method: "POST", body: "{}" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
@@ -1740,6 +1741,8 @@ function AccountModal({ user, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(false);
+  const [mailBusy, setMailBusy] = useState(false);
+  const [mailResult, setMailResult] = useState(null);
   const linked = user.linked || {};
 
   async function linkApple() {
@@ -1804,6 +1807,26 @@ function AccountModal({ user, onClose, onChanged }) {
             </div>
           </div>
         </div>
+
+        {user.is_admin && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notificaties</label>
+            <Button variant="secondary" disabled={mailBusy} onClick={async () => {
+              setMailBusy(true); setMailResult(null);
+              try {
+                const r = await api.sendTestMail();
+                setMailResult({ ok: true, text: `Testmail verstuurd naar ${r.to} via ${r.provider}.` });
+              } catch (err) {
+                setMailResult({ ok: false, text: err.message || "Versturen mislukt" });
+              } finally { setMailBusy(false); }
+            }}>{mailBusy ? "Versturen..." : "✉️ Testmail sturen"}</Button>
+            {mailResult && (
+              <div className={`mt-2 text-sm px-3 py-2 rounded-lg ${mailResult.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+                {mailResult.text}
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
         {done && <div className="bg-green-50 text-green-700 text-sm px-3 py-2 rounded-lg">Apple is gekoppeld. Je kunt voortaan met Apple inloggen op dit account, ook met een verborgen e-mailadres.</div>}
