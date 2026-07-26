@@ -334,6 +334,11 @@ function daysUntilDeparture(startDate) {
   const start = new Date(startDate); start.setHours(0, 0, 0, 0);
   return Math.round((start - today) / 86400000);
 }
+// Guards the journal payload: on an array response `.entries` resolves to
+// Array.prototype.entries, and passing that function to setState makes React
+// treat it as an updater and call it with no receiver.
+function asList(v) { return Array.isArray(v) ? v : []; }
+
 function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -1398,7 +1403,7 @@ const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", 
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
-function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId }) {
+function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId, onShareEditor }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
@@ -1413,7 +1418,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const accent = trip.cover_color || "#0369a1";
 
   const loadJournal = useCallback(async () => {
-    try { setTripJournal((await api.getJournal(trip.id)).entries || []); } catch {}
+    try { setTripJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
@@ -1474,6 +1479,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
               The per-day "+ Activiteit" buttons keep using their own day. */}
           {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
           {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
+          {onShareEditor && !readOnly && (
+            <Button onClick={onShareEditor} variant="secondary">🔗 Reis delen met reisgenoot</Button>
+          )}
         </div>
       </div>
 
@@ -2063,8 +2071,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const loadEntries = useCallback(async () => {
     try {
       const d = await api.getJournal(trip.id);
-      setEntries(d.entries || []);
-      setComments(d.comments || []);
+      setEntries(asList(d.entries));
+      setComments(asList(d.comments));
       setSlotLikes(d.slot_likes || {});
     } catch {}
     finally { setEntriesLoaded(true); }
@@ -2327,7 +2335,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
   const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
-    try { setJournal((await api.getJournal(trip.id)).entries || []); } catch {}
+    try { setJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
@@ -2417,7 +2425,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
   const [tripPhotos, setTripPhotos] = useState([]);
 
   const loadJournal = useCallback(async () => {
-    try { setJournal((await api.getJournal(trip.id)).entries || []); } catch {}
+    try { setJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
@@ -3400,8 +3408,7 @@ function fmtDuration(minutes) {
   return rest ? `${h} u ${rest} min` : `${h} uur`;
 }
 
-function ShareModal({ tripId, onClose }) {
-  const [role, setRole] = useState("viewer");
+function ShareModal({ tripId, onClose, role = "viewer" }) {
   const [link, setLink] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -3410,7 +3417,7 @@ function ShareModal({ tripId, onClose }) {
   const [expanded, setExpanded] = useState(null);
 
   function generateLink(r) {
-    setRole(r); setLink(null); setLoading(true); setError(null);
+    setLink(null); setLoading(true); setError(null);
     api.createInvite(tripId, r)
       .then((d) => setLink(d.link))
       // Guest trips report is_owner, so the Delen button is offered and this
@@ -3419,7 +3426,7 @@ function ShareModal({ tripId, onClose }) {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { generateLink("viewer"); }, [tripId]);
+  useEffect(() => { generateLink(role); }, [tripId, role]);
 
   const loadStats = useCallback(() => {
     api.getShareStats(tripId).then(setStats).catch(() => {});
@@ -3433,27 +3440,18 @@ function ShareModal({ tripId, onClose }) {
   }
 
   return (
-    <Modal title="Reis delen" onClose={onClose} wide>
+    <Modal title={role === "editor" ? "Reis delen met reisgenoot" : "Reis delen"} onClose={onClose} wide>
       <div className="space-y-4">
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Type toegang</label>
-          <div className="flex gap-2">
-            <button type="button" onClick={() => generateLink("viewer")}
-              className="flex-1 rounded-xl border-2 px-3 py-2.5 text-left transition-colors"
-              style={role === "viewer" ? { borderColor: "#0369a1", background: "#0369a10d" } : { borderColor: "#e5e7eb" }}>
-              <div className="text-sm font-semibold text-gray-800">👀 Alleen-lezen</div>
-              <div className="text-xs text-gray-500 mt-0.5">Voor familie & vrienden — geen budget/kosten zichtbaar, kan niets wijzigen</div>
-            </button>
-            <button type="button" onClick={() => generateLink("editor")}
-              className="flex-1 rounded-xl border-2 px-3 py-2.5 text-left transition-colors"
-              style={role === "editor" ? { borderColor: "#0369a1", background: "#0369a10d" } : { borderColor: "#e5e7eb" }}>
-              <div className="text-sm font-semibold text-gray-800">✏️ Bewerker</div>
-              <div className="text-xs text-gray-500 mt-0.5">Voor medereizigers — volledige toegang, kan alles zien en aanpassen</div>
-            </button>
+        <div className={`rounded-xl px-3 py-2.5 ${role === "editor" ? "bg-sky-50 border border-sky-200" : "bg-gray-50 border border-gray-200"}`}>
+          <div className="text-sm font-semibold text-gray-800">
+            {role === "editor" ? "✏️ Reisgenoot" : "👀 Alleen-lezen"}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {role === "editor"
+              ? "Kan alles zien en aanpassen, inclusief budget en kosten."
+              : "Voor familie & vrienden — ziet het dagboek en de foto's, geen budget of kosten, en kan niets wijzigen."}
           </div>
         </div>
-
-        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
 
         {loading ? (
           <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
@@ -3480,7 +3478,7 @@ function ShareModal({ tripId, onClose }) {
         )}
         <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
 
-        {stats && (stats.members.length > 0) && (
+        {role === "viewer" && stats && (stats.members.length > 0) && (
           <div className="border-t border-gray-100 pt-4">
             <div className="flex items-center justify-between mb-2">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Wie heeft de reis bekeken</label>
@@ -3900,7 +3898,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const [tab, setTab] = useState("days");
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [sharing, setSharing] = useState(false);
+  const [sharing, setSharing] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [previewViewer, setPreviewViewer] = useState(false);
@@ -4155,11 +4153,11 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       })()}
 
       {readOnly ? (
-        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing(true) : null} />
+        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />
       ) : (
         <>
-          {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
-          {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing(true) : null} />}
+          {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} />}
+          {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
           {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} />}
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
@@ -4218,7 +4216,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
-      {sharing && <ShareModal tripId={tripId} onClose={() => setSharing(false)} />}
+      {sharing && <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)} />}
     </div>
   );
 }
