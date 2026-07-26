@@ -1647,6 +1647,35 @@ route("GET", "/auth/apple/client-id", async (req, res) => {
   sendJson(res, 200, { clientId: process.env.APPLE_CLIENT_ID || null });
 });
 
+// Mapbox-token voor de kaart. De naam van de omgevingsvariabele kan per
+// installatie verschillen, dus we accepteren de gangbare varianten.
+const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN || process.env.MAPBOX_ACCESS_TOKEN
+  || process.env.MAPBOX_PUBLIC_TOKEN || process.env.MAPBOX_API_KEY || "";
+
+// Mapbox kent twee soorten tokens. Een publiek token (pk.) hoort in de browser
+// thuis en wordt beschermd met een URL-restrictie. Een geheim token (sk.) mag
+// daar nooit komen: dat geeft toegang tot het account zelf. Liever een kaart
+// die terugvalt op de gratis tegels dan een gelekt token.
+const MAPBOX_TOKEN_IS_SECRET = MAPBOX_TOKEN.startsWith("sk.");
+if (!MAPBOX_TOKEN) {
+  console.log("Mapbox niet ingesteld — de kaart gebruikt de standaard tegels.");
+} else if (MAPBOX_TOKEN_IS_SECRET) {
+  console.warn("MAPBOX-token is een geheim token (sk.). Dat wordt niet aan de browser gegeven; gebruik een publiek token (pk.).");
+} else {
+  console.log("Mapbox-token gevonden, de kaart gebruikt Mapbox-tegels.");
+}
+
+// GET-routes onder /api/ die zonder sessie bereikbaar zijn. Bewust een korte,
+// expliciete lijst — alles wat er niet in staat blijft achter de inlogplicht.
+const PUBLIC_API_GETS = new Set(["/api/config/map"]);
+
+route("GET", "/api/config/map", async (req, res) => {
+  sendJson(res, 200, {
+    mapboxToken: MAPBOX_TOKEN && !MAPBOX_TOKEN_IS_SECRET ? MAPBOX_TOKEN : null,
+    secretTokenRejected: MAPBOX_TOKEN_IS_SECRET,
+  });
+});
+
 route("POST", "/auth/apple/js-callback", async (req, res, params, body) => {
   const { id_token, name } = body;
   if (!id_token) return sendJson(res, 400, { error: "Geen id_token ontvangen" });
@@ -1997,7 +2026,14 @@ const server = http.createServer(async (req, res) => {
       // percent-encoding; both must stay inside the try so a transient DB error
       // or a crafted URL returns 500 instead of killing the process.
       const user = await getSession(req);
-      if (!user) { sendError(res, 401, "Niet ingelogd"); return; }
+      // Eén uitzondering op de inlogplicht: de kaartinstellingen. Gasten gebruiken
+      // de app zonder account, en zonder deze waarden valt hun kaart terug op de
+      // standaard tegels. Het gaat om een publiek Mapbox-token, dat hoort in de
+      // browser thuis; geheime tokens worden hierboven al geweigerd.
+      if (!user && !(req.method === "GET" && PUBLIC_API_GETS.has(pathname))) {
+        sendError(res, 401, "Niet ingelogd");
+        return;
+      }
       const match = matchRoute(req.method, pathname);
       if (!match) { sendError(res, 404, "Not found"); return; }
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};

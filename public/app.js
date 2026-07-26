@@ -2921,7 +2921,122 @@ function TipsTab({ trip }) {
   );
 }
 
+// ---------- Waar je geweest bent ----------
+// De planningskaart laat zien waar je heen zóu gaan. Dit laat zien waar je
+// werkelijk geweest bent, en dat weten we uit de GPS die in je foto's zit.
+
+function numOrNull(v) {
+  // pg geeft NUMERIC terug als tekst, en Number(null) is 0 — wat een geldige
+  // coördinaat lijkt maar het niet is. Vandaar deze omweg.
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function photoPoint(p) {
+  const lat = numOrNull(p.latitude);
+  const lon = numOrNull(p.longitude);
+  if (lat === null || lon === null) return null;
+  // Precies 0,0 ligt in de Atlantische Oceaan voor Ghana. Dat is geen vakantie,
+  // dat is een leeggelopen GPS-veld.
+  if (lat === 0 && lon === 0) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { ...p, lat, lon, when: p.taken_at || p.created_at || null };
+}
+
+function haversineMeters(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+// Groepeer op nabijheid, niet op tijd: kom je twee keer op hetzelfde plein, dan
+// is dat één plek op de kaart en geen twee losse stippen.
+function clusterPhotoPlaces(photos, radiusM = 300) {
+  const pts = asList(photos).map(photoPoint).filter(Boolean)
+    .sort((a, b) => String(a.when || "").localeCompare(String(b.when || "")));
+  const places = [];
+  for (const pt of pts) {
+    let best = null;
+    let bestD = Infinity;
+    for (const pl of places) {
+      const d = haversineMeters(pt, pl);
+      if (d < bestD) { bestD = d; best = pl; }
+    }
+    if (best && bestD <= radiusM) {
+      best.photos.push(pt);
+      best.lat = best.photos.reduce((s, p) => s + p.lat, 0) / best.photos.length;
+      best.lon = best.photos.reduce((s, p) => s + p.lon, 0) / best.photos.length;
+    } else {
+      places.push({ lat: pt.lat, lon: pt.lon, photos: [pt] });
+    }
+  }
+  for (const pl of places) {
+    const times = pl.photos.map((p) => p.when).filter(Boolean).sort();
+    pl.first = times[0] || null;
+    pl.last = times[times.length - 1] || null;
+  }
+  return places;
+}
+
+// De route is de volgorde waarin je die plekken bezocht hebt. Ga je heen en
+// weer naar hetzelfde hotel, dan hoort dat als losse etappes in de lijn — maar
+// twee foto's achter elkaar op dezelfde plek zijn geen etappe.
+function visitRoute(places) {
+  const stops = [];
+  places.forEach((pl, i) => pl.photos.forEach((p) => stops.push({ when: p.when, i })));
+  stops.sort((a, b) => String(a.when || "").localeCompare(String(b.when || "")));
+  const route = [];
+  for (const s of stops) {
+    if (route.length === 0 || route[route.length - 1] !== s.i) route.push(s.i);
+  }
+  return route.map((i) => places[i]);
+}
+
+function routeDistanceMeters(route) {
+  let total = 0;
+  for (let i = 1; i < route.length; i++) total += haversineMeters(route[i - 1], route[i]);
+  return total;
+}
+
+function fmtDistance(m) {
+  if (m < 1000) return `${Math.round(m)} m`;
+  if (m < 100000) return `${(m / 1000).toFixed(1).replace(".", ",")} km`;
+  return `${Math.round(m / 1000).toLocaleString("nl-NL")} km`;
+}
+
 // ---------- Kaart tab ----------
+// Mapbox-tegels als er een token staat, anders de gratis CARTO-tegels. Eén keer
+// ophalen per sessie; de kaart mag er niet op wachten als het misgaat.
+let _mapConfig = null;
+function mapConfig() {
+  if (!_mapConfig) {
+    _mapConfig = fetch("/api/config/map")
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+  }
+  return _mapConfig;
+}
+
+function addBaseLayer(L, map, cfg) {
+  if (cfg && cfg.mapboxToken) {
+    // Een rustige ondergrond: het spoor is het onderwerp, niet de kaart.
+    L.tileLayer(
+      `https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/512/{z}/{x}/{y}@2x?access_token=${cfg.mapboxToken}`,
+      { attribution: '© <a href="https://www.mapbox.com/about/maps/">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', tileSize: 512, zoomOffset: -1, maxZoom: 20 },
+    ).addTo(map);
+    return;
+  }
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 19,
+  }).addTo(map);
+}
+
 async function geocode(query) {
   const key = `geocode_${query}`;
   try {
@@ -3001,10 +3116,7 @@ function MapTab({ trip, accommodations, transports, days }) {
       const L = window.L;
       const map = L.map(mapRef.current);
       mapInstanceRef.current = map;
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
-        maxZoom: 19,
-      }).addTo(map);
+      addBaseLayer(L, map, await mapConfig());
 
       const bounds = [];
 
@@ -3093,13 +3205,10 @@ function MapTab({ trip, accommodations, transports, days }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-display text-[19px] text-gray-800">Reiskaart</h3>
-        <div className="flex gap-3 text-xs text-gray-500">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#A03A08" }} />Verblijf</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#33506B" }} />Vervoer</span>
-        </div>
+      <div className="flex gap-3 text-xs text-gray-500 mb-3 flex-wrap">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#A03A08" }} />Verblijf</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#33506B" }} />Vervoer</span>
       </div>
       <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
         {status === "loading" && (
@@ -3127,6 +3236,167 @@ function MapTab({ trip, accommodations, transports, days }) {
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       </div>
       <div className="text-xs text-gray-400 text-center mt-2">© OpenStreetMap contributors</div>
+    </div>
+  );
+}
+
+// Het spoor dat je zelf hebt achtergelaten: elke foto met GPS is een bewijsstuk
+// dat je daar stond. Geen geocoding nodig, dus deze kaart staat er meteen.
+function VisitedMap({ trip }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const [photos, setPhotos] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [viewing, setViewing] = useState(null); // { photos, index }
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getPhotos(trip.id)
+      .then((list) => { if (!cancelled) setPhotos(asList(list)); })
+      .catch(() => { if (!cancelled) { setPhotos([]); setFailed(true); } });
+    return () => { cancelled = true; };
+  }, [trip.id]);
+
+  const places = React.useMemo(() => clusterPhotoPlaces(photos || []), [photos]);
+  const route = React.useMemo(() => visitRoute(places), [places]);
+  const withoutGps = (photos || []).length - places.reduce((n, p) => n + p.photos.length, 0);
+
+  useEffect(() => {
+    if (!mapRef.current || places.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const cfg = await mapConfig();
+      if (cancelled || !mapRef.current) return;
+      const L = window.L;
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const map = L.map(mapRef.current, { scrollWheelZoom: false });
+      mapInstanceRef.current = map;
+      addBaseLayer(L, map, cfg);
+
+      if (route.length > 1) {
+        L.polyline(route.map((p) => [p.lat, p.lon]),
+          { color: "#A03A08", weight: 2.5, opacity: 0.75 }).addTo(map);
+      }
+
+      // De stip groeit met het aantal foto's, zodat je in één oogopslag ziet
+      // waar je lang gebleven bent.
+      //
+      // Genummerd op eerste bezoek, niet op positie in de route: kom je 's avonds
+      // terug in hetzelfde hotel, dan houdt die stip zijn eigen nummer 1 en telt
+      // de reeks netjes door zonder gaten. De lijn laat het heen en weer al zien.
+      const order = new Map();
+      route.forEach((p) => { if (!order.has(p)) order.set(p, order.size + 1); });
+      places.forEach((pl) => {
+        const size = Math.min(46, 24 + Math.round(Math.sqrt(pl.photos.length) * 5));
+        const nr = order.get(pl);
+        const marker = L.marker([pl.lat, pl.lon], {
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#A03A08;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(36,29,25,.35);color:#fff;display:flex;align-items:center;justify-content:center;font-size:${size < 30 ? 10 : 12}px;font-weight:700;font-variant-numeric:tabular-nums">${nr || ""}</div>`,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+          }),
+        }).addTo(map);
+        const when = pl.first ? fmt(pl.first.slice(0, 10)) : "";
+        marker.bindTooltip(
+          `${pl.photos.length} foto${pl.photos.length === 1 ? "" : "'s"}${when ? ` · ${when}` : ""}`,
+          { direction: "top", offset: [0, -size / 2] },
+        );
+        marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+      });
+
+      const bounds = places.map((p) => [p.lat, p.lon]);
+      if (bounds.length === 1) map.setView(bounds[0], 13);
+      else map.fitBounds(bounds, { padding: [45, 45] });
+    })();
+
+    return () => { cancelled = true; };
+  }, [places, route]);
+
+  useEffect(() => () => {
+    if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+  }, []);
+
+  if (photos === null) return <div className="text-center py-16 text-gray-400 text-sm">Foto's ophalen…</div>;
+
+  if (places.length === 0) return (
+    <div className="text-center py-14 text-gray-400">
+      <Icon name="pin" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
+      <div className="font-medium text-gray-600">Nog geen plekken om te tonen</div>
+      <div className="text-sm mt-1 max-w-sm mx-auto leading-relaxed">
+        {failed
+          ? "De foto's konden niet worden opgehaald. Probeer het zo nog eens."
+          : withoutGps > 0
+            ? `Er ${withoutGps === 1 ? "is 1 foto" : `zijn ${withoutGps} foto's`} in deze reis, maar zonder locatie. Foto's die via WhatsApp of een screenshot binnenkomen hebben hun GPS verloren; die rechtstreeks vanaf de camera-rol komen meestal wel.`
+            : "Zodra je foto's uploadt die met locatie zijn genomen, tekent deze kaart je route."}
+      </div>
+    </div>
+  );
+
+  const days = new Set(places.flatMap((p) => p.photos.map((x) => (x.when || "").slice(0, 10))).filter(Boolean));
+  const distance = routeDistanceMeters(route);
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3 text-sm">
+        <span className="flex items-center gap-1.5 text-gray-700">
+          <Icon name="pin" size={14} className="text-sky-700" />
+          <span className="font-semibold tnum">{places.length}</span> {places.length === 1 ? "plek" : "plekken"}
+        </span>
+        {distance > 0 && (
+          <span className="flex items-center gap-1.5 text-gray-700">
+            <Icon name="route" size={14} className="text-sky-700" />
+            <span className="font-semibold tnum">{fmtDistance(distance)}</span>
+            <span className="text-gray-400 text-xs">in vogelvlucht</span>
+          </span>
+        )}
+        {days.size > 0 && (
+          <span className="flex items-center gap-1.5 text-gray-700">
+            <Icon name="calendar" size={14} className="text-sky-700" />
+            <span className="font-semibold tnum">{days.size}</span> {days.size === 1 ? "dag" : "dagen"}
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm" style={{ height: 480 }}>
+        <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      </div>
+
+      <div className="text-xs text-gray-400 mt-2 leading-relaxed">
+        De cijfers volgen de volgorde waarin je er was. Tik op een stip voor de foto's van die plek.
+        {withoutGps > 0 && ` ${withoutGps} ${withoutGps === 1 ? "foto heeft" : "foto's hebben"} geen locatie en staan hier dus niet op.`}
+      </div>
+
+      {viewing && (
+        <PhotoLightbox photos={viewing.photos} index={viewing.index}
+          onClose={() => setViewing(null)}
+          onIndexChange={(i) => setViewing((v) => ({ ...v, index: i }))} />
+      )}
+    </div>
+  );
+}
+
+// Twee kaarten met dezelfde ondergrond, maar met een andere vraag: waar ga ik
+// heen, en waar ben ik geweest.
+function TripMapTab({ trip, accommodations, transports, days }) {
+  const [mode, setMode] = useState("visited");
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+        <h3 className="font-display text-[19px] text-gray-800">Reiskaart</h3>
+        <div className="flex gap-1 bg-gray-100 rounded-full p-1">
+          {[["visited", "Geweest"], ["planned", "Planning"]].map(([key, label]) => (
+            <button key={key} onClick={() => setMode(key)}
+              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${mode === key ? "bg-white shadow-sm text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === "visited"
+        ? <VisitedMap trip={trip} />
+        : <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
     </div>
   );
 }
@@ -4083,6 +4353,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     { key: "accommodation", label: "Verblijf", icon: "bed" },
     { key: "transport", label: "Vervoer", icon: "plane" },
     { key: "packing", label: "Paklijst", icon: "suitcase" },
+    { key: "map", label: "Kaart", icon: "map" },
   ];
 
   // Bottom nav tabs for mobile
@@ -4096,6 +4367,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     { key: "accommodation", icon: "bed", label: "Verblijf" },
     { key: "transport", icon: "plane", label: "Vervoer" },
     { key: "packing", icon: "suitcase", label: "Paklijst" },
+    { key: "map", icon: "map", label: "Kaart" },
     ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
@@ -4257,7 +4529,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
-          {tab === "map" && <MapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
+          {tab === "map" && <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
           {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
         </>
       )}
