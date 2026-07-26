@@ -221,6 +221,119 @@ async function verifyAppleIdToken(idToken) {
   });
 }
 
+// ---------- E-mail notifications ----------
+// Delivery goes through whichever provider is configured; with none set the
+// feature stays dormant and only logs, so the app runs unchanged until a key is
+// supplied. Both providers are plain REST, so there is no dependency to install
+// and nothing that can fail to build.
+const MAIL_FROM = process.env.MAIL_FROM || "Reisplanner <onboarding@resend.dev>";
+
+function mailProvider() {
+  if (process.env.RESEND_API_KEY) return "resend";
+  if (process.env.POSTMARK_TOKEN) return "postmark";
+  return null;
+}
+
+async function sendMail({ to, subject, text }) {
+  const provider = mailProvider();
+  if (!provider) {
+    console.log(`[mail:dormant] would send to ${to}: ${subject}`);
+    return false;
+  }
+  const endpoints = {
+    resend: {
+      url: "https://api.resend.com/emails",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: { from: MAIL_FROM, to: [to], subject, text },
+    },
+    postmark: {
+      url: "https://api.postmarkapp.com/email",
+      headers: { "X-Postmark-Server-Token": process.env.POSTMARK_TOKEN, "Content-Type": "application/json", Accept: "application/json" },
+      body: { From: MAIL_FROM, To: to, Subject: subject, TextBody: text, MessageStream: "outbound" },
+    },
+  }[provider];
+
+  const res = await fetch(endpoints.url, {
+    method: "POST", headers: endpoints.headers, body: JSON.stringify(endpoints.body),
+  });
+  if (!res.ok) throw new Error(`${provider} responded ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return true;
+}
+
+// Everyone who manages the trip: its owner plus editors. Viewers are the ones
+// reacting, so they are not notified, and neither is whoever caused the event.
+async function notifyTripManagers(tripId, actorId, kind, summary, actorName) {
+  try {
+    const { rows } = await query(
+      `SELECT DISTINCT id FROM (
+         SELECT user_id AS id FROM trips WHERE id = $1
+         UNION
+         SELECT user_id FROM trip_members WHERE trip_id = $1 AND role <> 'viewer'
+       ) m WHERE id IS NOT NULL AND id <> $2`,
+      [tripId, actorId]
+    );
+    for (const { id } of rows) {
+      await query(
+        "INSERT INTO notifications (user_id, trip_id, kind, actor_name, summary) VALUES ($1,$2,$3,$4,$5)",
+        [id, tripId, kind, actorName || null, summary]
+      );
+    }
+  } catch (err) {
+    // A notification must never take down the action that triggered it.
+    console.error("Queueing notification failed:", err.message);
+  }
+}
+
+// Wait for a lull before sending, so a run of likes in one sitting arrives as a
+// single mail instead of one per tap.
+const NOTIFY_QUIET_MINUTES = 5;
+const NOTIFY_SWEEP_MS = 2 * 60 * 1000;
+
+async function flushNotifications() {
+  if (!mailProvider()) return;
+  const { rows } = await query(
+    `SELECT n.user_id, n.trip_id, u.email, COALESCE(u.given_name, u.name, 'daar') AS greeting,
+            t.name AS trip_name,
+            COUNT(*) FILTER (WHERE n.kind = 'comment') AS comments,
+            COUNT(*) FILTER (WHERE n.kind = 'like') AS likes,
+            ARRAY_AGG(n.summary ORDER BY n.created_at) AS lines
+       FROM notifications n
+       JOIN users u ON u.id = n.user_id
+       JOIN trips t ON t.id = n.trip_id
+      WHERE n.sent_at IS NULL AND u.email IS NOT NULL
+      GROUP BY n.user_id, n.trip_id, u.email, greeting, t.name
+     HAVING MAX(n.created_at) < NOW() - INTERVAL '${NOTIFY_QUIET_MINUTES} minutes'`
+  );
+
+  for (const g of rows) {
+    const counts = [
+      Number(g.comments) ? `${g.comments} reactie${Number(g.comments) === 1 ? "" : "s"}` : null,
+      Number(g.likes) ? `${g.likes} duimpje${Number(g.likes) === 1 ? "" : "s"}` : null,
+    ].filter(Boolean).join(" en ");
+    const body = [
+      `Hoi ${g.greeting},`,
+      "",
+      `Er ${Number(g.comments) + Number(g.likes) === 1 ? "is" : "zijn"} ${counts} bij het dagboek van "${g.trip_name}":`,
+      "",
+      ...g.lines.slice(0, 20).map((l) => `• ${l}`),
+      g.lines.length > 20 ? `• … en nog ${g.lines.length - 20}` : null,
+      "",
+      `Bekijk ze in Reisplanner: ${process.env.APP_URL || ""}`,
+    ].filter((l) => l !== null).join("\n");
+
+    try {
+      await sendMail({ to: g.email, subject: `${counts} bij "${g.trip_name}"`, text: body });
+      await query(
+        "UPDATE notifications SET sent_at = NOW() WHERE user_id = $1 AND trip_id = $2 AND sent_at IS NULL",
+        [g.user_id, g.trip_id]
+      );
+    } catch (err) {
+      // Leave them pending; the next sweep retries.
+      console.error(`Sending digest to ${g.email} failed:`, err.message);
+    }
+  }
+}
+
 // ---------- Router ----------
 const routes = [];
 // `tripScope` declares how to resolve the trip a request belongs to, so the
@@ -1151,6 +1264,9 @@ route("POST", "/api/trips/:id/journal-comments", async (req, res, params, body) 
     `INSERT INTO journal_comments (trip_id, user_id, body, ${slot.col}) VALUES ($1,$2,$3,$4) RETURNING *`,
     [params.id, req.user.id, text.trim(), slot.id]
   );
+  const who = firstName(req.user) || "Iemand";
+  const excerpt = text.trim().length > 80 ? text.trim().slice(0, 80) + "…" : text.trim();
+  notifyTripManagers(params.id, req.user.id, "comment", `${who} reageerde: "${excerpt}"`, who);
   sendJson(res, 201, { ...rows[0], author: firstName(req.user), is_new: false, like_count: 0, liked_by_me: false });
 }, { tripScope: "param", allowViewer: true });
 
@@ -1174,6 +1290,9 @@ route("POST", "/api/trips/:id/journal-likes", async (req, res, params, body) => 
     `INSERT INTO journal_likes (trip_id, user_id, ${col}) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
     [params.id, req.user.id, id]
   );
+  const liker = firstName(req.user) || "Iemand";
+  notifyTripManagers(params.id, req.user.id, "like",
+    col === "comment_id" ? `${liker} vond een reactie leuk` : `${liker} gaf een duimpje`, liker);
   sendJson(res, 201, { liked: true });
 }, { tripScope: "param", allowViewer: true });
 
@@ -1785,6 +1904,12 @@ const server = http.createServer(async (req, res) => {
 initDb()
   .then(() => {
     server.listen(PORT, () => console.log(`Reisplanner draait op http://localhost:${PORT}`));
+    console.log(mailProvider()
+      ? `E-mailnotificaties actief via ${mailProvider()}.`
+      : "E-mailnotificaties staan uit (geen RESEND_API_KEY of POSTMARK_TOKEN ingesteld).");
+    setInterval(() => {
+      flushNotifications().catch((err) => console.error("Notification sweep failed:", err.message));
+    }, NOTIFY_SWEEP_MS).unref();
   })
   .catch((err) => {
     console.error("Database init failed:", err.message);
