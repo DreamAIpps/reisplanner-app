@@ -292,70 +292,100 @@ const notifyTripManagers = (tripId, actorId, kind, summary, actorName) =>
 const notifyTripViewers = (tripId, actorId, kind, summary, actorName) =>
   notifyTripMembers(tripId, actorId, "viewers", kind, summary, actorName);
 
-// Wait for a lull before sending, so a run of likes in one sitting arrives as a
-// single mail instead of one per tap.
+// One mail per recipient per 12 hours, covering every trip they follow. The
+// short lull on top keeps a burst of activity out of the very first mail's
+// blind spot: without it the first tap of an evening would send immediately and
+// everything after it would wait half a day.
 const NOTIFY_QUIET_MINUTES = 5;
+const NOTIFY_WINDOW_HOURS = 12;
 const NOTIFY_SWEEP_MS = 2 * 60 * 1000;
+
+const countPhrase = (parts) =>
+  parts.length > 1 ? parts.slice(0, -1).join(", ") + " en " + parts[parts.length - 1] : parts[0];
+
+function describe({ entries, photos, comments, likes }) {
+  return [
+    [Number(entries), "nieuw verhaal", "nieuwe verhalen"],
+    [Number(photos), "nieuwe foto", "nieuwe foto's"],
+    [Number(comments), "reactie", "reacties"],
+    [Number(likes), "duimpje", "duimpjes"],
+  ].filter(([c]) => c > 0).map(([c, one, many]) => `${c} ${c === 1 ? one : many}`);
+}
 
 async function flushNotifications() {
   if (!mailProvider()) return;
-  const { rows } = await query(
-    `SELECT n.user_id, n.trip_id, u.email, COALESCE(u.given_name, u.name, 'daar') AS greeting,
-            t.name AS trip_name,
-            COUNT(*) FILTER (WHERE n.kind = 'comment') AS comments,
-            COUNT(*) FILTER (WHERE n.kind = 'like') AS likes,
-            COUNT(*) FILTER (WHERE n.kind = 'entry') AS entries,
-            COUNT(*) FILTER (WHERE n.kind = 'photo') AS photos,
-            ARRAY_AGG(n.summary ORDER BY n.created_at) AS lines
+
+  // Recipients who have something waiting, whose activity has settled, and who
+  // have not been mailed inside the window.
+  const { rows: due } = await query(
+    `SELECT n.user_id, u.email, COALESCE(u.given_name, u.name, 'daar') AS greeting
        FROM notifications n
        JOIN users u ON u.id = n.user_id
-       JOIN trips t ON t.id = n.trip_id
-      WHERE n.sent_at IS NULL AND u.email IS NOT NULL
-      GROUP BY n.user_id, n.trip_id, u.email, greeting, t.name
-     HAVING MAX(n.created_at) < NOW() - INTERVAL '${NOTIFY_QUIET_MINUTES} minutes'`
+      WHERE n.sent_at IS NULL AND u.email IS NOT NULL AND u.notify_email
+      GROUP BY n.user_id, u.email, greeting
+     HAVING MAX(n.created_at) < NOW() - INTERVAL '${NOTIFY_QUIET_MINUTES} minutes'
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications s
+           WHERE s.user_id = n.user_id
+             AND s.sent_at > NOW() - INTERVAL '${NOTIFY_WINDOW_HOURS} hours'
+        )`
   );
 
-  for (const g of rows) {
-    const parts = [
-      [Number(g.entries), "nieuw verhaal", "nieuwe verhalen"],
-      [Number(g.photos), "nieuwe foto", "nieuwe foto's"],
-      [Number(g.comments), "reactie", "reacties"],
-      [Number(g.likes), "duimpje", "duimpjes"],
-    ].filter(([c]) => c > 0).map(([c, one, many]) => `${c} ${c === 1 ? one : many}`);
-    const counts = parts.length > 1
-      ? parts.slice(0, -1).join(", ") + " en " + parts[parts.length - 1]
-      : parts[0];
-    const total = Number(g.entries) + Number(g.photos) + Number(g.comments) + Number(g.likes);
+  for (const person of due) {
+    const { rows: perTrip } = await query(
+      `SELECT t.name AS trip_name,
+              COUNT(*) FILTER (WHERE n.kind = 'comment') AS comments,
+              COUNT(*) FILTER (WHERE n.kind = 'like') AS likes,
+              COUNT(*) FILTER (WHERE n.kind = 'entry') AS entries,
+              COUNT(*) FILTER (WHERE n.kind = 'photo') AS photos,
+              ARRAY_AGG(n.summary ORDER BY n.created_at) AS lines
+         FROM notifications n
+         JOIN trips t ON t.id = n.trip_id
+        WHERE n.user_id = $1 AND n.sent_at IS NULL
+        GROUP BY t.id, t.name
+        ORDER BY MAX(n.created_at) DESC`,
+      [person.user_id]
+    );
+    if (!perTrip.length) continue;
 
-    // Collapse repeats: uploading twenty photos should read as one line with a
-    // count, not twenty identical bullets.
-    const tally = new Map();
-    for (const line of g.lines) tally.set(line, (tally.get(line) || 0) + 1);
-    const bullets = [...tally].slice(0, 15)
-      .map(([line, count]) => (count > 1 ? `• ${line} (${count}x)` : `• ${line}`));
-    if (tally.size > 15) bullets.push(`• … en nog ${tally.size - 15}`);
+    const totals = perTrip.reduce((acc, t) => ({
+      entries: acc.entries + Number(t.entries), photos: acc.photos + Number(t.photos),
+      comments: acc.comments + Number(t.comments), likes: acc.likes + Number(t.likes),
+    }), { entries: 0, photos: 0, comments: 0, likes: 0 });
+    const grandTotal = Object.values(totals).reduce((a, b) => a + b, 0);
+
+    const sections = perTrip.flatMap((t) => {
+      // Collapse repeats: twenty photos should read as one line with a count.
+      const tally = new Map();
+      for (const line of t.lines) tally.set(line, (tally.get(line) || 0) + 1);
+      const bullets = [...tally].slice(0, 10)
+        .map(([line, c]) => (c > 1 ? `• ${line} (${c}x)` : `• ${line}`));
+      if (tally.size > 10) bullets.push(`• … en nog ${tally.size - 10}`);
+      return [`${t.trip_name} — ${countPhrase(describe(t))}`, ...bullets, ""];
+    });
+
+    const subject = perTrip.length === 1
+      ? `${countPhrase(describe(perTrip[0]))} bij "${perTrip[0].trip_name}"`
+      : `${countPhrase(describe(totals))} bij je reizen`;
 
     const body = [
-      `Hoi ${g.greeting},`,
+      `Hoi ${person.greeting},`,
       "",
-      `Er ${total === 1 ? "is" : "zijn"} ${counts} bij "${g.trip_name}":`,
+      `Er ${grandTotal === 1 ? "is" : "zijn"} sinds je vorige bericht ${countPhrase(describe(totals))}:`,
       "",
-      ...bullets,
-      "",
+      ...sections,
       `Bekijk het in Reisplanner: ${process.env.APP_URL || ""}`,
       "",
-      "Geen berichten meer ontvangen? Zet ze uit bij je account in de app.",
+      `Je krijgt hoogstens één bericht per ${NOTIFY_WINDOW_HOURS} uur. Liever geen? Zet ze uit bij je account in de app.`,
     ].join("\n");
 
     try {
-      await sendMail({ to: g.email, subject: `${counts} bij "${g.trip_name}"`, text: body });
-      await query(
-        "UPDATE notifications SET sent_at = NOW() WHERE user_id = $1 AND trip_id = $2 AND sent_at IS NULL",
-        [g.user_id, g.trip_id]
-      );
+      await sendMail({ to: person.email, subject, text: body });
+      await query("UPDATE notifications SET sent_at = NOW() WHERE user_id = $1 AND sent_at IS NULL", [person.user_id]);
     } catch (err) {
-      // Leave them pending; the next sweep retries.
-      console.error(`Sending digest to ${g.email} failed:`, err.message);
+      // Leave them pending; the next sweep retries, and the window only counts
+      // mail that actually went out.
+      console.error(`Sending digest to ${person.email} failed:`, err.message);
     }
   }
 }
