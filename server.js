@@ -512,26 +512,91 @@ route("POST", "/api/trips/:id/invite", async (req, res, params, body) => {
   sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}`, role });
 });
 
+// Heartbeat from an open trip. Rounded to the minute and keyed on it, so the
+// row count is the number of minutes spent regardless of how often the client
+// pings or how many tabs are open.
+route("POST", "/api/trips/:id/ping", async (req, res, params) => {
+  await query(
+    `INSERT INTO trip_pings (trip_id, user_id, minute)
+     VALUES ($1, $2, date_trunc('minute', NOW())) ON CONFLICT DO NOTHING`,
+    [params.id, req.user.id]
+  );
+  res.writeHead(204); res.end();
+}, { tripScope: "param", allowViewer: true });
+
 route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
   const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan dit inzien");
 
   const { rows: members } = await query(
     `SELECT u.id, u.name, u.given_name, u.email, u.avatar, tm.role,
-       (SELECT COUNT(*) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) as view_count,
-       (SELECT MAX(viewed_at) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) as last_viewed_at
-     FROM trip_members tm JOIN users u ON u.id = tm.user_id
-     WHERE tm.trip_id = $1
-     ORDER BY tm.role ASC, u.name ASC NULLS LAST`,
+            (SELECT COUNT(*) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) AS view_count,
+            (SELECT MAX(viewed_at) FROM trip_views v WHERE v.trip_id = $1 AND v.user_id = u.id) AS last_viewed_at,
+            (SELECT COUNT(*) FROM trip_pings p WHERE p.trip_id = $1 AND p.user_id = u.id) AS minutes,
+            (SELECT MAX(minute) FROM trip_pings p WHERE p.trip_id = $1 AND p.user_id = u.id) AS last_active_at,
+            (SELECT MIN(minute) FROM trip_pings p WHERE p.trip_id = $1 AND p.user_id = u.id) AS first_active_at,
+            (SELECT COUNT(*) FROM journal_comments c WHERE c.trip_id = $1 AND c.user_id = u.id) AS comments,
+            (SELECT COUNT(*) FROM journal_likes l WHERE l.trip_id = $1 AND l.user_id = u.id) AS likes,
+            (SELECT jr.last_seen_at FROM journal_reads jr WHERE jr.trip_id = $1 AND jr.user_id = u.id) AS dagboek_last_seen
+       FROM trip_members tm JOIN users u ON u.id = tm.user_id
+      WHERE tm.trip_id = $1
+      ORDER BY tm.role ASC, u.name ASC NULLS LAST`,
     [params.id]
   );
+
+  // A visit is a run of minutes with no gap longer than five, which turns a
+  // column of timestamps into "came by six times" rather than "was here 47
+  // separate minutes".
+  const { rows: sessions } = await query(
+    `SELECT user_id, COUNT(*) AS visits, MAX(len) AS longest_minutes
+       FROM (
+         SELECT user_id, grp, COUNT(*) AS len FROM (
+           SELECT user_id, minute,
+                  SUM(gap) OVER (PARTITION BY user_id ORDER BY minute) AS grp
+             FROM (
+               SELECT user_id, minute,
+                      CASE WHEN minute - LAG(minute) OVER (PARTITION BY user_id ORDER BY minute)
+                                <= INTERVAL '5 minutes' THEN 0 ELSE 1 END AS gap
+                 FROM trip_pings WHERE trip_id = $1
+             ) g
+         ) grouped GROUP BY user_id, grp
+       ) runs GROUP BY user_id`,
+    [params.id]
+  );
+  const byUser = new Map(sessions.map((r) => [r.user_id, r]));
+
+  // What they actually did, newest first.
+  const { rows: activity } = await query(
+    `SELECT user_id, 'comment' AS kind, created_at AS at, body AS detail FROM journal_comments WHERE trip_id = $1
+     UNION ALL
+     SELECT user_id, 'like', created_at, NULL FROM journal_likes WHERE trip_id = $1
+     ORDER BY at DESC LIMIT 200`,
+    [params.id]
+  );
+  const actionsByUser = new Map();
+  for (const a of activity) {
+    if (!actionsByUser.has(a.user_id)) actionsByUser.set(a.user_id, []);
+    const list = actionsByUser.get(a.user_id);
+    if (list.length < 10) list.push({ kind: a.kind, at: a.at, detail: a.detail });
+  }
+
   const { rows: countRows } = await query(
-    `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE viewed_at > NOW() - INTERVAL '24 hours') as last_24h
-     FROM trip_views WHERE trip_id = $1`,
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE viewed_at > NOW() - INTERVAL '24 hours') AS last_24h
+       FROM trip_views WHERE trip_id = $1`,
     [params.id]
   );
+
   sendJson(res, 200, {
-    members: members.map((m) => ({ ...m, view_count: Number(m.view_count) })),
+    members: members.map((m) => ({
+      ...m,
+      view_count: Number(m.view_count),
+      minutes: Number(m.minutes),
+      comments: Number(m.comments),
+      likes: Number(m.likes),
+      visits: Number(byUser.get(m.id)?.visits || 0),
+      longest_minutes: Number(byUser.get(m.id)?.longest_minutes || 0),
+      recent: actionsByUser.get(m.id) || [],
+    })),
     total_views: Number(countRows[0].total),
     views_24h: Number(countRows[0].last_24h),
   });
