@@ -294,6 +294,7 @@ const api = {
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   sendTestMail: () => apiFetch("/api/admin/test-mail", { method: "POST", body: "{}" }),
   setNotifyEmail: (enabled) => apiFetch("/auth/notify-email", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  pingTrip: (tripId) => _guestMode ? Promise.resolve() : apiFetch(`/api/trips/${tripId}/ping`, { method: "POST", body: "{}" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
@@ -3390,6 +3391,15 @@ function ImportModal({ tripId, onImported, onClose }) {
 }
 
 // ---------- Share modal ----------
+function fmtDuration(minutes) {
+  const m = Number(minutes) || 0;
+  if (!m) return "";
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h} u ${rest} min` : `${h} uur`;
+}
+
 function ShareModal({ tripId, onClose }) {
   const [role, setRole] = useState("viewer");
   const [link, setLink] = useState(null);
@@ -3397,6 +3407,7 @@ function ShareModal({ tripId, onClose }) {
   const [copied, setCopied] = useState(false);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(null);
 
   function generateLink(r) {
     setRole(r); setLink(null); setLoading(true); setError(null);
@@ -3479,25 +3490,65 @@ function ShareModal({ tripId, onClose }) {
               </div>
             </div>
             <div className="space-y-1.5">
-              {stats.members.map((m) => (
-                <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-gray-50">
-                  {m.avatar ? (
-                    <img src={m.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
-                  ) : (
-                    <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 shrink-0">
-                      {(m.given_name || m.name || "?")[0].toUpperCase()}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
-                    <div className="text-xs text-gray-400">
-                      {m.role === "viewer" ? "👀 Alleen-lezen" : "✏️ Bewerker"}
-                      {m.view_count > 0 && ` · ${m.view_count}x bekeken`}
-                      {m.last_viewed_at && ` · laatst ${fmtDatetime(m.last_viewed_at)}`}
-                    </div>
+              {stats.members.map((m) => {
+                const open = expanded === m.id;
+                const hasDetail = m.minutes > 0 || m.comments > 0 || m.likes > 0;
+                return (
+                  <div key={m.id} className="rounded-lg bg-gray-50 overflow-hidden">
+                    <button type="button" onClick={() => setExpanded(open ? null : m.id)}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-left">
+                      {m.avatar ? (
+                        <img src={m.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 shrink-0">
+                          {(m.given_name || m.name || "?")[0].toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
+                        <div className="text-xs text-gray-400">
+                          {m.role === "viewer" ? "👀 Alleen-lezen" : "✏️ Bewerker"}
+                          {m.visits > 0 && ` · ${m.visits}x langsgeweest`}
+                          {m.minutes > 0 && ` · ${fmtDuration(m.minutes)} gelezen`}
+                          {m.last_active_at && ` · laatst ${fmtDatetime(m.last_active_at)}`}
+                        </div>
+                      </div>
+                      {hasDetail && <span className="text-gray-300 text-xs shrink-0">{open ? "▲" : "▼"}</span>}
+                    </button>
+
+                    {open && hasDetail && (
+                      <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-gray-100">
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          {[["Bezoeken", m.visits], ["Gelezen", fmtDuration(m.minutes)], ["Langste bezoek", fmtDuration(m.longest_minutes)]]
+                            .map(([label, value]) => (
+                              <div key={label} className="bg-white rounded-lg py-1.5">
+                                <div className="text-sm font-semibold text-gray-700">{value || "—"}</div>
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
+                              </div>
+                            ))}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          💬 {m.comments} reactie{m.comments === 1 ? "" : "s"} · 👍 {m.likes} duimpje{m.likes === 1 ? "" : "s"}
+                          {m.first_active_at && ` · volgt sinds ${fmtDatetime(m.first_active_at)}`}
+                        </div>
+                        {m.recent.length > 0 && (
+                          <div className="space-y-1">
+                            {m.recent.map((a, i) => (
+                              <div key={i} className="text-xs text-gray-500 flex gap-2">
+                                <span className="shrink-0">{a.kind === "comment" ? "💬" : "👍"}</span>
+                                <span className="flex-1 min-w-0 truncate">
+                                  {a.kind === "comment" ? a.detail : "gaf een duimpje"}
+                                </span>
+                                <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -3882,6 +3933,20 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   useEffect(() => { load(); }, [load]);
   // Don't carry the guest preview over into another trip.
   useEffect(() => { setPreviewViewer(false); }, [tripId]);
+
+  // Records how long this trip is actually open, which the share stats report.
+  // Skipped while the tab is hidden so a forgotten background tab does not read
+  // as hours of attention.
+  useEffect(() => {
+    if (_guestMode) return;
+    const beat = () => {
+      if (document.visibilityState === "visible") api.pingTrip(tripId).catch(() => {});
+    };
+    beat();
+    const timer = setInterval(beat, 60000);
+    document.addEventListener("visibilitychange", beat);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", beat); };
+  }, [tripId]);
 
   async function handleDelete() {
     if (!confirm(`"${trip.name}" definitief verwijderen?`)) return;

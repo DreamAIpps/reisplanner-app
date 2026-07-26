@@ -102,6 +102,18 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS trip_views_trip_idx ON trip_views(trip_id, viewed_at);
 
+    -- One row per minute a viewer has the trip open, which is what makes "how
+    -- long did they look" answerable at all — trip_views only records that a
+    -- trip was opened, not for how long. Kept coarse on purpose: a minute is
+    -- enough to tell a glance from an evening of reading.
+    CREATE TABLE IF NOT EXISTS trip_pings (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      minute TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (trip_id, user_id, minute)
+    );
+    CREATE INDEX IF NOT EXISTS trip_pings_lookup ON trip_pings(trip_id, user_id, minute);
+
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
