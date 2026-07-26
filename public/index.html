@@ -9,15 +9,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Reisplanner" />
-  <meta name="theme-color" content="#A03A08" />
+  <meta name="theme-color" content="#FF7A00" />
   <meta property="og:title" content="Reisplanner" />
   <meta property="og:description" content="Jouw reizen, overzichtelijk gepland" />
   <meta property="og:image" content="/icon-512.png" />
   <meta property="og:type" content="website" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    /* Fris oranje. Twee tinten uit dezelfde familie, ver uit elkaar in
-       helderheid: sky-700 (#A03A08) draagt de interface, sky-400 (#E4571A) is
+    /* Fris oranje. sky-700 (#FF7A00) draagt de interface, sky-400 (#E4571A) is
        voorbehouden aan "nieuw" en "vandaag". De schaal heet nog sky zodat de
        bestaande klassen blijven werken. De grijzen zijn warm gezet, zodat het
        oranje er niet koud naast staat. */
@@ -27,7 +26,7 @@
           colors: {
             sky: {
               50: "#FDF5F0", 100: "#FAE7DA", 200: "#F3CDB4", 300: "#E9A985",
-              400: "#E4571A", 500: "#D14A0C", 600: "#B8400A", 700: "#A03A08",
+              400: "#E4571A", 500: "#D14A0C", 600: "#B8400A", 700: "#FF7A00",
               800: "#83300A", 900: "#6A2708",
             },
             gray: {
@@ -63,6 +62,11 @@
   <style>
     .leaflet-reisplanner-icon { background: none !important; border: none !important; }
     * { box-sizing: border-box; }
+    /* Tailwinds tekstschaal (text-xs t/m text-2xl) is in rem, dus deze ene regel
+       maakt alle lopende tekst iets groter zonder dat elke className aangepast
+       hoeft te worden. Iconen en de handvol vaste px-groottes (dagnummers,
+       kopjes) staan hier los van en zijn apart iets vergroot waar dat las. */
+    html { font-size: 17px; }
     body {
       background: #F4F2EF; margin: 0;
       font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
@@ -77,16 +81,16 @@
 <body>
   <div id="js-error" style="display:none;position:fixed;inset:0;background:#fff;z-index:9999;padding:32px;font-family:sans-serif">
     <div style="max-width:400px;margin:0 auto;text-align:center;padding-top:60px">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#A03A08" stroke-width="1.6"
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#B85800" stroke-width="1.6"
            stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px">
         <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5" /><path d="M12 16.2h.01" />
       </svg>
       <h2 style="color:#241D19;margin-bottom:8px;font-family:Georgia,serif;font-weight:400">Er ging iets mis</h2>
       <p style="color:#7B6E67;font-size:14px;margin-bottom:24px;word-break:break-all"></p>
-      <button onclick="window.location.reload()" style="background:#A03A08;color:#fff;border:none;padding:10px 24px;border-radius:999px;font-size:14px;cursor:pointer">Pagina herladen</button>
+      <button onclick="window.location.reload()" style="background:#FF7A00;color:#241D19;border:none;padding:10px 24px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer">Pagina herladen</button>
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=105"></script>
+  <script type="text/babel" src="app.js?v=106"></script>
 </body>
 </html>
