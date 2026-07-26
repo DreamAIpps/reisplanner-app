@@ -302,6 +302,21 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_accommodation_user ON journal_likes(accommodation_id, user_id) WHERE accommodation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS journal_likes_trip_idx ON journal_likes(trip_id);
 
+    -- Outbox for e-mail notifications. Rows are written when something happens
+    -- and swept into one digest per (recipient, trip) a few minutes later, so a
+    -- burst of likes on one evening becomes a single mail rather than twenty.
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      actor_name TEXT,
+      summary TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      sent_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS notifications_pending_idx ON notifications(user_id, trip_id) WHERE sent_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS journal_reads (
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
