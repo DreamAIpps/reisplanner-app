@@ -443,11 +443,6 @@ function contrastRatio(hexA, hexB) {
   const hi = Math.max(la, lb), lo = Math.min(la, lb);
   return (hi + 0.05) / (lo + 0.05);
 }
-// Voor een accentkleur als achtergrond: geeft de tekstkleur (donkere inkt of
-// wit) die het meeste contrast oplevert.
-function readableOn(bgHex, dark = "#241D19", light = "#FFFFFF") {
-  return contrastRatio(bgHex, dark) >= contrastRatio(bgHex, light) ? dark : light;
-}
 // Voor een accentkleur als tekst op een lichte achtergrond: is de kleur zelf te
 // licht om te lezen, dan wordt hij in stappen donkerder gemaakt tot het
 // contrast voldoet — met behoud van de tint, dus het blijft "dezelfde kleur".
@@ -533,7 +528,7 @@ function Select({ className = "", children, ...props }) {
 function Button({ variant = "primary", className = "", children, ...props }) {
   const base = "inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer";
   const styles = {
-    primary: "bg-sky-700 text-gray-900 hover:bg-sky-800 hover:text-white",
+    primary: "bg-sky-700 text-white hover:bg-sky-800",
     secondary: "bg-white border border-gray-200 text-gray-700 hover:border-gray-300 hover:text-gray-900",
     danger: "bg-white border border-red-200 text-red-600 hover:bg-red-50",
   };
@@ -551,7 +546,7 @@ function Tabs({ tabs, active, onChange, accentColor }) {
           onClick={() => onChange(t.key)}
           className="w-full py-3 px-4 rounded-xl text-base font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-2"
           style={active === t.key
-            ? { background: accentColor || "#FF7A00", color: readableOn(accentColor || "#FF7A00") }
+            ? { background: accentColor || "#FF7A00", color: "#fff" }
             : { background: "#F4F2EF", color: "#463D38" }}
         >
           <Icon name={t.icon} size={17} /> {t.label}
@@ -4426,7 +4421,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <div className="text-xs text-gray-500">Zo ziet iemand met een alleen-lezen link deze reis. Kosten en budget zijn verborgen.</div>
           </div>
           <button onClick={() => { setPreviewViewer(false); if (tab === "budget") setTab("days"); }}
-            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-700 text-gray-900 hover:bg-sky-800 hover:text-white transition-colors">
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-700 text-white hover:bg-sky-800 transition-colors">
             Sluiten
           </button>
         </div>
@@ -4458,7 +4453,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             </div>
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
               {!readOnly && tab !== "journal" && tab !== "photos" && (
-                <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all active:scale-95" style={{ background: accent, color: readableOn(accent) }}>
+                <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all active:scale-95" style={{ background: accent, color: "#fff" }}>
                   <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
                 </button>
               )}
@@ -4478,8 +4473,8 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 <div className="flex items-center gap-2 mb-1">
                   {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
-                <h2 className="text-2xl font-bold drop-shadow" style={{ color: readableOn(accent) }}>{trip.name}</h2>
-                {trip.destination && <div className="text-sm mt-0.5 flex items-center gap-1" style={{ color: readableOn(accent) }}><Icon name="pin" size={13} />{trip.destination}</div>}
+                <h2 className="text-2xl font-bold drop-shadow text-white">{trip.name}</h2>
+                {trip.destination && <div className="text-sm mt-0.5 flex items-center gap-1 text-white/80"><Icon name="pin" size={13} />{trip.destination}</div>}
               </div>
             </div>
             <div className="bg-white px-4 py-3">
@@ -4488,7 +4483,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
               </div>
               {!readOnly && tab !== "journal" && tab !== "photos" && (
-                <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent, color: readableOn(accent) }}>
+                <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent, color: "#fff" }}>
                   <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
                 </button>
               )}
@@ -4514,7 +4509,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <button onClick={() => setTab("days")}
               className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
               style={tab === "days"
-                ? { background: accent, color: readableOn(accent), boxShadow: `0 4px 14px ${accent}55` }
+                ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
                 : { background: "#F4F2EF", color: "#463D38" }}>
               <Icon name="route" size={15} className="mr-1.5" />Dagplanning
             </button>
@@ -4881,7 +4876,7 @@ function App() {
             {/* FAB */}
             <button
               onClick={() => setShowTripForm(true)}
-              className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-5 py-4 rounded-2xl text-gray-900 font-bold text-base shadow-xl active:scale-95 transition-all"
+              className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-5 py-4 rounded-2xl text-white font-bold text-base shadow-xl active:scale-95 transition-all"
               style={{ background: "linear-gradient(135deg,#FF7A00,#E8630A)", boxShadow: "0 8px 24px rgba(255,122,0,0.4)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
             >
               + Nieuwe reis
