@@ -9,23 +9,37 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Reisplanner" />
-  <meta name="theme-color" content="#0369a1" />
+  <meta name="theme-color" content="#A03A08" />
   <meta property="og:title" content="Reisplanner" />
   <meta property="og:description" content="Jouw reizen, overzichtelijk gepland" />
   <meta property="og:image" content="/icon-512.png" />
   <meta property="og:type" content="website" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    /* Fris oranje. Twee tinten uit dezelfde familie, ver uit elkaar in
+       helderheid: sky-700 (#A03A08) draagt de interface, sky-400 (#E4571A) is
+       voorbehouden aan "nieuw" en "vandaag". De schaal heet nog sky zodat de
+       bestaande klassen blijven werken. De grijzen zijn warm gezet, zodat het
+       oranje er niet koud naast staat. */
     tailwind.config = {
       theme: {
         extend: {
           colors: {
             sky: {
-              50: "#f0f9ff", 100: "#e0f2fe", 200: "#bae6fd", 300: "#7dd3fc",
-              400: "#38bdf8", 500: "#0ea5e9", 600: "#0284c7", 700: "#0369a1",
-              800: "#075985", 900: "#0c4a6e",
-            }
-          }
+              50: "#FDF5F0", 100: "#FAE7DA", 200: "#F3CDB4", 300: "#E9A985",
+              400: "#E4571A", 500: "#D14A0C", 600: "#B8400A", 700: "#A03A08",
+              800: "#83300A", 900: "#6A2708",
+            },
+            gray: {
+              50: "#FAF9F7", 100: "#F4F2EF", 200: "#E6E0DA", 300: "#D5CCC4",
+              400: "#A99C93", 500: "#7B6E67", 600: "#5E534D", 700: "#463D38",
+              800: "#332C28", 900: "#241D19",
+            },
+          },
+          fontFamily: {
+            display: ['"Iowan Old Style"', '"Palatino Linotype"', "Palatino", '"Book Antiqua"', "Georgia", "serif"],
+            num: ["ui-monospace", '"SF Mono"', "Menlo", "Consolas", "monospace"],
+          },
         }
       }
     };
@@ -49,21 +63,30 @@
   <style>
     .leaflet-reisplanner-icon { background: none !important; border: none !important; }
     * { box-sizing: border-box; }
-    body { background: #f0f9ff; font-family: system-ui, sans-serif; margin: 0; }
+    body {
+      background: #F4F2EF; margin: 0;
+      font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #bae6fd; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: #E6E0DA; border-radius: 3px; }
+    /* Cijfers die onder elkaar horen te staan — tijden, bedragen, dagnummers. */
+    .tnum { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
   <div id="js-error" style="display:none;position:fixed;inset:0;background:#fff;z-index:9999;padding:32px;font-family:sans-serif">
     <div style="max-width:400px;margin:0 auto;text-align:center;padding-top:60px">
-      <div style="font-size:48px;margin-bottom:16px">😕</div>
-      <h2 style="color:#1f2937;margin-bottom:8px">Er ging iets mis</h2>
-      <p style="color:#6b7280;font-size:14px;margin-bottom:24px;word-break:break-all"></p>
-      <button onclick="window.location.reload()" style="background:#0284c7;color:#fff;border:none;padding:10px 24px;border-radius:12px;font-size:14px;cursor:pointer">Pagina herladen</button>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#A03A08" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5" /><path d="M12 16.2h.01" />
+      </svg>
+      <h2 style="color:#241D19;margin-bottom:8px;font-family:Georgia,serif;font-weight:400">Er ging iets mis</h2>
+      <p style="color:#7B6E67;font-size:14px;margin-bottom:24px;word-break:break-all"></p>
+      <button onclick="window.location.reload()" style="background:#A03A08;color:#fff;border:none;padding:10px 24px;border-radius:999px;font-size:14px;cursor:pointer">Pagina herladen</button>
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=103"></script>
+  <script type="text/babel" src="app.js?v=104"></script>
 </body>
 </html>

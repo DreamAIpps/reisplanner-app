@@ -8,7 +8,7 @@ class ErrorBoundary extends React.Component {
     if (this.state.error) return (
       <div className="min-h-screen flex items-center justify-center p-8 bg-gray-50">
         <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-          <div className="text-5xl mb-4">😕</div>
+          <Icon name="alert" size={40} strokeWidth={1.3} className="mx-auto mb-4 text-sky-700" />
           <h2 className="text-lg font-bold text-gray-800 mb-2">Er ging iets mis</h2>
           <p className="text-sm text-gray-500 mb-4">{this.state.error.message}</p>
           <button onClick={() => window.location.reload()} className="bg-sky-600 text-white rounded-xl px-6 py-2 text-sm font-medium hover:bg-sky-700">Pagina herladen</button>
@@ -19,11 +19,107 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ---------- Icons ----------
+// Eén getekende set in plaats van emoji. Emoji worden door het besturingssysteem
+// getekend, dus ze zien er op elk toestel anders uit, hebben elk hun eigen kleur
+// en laten zich niet uitlijnen. Deze staan allemaal op hetzelfde raster van 24,
+// hebben dezelfde lijndikte en nemen via currentColor de kleur van hun omgeving over.
+const ICONS = {
+  // navigatie & structuur
+  route: <><circle cx="6" cy="6.5" r="2" /><circle cx="6" cy="12" r="2" /><circle cx="6" cy="17.5" r="2" /><path d="M6 8.5v1.5" /><path d="M6 14v1.5" /><path d="M11 6.5h9" /><path d="M11 12h9" /><path d="M11 17.5h6" /></>,
+  book: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" /><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H19v3H6.5A2.5 2.5 0 0 1 4 20.5z" /></>,
+  camera: <><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.9l1.2-2h6.8l1.2 2h1.9A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" /><circle cx="12" cy="12.5" r="3.4" /></>,
+  calendar: <><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17" /><path d="M8 3v4" /><path d="M16 3v4" /></>,
+  map: <><path d="M9 4.5 3.5 7v12.5L9 17l6 2.5 5.5-2.5V4.5L15 7z" /><path d="M9 4.5V17" /><path d="M15 7v12.5" /></>,
+  globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17" /><path d="M12 3.5c2.3 2.4 3.5 5.3 3.5 8.5s-1.2 6.1-3.5 8.5c-2.3-2.4-3.5-5.3-3.5-8.5S9.7 5.9 12 3.5z" /></>,
+  more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
+
+  // vervoer
+  plane: <><path d="M3 13.5 21 7l-4.5 12-3.2-5.1z" /><path d="M13.3 13.9 21 7" /></>,
+  train: <><rect x="5.5" y="3.5" width="13" height="13" rx="3" /><path d="M5.5 10h13" /><path d="m8 20 2-3.5" /><path d="m16 20-2-3.5" /><circle cx="9" cy="13.3" r="1" fill="currentColor" stroke="none" /><circle cx="15" cy="13.3" r="1" fill="currentColor" stroke="none" /></>,
+  bus: <><rect x="4" y="3.5" width="16" height="13" rx="2.5" /><path d="M4 10.5h16" /><path d="M7 16.5V19" /><path d="M17 16.5V19" /><circle cx="8" cy="13.6" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="13.6" r="1" fill="currentColor" stroke="none" /></>,
+  car: <><path d="M4 16v-3.2l1.9-4.6A2 2 0 0 1 7.75 7h8.5a2 2 0 0 1 1.85 1.2L20 12.8V16" /><path d="M4 12.8h16" /><path d="M5.5 16v2" /><path d="M18.5 16v2" /><circle cx="7.8" cy="14.4" r="1" fill="currentColor" stroke="none" /><circle cx="16.2" cy="14.4" r="1" fill="currentColor" stroke="none" /></>,
+  boat: <><path d="M4 15h16l-2.3 5H6.3z" /><path d="M12.8 15V3.5L19 15z" /><path d="M10.8 15V7.5L6 15z" /></>,
+
+  // plekken & activiteiten
+  bed: <><path d="M3 18v-8" /><path d="M3 13h18v5" /><path d="M21 18v-4.5a2.5 2.5 0 0 0-2.5-2.5H10v2.5" /><circle cx="6.9" cy="11" r="1.9" /></>,
+  pin: <><path d="M12 21s6.5-6 6.5-11a6.5 6.5 0 1 0-13 0C5.5 15 12 21 12 21z" /><circle cx="12" cy="10" r="2.4" /></>,
+  flag: <><path d="M6 21V4" /><path d="M6 5h10.5l-1.8 3.6 1.8 3.6H6" /></>,
+  landmark: <><path d="M4 20h16" /><path d="M5 9.5h14" /><path d="M12 3.5 20 9.5H4z" /><path d="M7.5 9.5V17" /><path d="M12 9.5V17" /><path d="M16.5 9.5V17" /></>,
+  fork: <><path d="M7 3v6a2 2 0 0 0 4 0V3" /><path d="M9 11v10" /><path d="M17 3c-1.6 1.3-2.2 3-2.2 5 0 1.6.7 2.6 2.2 3v10" /></>,
+  frame: <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="m4.5 16 4.3-4.3 3.4 3.4 2.6-2.6 4.7 4.7" /><circle cx="9" cy="9" r="1.3" /></>,
+  leaf: <><path d="M20 4c0 9-5.2 13-10 13a5 5 0 0 1-5-5C5 7.7 11.5 4 20 4z" /><path d="M5.5 20c1.5-4.5 4.5-8 9-10" /></>,
+  ball: <><circle cx="12" cy="12" r="8.5" /><path d="m12 7.2 4 2.9-1.5 4.7h-5L8 10.1z" /><path d="M12 3.5v3.7" /><path d="m4 9.6 4 .5" /><path d="m20 9.6-4 .5" /><path d="m7.3 19 2.2-4.2" /><path d="m16.7 19-2.2-4.2" /></>,
+  bagShop: <><path d="M5 8h14l-1 12H6z" /><path d="M9 8V5.5A2.5 2.5 0 0 1 11.5 3h1A2.5 2.5 0 0 1 15 5.5V8" /></>,
+  ticket: <><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h13A1.5 1.5 0 0 1 20 8.5v2a1.7 1.7 0 0 0 0 3v2a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 15.5v-2a1.7 1.7 0 0 0 0-3z" /><path d="M13.5 7v10" /></>,
+
+  // acties
+  plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+  pen: <><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z" /><path d="m15 6 3 3" /></>,
+  trash: <><path d="M4.5 6.5h15" /><path d="M9.5 6.5V4.8A1.3 1.3 0 0 1 10.8 3.5h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7" /><path d="M6.5 6.5 7.4 19a1.6 1.6 0 0 0 1.6 1.5h6a1.6 1.6 0 0 0 1.6-1.5l.9-12.5" /><path d="M10.5 10v6.5" /><path d="M13.5 10v6.5" /></>,
+  share: <><circle cx="17.5" cy="6" r="2.5" /><circle cx="6.5" cy="12" r="2.5" /><circle cx="17.5" cy="18" r="2.5" /><path d="M8.8 10.8 15.3 7.3" /><path d="m8.8 13.2 6.5 3.5" /></>,
+  mail: <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m3.6 6.7 7.3 5.2a2 2 0 0 0 2.2 0l7.3-5.2" /></>,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="m15.8 15.8 4.2 4.2" /></>,
+  check: <><path d="m5 12.8 4.4 4.2L19 6.5" /></>,
+  chat: <><path d="M20 12.5c0 3.9-3.6 6.9-8 6.9a9.4 9.4 0 0 1-2.7-.4L4 21l1.2-3.4A6.6 6.6 0 0 1 4 12.5C4 8.6 7.6 5.6 12 5.6s8 3 8 6.9z" /></>,
+  thumb: <><path d="M7 10.5 11 3a2.4 2.4 0 0 1 2.4 2.4V9.5h4.3a2 2 0 0 1 2 2.4l-1.3 6.2a2.4 2.4 0 0 1-2.3 1.9H7" /><rect x="3" y="10.5" width="4" height="9.5" rx="1.4" /></>,
+  eye: <><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></>,
+  rotate: <><path d="M20 12a8 8 0 1 1-2.6-5.9" /><path d="M20.5 4v4.4h-4.4" /></>,
+  clipboard: <><rect x="5" y="4.5" width="14" height="16" rx="2.5" /><path d="M9 4.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4.5v1.2H9z" /><path d="M9 11h6" /><path d="M9 15h4" /></>,
+  arrowRight: <><path d="M4 12h15.5" /><path d="m14 6.5 5.5 5.5-5.5 5.5" /></>,
+  arrowLeft: <><path d="M20 12H4.5" /><path d="m10 6.5-5.5 5.5 5.5 5.5" /></>,
+  arrowUpRight: <><path d="M7 17 17.5 6.5" /><path d="M8.5 6.5h9v9" /></>,
+  close: <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></>,
+
+  // status & meta
+  clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.3l3.3 2" /></>,
+  wallet: <><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3" /><path d="M4 7.5V17a2.5 2.5 0 0 0 2.5 2.5H19a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H6.5" /><circle cx="16" cy="14" r="1.2" fill="currentColor" stroke="none" /></>,
+  suitcase: <><rect x="3" y="7.5" width="18" height="12" rx="2.5" /><path d="M9 7.5V5.3A1.8 1.8 0 0 1 10.8 3.5h2.4A1.8 1.8 0 0 1 15 5.3v2.2" /><path d="M3 12.5h18" /></>,
+  bag: <><path d="M6 8h12v10.5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z" /><path d="M9 8V6.5a3 3 0 0 1 6 0V8" /><path d="M6 12h12" /></>,
+  bulb: <><path d="M9.2 16.5a6 6 0 1 1 5.6 0v1.8H9.2z" /><path d="M10 21h4" /></>,
+  sparkle: <><path d="M12 3.5 13.7 9l5.3 1.8L13.7 12.6 12 18l-1.7-5.4L5 10.8 10.3 9z" /><path d="M18.5 16.5 19.2 18.6l2 .7-2 .7L18.5 22l-.7-2-2-.7 2-.7z" /></>,
+  alert: <><circle cx="12" cy="12" r="8.7" /><path d="M12 7.5v5.2" /><path d="M12 16.3h.01" /></>,
+  user: <><circle cx="12" cy="8.5" r="3.7" /><path d="M4.8 20.2a7.4 7.4 0 0 1 14.4 0" /></>,
+  users: <><circle cx="9.5" cy="8.5" r="3.4" /><path d="M3 19.8a6.7 6.7 0 0 1 13 0" /><path d="M16.2 5.5a3.4 3.4 0 0 1 0 6.5" /><path d="M17.6 14.4a6.7 6.7 0 0 1 3.4 5.4" /></>,
+  family: <><circle cx="7.5" cy="7.5" r="2.8" /><circle cx="16.5" cy="7.5" r="2.8" /><path d="M3 19.5a4.6 4.6 0 0 1 9 0" /><path d="M12.6 19.5a4.6 4.6 0 0 1 8.4-2.6" /><circle cx="12" cy="14.5" r="2" /><path d="M8.8 21a3.4 3.4 0 0 1 6.4 0" /></>,
+  key: <><circle cx="8" cy="14" r="4" /><path d="m11 11.5 8.5-8.5" /><path d="m16 6.5 2.4 2.4" /></>,
+  unlock: <><rect x="4.5" y="10.5" width="15" height="10" rx="2.5" /><path d="M8.5 10.5V7.2a3.5 3.5 0 0 1 6.8-1.2" /></>,
+
+  // paklijst
+  doc: <><path d="M6 3.5h7L18.5 9v11.5H6z" /><path d="M13 3.5V9h5.5" /><path d="M9 13h6" /><path d="M9 16.5h4" /></>,
+  shirt: <><path d="M9 3.5 4.5 6l1.9 3.7 2.1-1.1v11.9h7V8.6l2.1 1.1L19.5 6 15 3.5a3.1 3.1 0 0 1-6 0z" /></>,
+  plug: <><path d="M9.5 3.5v4.3" /><path d="M14.5 3.5v4.3" /><path d="M5.8 7.8h12.4v2.9a6.2 6.2 0 0 1-12.4 0z" /><path d="M12 16.9v3.6" /></>,
+  bottle: <><path d="M9.6 3.5h4.8v2.8H9.6z" /><path d="M9.9 6.3 8.4 9a3.2 3.2 0 0 0-.4 1.5v8a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-8a3.2 3.2 0 0 0-.4-1.5l-1.5-2.7" /><path d="M8 13.2h8" /></>,
+  pill: <><rect x="2.8" y="8.5" width="18.4" height="7" rx="3.5" transform="rotate(-45 12 12)" /><path d="m9.2 9.2 5.6 5.6" /></>,
+
+  // merken
+  google: <>
+    <path d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.35z" fill="#4285F4" stroke="none" />
+    <path d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.96-3.38.96-2.6 0-4.8-1.76-5.59-4.12H3.06v2.58A10 10 0 0 0 12 22z" fill="#34A853" stroke="none" />
+    <path d="M6.41 13.92a6 6 0 0 1 0-3.83V7.5H3.06a10 10 0 0 0 0 9z" fill="#FBBC05" stroke="none" />
+    <path d="M12 5.96c1.47 0 2.79.5 3.83 1.5l2.87-2.87C16.95 2.98 14.7 2 12 2a10 10 0 0 0-8.94 5.5l3.35 2.6C7.2 7.72 9.4 5.95 12 5.95z" fill="#EA4335" stroke="none" />
+  </>,
+  apple: <><path d="M16.1 12.6c0-2.2 1.8-3.3 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.3.8-.7 0-1.7-.8-2.8-.8-1.5 0-2.8.9-3.6 2.2-1.5 2.6-.4 6.5 1.1 8.6.7 1 1.6 2.2 2.7 2.2 1.1 0 1.5-.7 2.8-.7 1.3 0 1.6.7 2.8.7 1.1 0 1.9-1 2.6-2.1.8-1.2 1.2-2.4 1.2-2.5 0 0-2.2-.9-2.2-3.4z" fill="currentColor" stroke="none" /><path d="M14 5.9c.6-.7 1-1.7.9-2.7-.9 0-2 .6-2.6 1.3-.6.6-1.1 1.7-.9 2.6 1 .1 2-.5 2.6-1.2z" fill="currentColor" stroke="none" /></>,
+};
+
+function Icon({ name, size = 16, className = "", style, strokeWidth = 1.6 }) {
+  const glyph = ICONS[name];
+  if (!glyph) return null;
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} className={"inline-block shrink-0 " + className}
+         style={style} fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+         strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      {glyph}
+    </svg>
+  );
+}
+
 // ---------- Constants ----------
 const TRANSPORT_TYPES = ["Vliegtuig", "Trein", "Bus", "Huurauto", "Taxi", "Boot", "Anders"];
 const EXPENSE_CATEGORIES = ["Vluchten", "Accommodatie", "Vervoer", "Eten & Drinken", "Activiteiten", "Winkelen", "Overig"];
 const ACTIVITY_CATEGORIES = ["Bezienswaardigheid", "Restaurant", "Museum", "Natuur", "Sport", "Shopping", "Anders"];
-const COVER_COLORS = ["#0369a1","#7c3aed","#b45309","#065f46","#9f1239","#1e40af","#92400e","#134e4a"];
+// Acht diepe, licht ingehouden tinten die alle acht naast het warme grijs kunnen staan.
+const COVER_COLORS = ["#A03A08","#8A4B12","#6B3A2A","#4A5D3A","#2F5157","#3B4A6B","#6B3145","#5A4632"];
 
 // ---------- API ----------
 async function apiFetch(url, options = {}) {
@@ -347,7 +443,7 @@ function greeting(name) {
   const h = new Date().getHours();
   const first = name ? name.split(" ")[0] : "";
   const prefix = h < 12 ? "Goedemorgen" : h < 18 ? "Goedemiddag" : "Goedenavond";
-  return first ? `${prefix}, ${first} 👋` : prefix;
+  return first ? `${prefix}, ${first}` : prefix;
 }
 
 // ---------- UI Components ----------
@@ -361,8 +457,8 @@ function Modal({ title, onClose, children, wide }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+          <h2 className="font-display text-[19px] text-gray-800">{title}</h2>
+          <button onClick={onClose} aria-label="Sluiten" className="text-gray-400 hover:text-gray-700"><Icon name="close" size={18} /></button>
         </div>
         <div className="overflow-y-auto px-6 py-5 flex-1">{children}</div>
       </div>
@@ -394,11 +490,11 @@ function Select({ className = "", children, ...props }) {
 }
 
 function Button({ variant = "primary", className = "", children, ...props }) {
-  const base = "inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer";
+  const base = "inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer";
   const styles = {
-    primary: "bg-sky-600 text-white hover:bg-sky-700",
-    secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
-    danger: "bg-red-50 text-red-600 hover:bg-red-100",
+    primary: "bg-sky-700 text-white hover:bg-sky-800",
+    secondary: "bg-white border border-gray-200 text-gray-700 hover:border-gray-300 hover:text-gray-900",
+    danger: "bg-white border border-red-200 text-red-600 hover:bg-red-50",
   };
   return <button className={`${base} ${styles[variant]} ${className}`} {...props}>{children}</button>;
 }
@@ -412,12 +508,12 @@ function Tabs({ tabs, active, onChange, accentColor }) {
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className="w-full py-3 px-4 rounded-xl text-base font-bold transition-all shadow-sm whitespace-nowrap"
+          className="w-full py-3 px-4 rounded-xl text-base font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-2"
           style={active === t.key
-            ? { background: accentColor || "#0369a1", color: "#fff", boxShadow: `0 4px 14px ${accentColor}55` }
-            : { background: "#f1f5f9", color: "#374151" }}
+            ? { background: accentColor || "#A03A08", color: "#fff" }
+            : { background: "#F4F2EF", color: "#463D38" }}
         >
-          {t.icon} {t.label}
+          <Icon name={t.icon} size={17} /> {t.label}
         </button>
       ))}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 overflow-x-auto">
@@ -425,10 +521,10 @@ function Tabs({ tabs, active, onChange, accentColor }) {
           <button
             key={t.key}
             onClick={() => onChange(t.key)}
-            className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${active === t.key ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-            style={active === t.key ? { color: accentColor || "#0369a1" } : {}}
+            className={`shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5 ${active === t.key ? "bg-white shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+            style={active === t.key ? { color: accentColor || "#A03A08" } : {}}
           >
-            {t.icon} {t.label}
+            <Icon name={t.icon} size={15} /> {t.label}
           </button>
         ))}
       </div>
@@ -437,7 +533,7 @@ function Tabs({ tabs, active, onChange, accentColor }) {
 }
 
 // ---------- Trip form ----------
-const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#0369a1", cover_image: "" };
+const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#A03A08", cover_image: "" };
 
 function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "" } : { ...EMPTY_TRIP });
@@ -506,7 +602,7 @@ function TripForm({ initial, onSaved, onClose }) {
             <div className="flex gap-2">
               <Input value={form.cover_image} onChange={set("cover_image")} placeholder="Foto-URL, of zoek automatisch →" />
               <Button type="button" variant="secondary" onClick={handleSuggestPhoto} disabled={photoLoading || !form.destination} className="shrink-0">
-                {photoLoading ? "..." : "🔍 Zoeken"}
+                {photoLoading ? "..." : <><Icon name="search" size={14} className="mr-1.5" />Zoeken</>}
               </Button>
             </div>
             {form.cover_image && (
@@ -537,7 +633,7 @@ function TripForm({ initial, onSaved, onClose }) {
 function TripCard({ trip, onClick }) {
   const dur = tripDuration(trip.start_date, trip.end_date);
   const until = daysUntilDeparture(trip.start_date);
-  const accent = trip.cover_color || "#0369a1";
+  const accent = trip.cover_color || "#A03A08";
 
   return (
     <div onClick={onClick} className="bg-white rounded-2xl shadow-sm active:scale-98 transition-all duration-150 cursor-pointer overflow-hidden border border-gray-100 group" style={{ WebkitTapHighlightColor: "transparent" }}>
@@ -552,15 +648,15 @@ function TripCard({ trip, onClick }) {
         <div className="absolute top-3 left-3 right-3 flex justify-between items-start">
           {until !== null && until >= 0 && (
             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/95 text-sky-700 shadow">
-              {until === 0 ? "Vandaag! 🎉" : until === 1 ? "Morgen ✈️" : `${until} dagen`}
+              {until === 0 ? "Vandaag!" : until === 1 ? "Morgen" : `${until} dagen`}
             </span>
           )}
-          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-purple-500/80 text-white backdrop-blur-sm ml-auto">{trip.role === "viewer" ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
+          {trip.is_owner === false && <span className="text-xs font-medium px-2 py-1 rounded-full bg-black/30 text-white backdrop-blur-sm ml-auto">{trip.role === "viewer" ? "Alleen-lezen" : "Gedeeld"}</span>}
         </div>
         {/* Title */}
         <div className="absolute bottom-0 left-0 right-0 p-4">
           <h3 className="font-bold text-white text-lg leading-tight drop-shadow-sm">{trip.name}</h3>
-          {trip.destination && <div className="text-sm text-white/80 mt-0.5">📍 {trip.destination}</div>}
+          {trip.destination && <div className="text-sm text-white/80 mt-0.5 flex items-center gap-1"><Icon name="pin" size={13} />{trip.destination}</div>}
         </div>
       </div>
 
@@ -568,23 +664,23 @@ function TripCard({ trip, onClick }) {
         <div className="flex items-center justify-between text-xs text-gray-400">
           <div className="font-medium">{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</div>
           <div className="flex gap-3 items-center">
-            {trip.activity_count > 0 && <span>🗓 {trip.activity_count}</span>}
-            {trip.budget && <span>💰 {fmtMoney(trip.budget, trip.currency)}</span>}
+            {trip.activity_count > 0 && <span className="flex items-center gap-1"><Icon name="route" size={13} /><span className="tnum">{trip.activity_count}</span></span>}
+            {trip.budget && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(trip.budget, trip.currency)}</span></span>}
           </div>
         </div>
         {until !== null && until > 0 && (
           <div className="mt-2 text-xs font-semibold rounded-lg px-2 py-1.5 text-center" style={{ background: accent + "18", color: accent }}>
-            Nog {until} dag{until === 1 ? "" : "en"} tot vertrek ✈️
+            Nog {until} dag{until === 1 ? "" : "en"} tot vertrek
           </div>
         )}
         {until === 0 && (
           <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 rounded-lg px-2 py-1.5 text-center">
-            Vandaag vertrek! 🎉
+            Vandaag vertrek!
           </div>
         )}
         {until !== null && until < 0 && trip.end_date && new Date(trip.end_date) >= new Date() && (
           <div className="mt-2 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5 text-center">
-            Onderweg — dag {Math.abs(until) + 1} 🌍
+            Onderweg — dag {Math.abs(until) + 1}
           </div>
         )}
       </div>
@@ -640,7 +736,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
         <>
           <button type="button" onClick={onImport}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
+            <Icon name="mail" size={14} className="mr-1.5" />Importeren uit bevestiging
           </button>
           <div className="relative my-3">
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
@@ -687,7 +783,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
           {onDelete && !readOnly ? (
             <button type="button" onClick={onDelete}
               className="text-sm text-red-500 hover:text-red-700 px-2 py-1">
-              🗑 Verwijderen
+              <Icon name="trash" size={14} className="mr-1.5" />Verwijderen
             </button>
           ) : <span />}
           <div className="flex gap-2">
@@ -718,7 +814,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
         <>
           <button type="button" onClick={onImport}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
+            <Icon name="mail" size={14} className="mr-1.5" />Importeren uit bevestiging
           </button>
           <div className="relative my-3">
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
@@ -781,7 +877,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
         <>
           <button type="button" onClick={onImport}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm shadow transition-all active:scale-95 mb-3">
-            📧 Importeren uit bevestiging
+            <Icon name="mail" size={14} className="mr-1.5" />Importeren uit bevestiging
           </button>
           <div className="relative my-3">
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
@@ -992,7 +1088,7 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
         </button>
         <div className="flex-1 text-center text-white/80 text-xs">
           {photos.length > 1 && <span>{safeIndex + 1} / {photos.length}</span>}
-          {viewing.taken_at && <span className="ml-2">🕐 {fmtDatetime(viewing.taken_at)}</span>}
+          {viewing.taken_at && <span className="ml-2 inline-flex items-center gap-1"><Icon name="clock" size={12} />{fmtDatetime(viewing.taken_at)}</span>}
         </div>
         {onRotate && (
           <button type="button" onClick={async () => { setRotating(true); try { await onRotate(viewing); setRotated(Date.now()); } finally { setRotating(false); } }}
@@ -1004,9 +1100,9 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
         )}
         {onDelete && (
           <button type="button" onClick={() => onDelete(viewing)}
-            className="w-9 h-9 rounded-full bg-black/50 text-white text-base flex items-center justify-center hover:bg-red-600 transition-colors"
+            className="w-9 h-9 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
             title="Foto verwijderen">
-            🗑
+            <Icon name="trash" size={16} />
           </button>
         )}
         {assign ? (
@@ -1040,7 +1136,7 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
               {viewing.caption}
               {onCaption && (
                 <button type="button" onClick={() => { setCaptionText(viewing.caption || ""); setEditingCaption(true); }}
-                  className="ml-2 text-white/60 hover:text-white text-xs">✏️</button>
+                  className="ml-2 text-white/60 hover:text-white" aria-label="Bewerken"><Icon name="pen" size={14} /></button>
               )}
             </p>
           ) : onCaption ? (
@@ -1076,23 +1172,23 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
               <optgroup key={day.id} label={dayOptionLabel(day)}>
                 <option value={`day:${day.id}`}>Hele dag</option>
                 {dayT.map((t) => (
-                  <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                  <option key={"t" + t.id} value={`transport:${t.id}`}>{t.type || "Vervoer"} · {t.from_location} → {t.to_location}</option>
                 ))}
                 {dayA.map((a) => (
-                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>Verblijf · {a.name}</option>
                 ))}
                 {(day.activities || []).map((act) => (
-                  <option key={act.id} value={`activity:${act.id}`}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</option>
+                  <option key={act.id} value={`activity:${act.id}`}>{act.category || "Activiteit"} · {act.title}</option>
                 ))}
               </optgroup>
             ))}
             {(assign.otherTransports.length > 0 || assign.otherAccommodations.length > 0) && (
               <optgroup label="Overig (geen datum gekoppeld)">
                 {assign.otherTransports.map((t) => (
-                  <option key={"t" + t.id} value={`transport:${t.id}`}>{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</option>
+                  <option key={"t" + t.id} value={`transport:${t.id}`}>{t.type || "Vervoer"} · {t.from_location} → {t.to_location}</option>
                 ))}
                 {assign.otherAccommodations.map((a) => (
-                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>🏨 {a.name}</option>
+                  <option key={"a" + a.id} value={`accommodation:${a.id}`}>Verblijf · {a.name}</option>
                 ))}
               </optgroup>
             )}
@@ -1344,7 +1440,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
           </p>
           <button type="button" onClick={() => fileRef.current?.click()} disabled={processing}
             className="w-full border-2 border-dashed border-gray-200 rounded-xl py-10 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
-            {processing ? "Foto's verwerken..." : "📷 Klik om foto's te kiezen"}
+            {processing ? "Foto's verwerken..." : <><Icon name="camera" size={15} className="mr-1.5" />Klik om foto's te kiezen</>}
           </button>
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
         </div>
@@ -1365,7 +1461,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
                 {it.dataUrl ? (
                   <img src={it.dataUrl} alt="" className="w-20 h-20 rounded-lg object-cover shrink-0" />
                 ) : (
-                  <div className="w-20 h-20 rounded-lg bg-red-50 flex items-center justify-center text-red-400 text-xl shrink-0">⚠</div>
+                  <div className="w-20 h-20 rounded-lg bg-red-50 flex items-center justify-center text-red-400 shrink-0"><Icon name="alert" size={22} /></div>
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-gray-700 truncate">{it.name}</div>
@@ -1381,7 +1477,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
                     {days.map((d) => <option key={d.id} value={d.id}>{dayOptionLabel(d)}</option>)}
                   </Select>
                 )}
-                <button type="button" onClick={() => removeItem(it.key)} className="text-gray-300 hover:text-red-400 text-sm p-1 shrink-0">🗑</button>
+                <button type="button" onClick={() => removeItem(it.key)} className="text-gray-300 hover:text-red-500 p-1 shrink-0" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
               </div>
             ))}
           </div>
@@ -1398,8 +1494,8 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
 }
 
 // ---------- Day planning tab ----------
-const CATEGORY_ICONS = { Bezienswaardigheid: "🏛", Restaurant: "🍽", Museum: "🖼", Natuur: "🌿", Sport: "⚽", Shopping: "🛍", Anders: "📌" };
-const CATEGORY_COLORS = { Bezienswaardigheid: "#7c3aed", Restaurant: "#b45309", Museum: "#0369a1", Natuur: "#065f46", Sport: "#9f1239", Shopping: "#1e40af", Anders: "#374151" };
+const CATEGORY_ICONS = { Bezienswaardigheid: "landmark", Restaurant: "fork", Museum: "frame", Natuur: "leaf", Sport: "ball", Shopping: "bagShop", Anders: "flag" };
+function categoryIcon(cat) { return CATEGORY_ICONS[cat] || "flag"; }
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
@@ -1415,7 +1511,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
   const fetchedRef = useRef(new Set());
-  const accent = trip.cover_color || "#0369a1";
+  const accent = trip.cover_color || "#A03A08";
 
   const loadJournal = useCallback(async () => {
     try { setTripJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
@@ -1472,15 +1568,15 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   return (
     <div>
       <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
-        <h3 className="font-semibold text-gray-700">Dagplanning</h3>
-        <div className="flex gap-2">
-          {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+        <h3 className="font-display text-[19px] text-gray-800">Dagplanning</h3>
+        <div className="flex gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
+          {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
           {/* Quick-add while on the trip: opens the form pre-set to today.
               The per-day "+ Activiteit" buttons keep using their own day. */}
           {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
           {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
           {onShareEditor && !readOnly && (
-            <Button onClick={onShareEditor} variant="secondary">🔗 Reis delen met reisgenoot</Button>
+            <Button onClick={onShareEditor} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Reis delen met reisgenoot</Button>
           )}
         </div>
       </div>
@@ -1497,7 +1593,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
       {days.length === 0 && (
         <div className="text-center py-16 text-gray-400">
-          <div className="text-5xl mb-3">🗓</div>
+          <Icon name="calendar" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div className="font-medium">Nog geen dagen gepland</div>
           <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
         </div>
@@ -1505,11 +1601,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
       {/* Timeline */}
       <div className="relative">
-        {days.length > 1 && (
-          <div className="absolute top-6 bottom-6 w-0.5 rounded-full" style={{ left: "2.6rem", background: `linear-gradient(to bottom, ${accent}, ${accent}33)` }} />
-        )}
-
-        <div className="space-y-2">
+        <div>
           {days.map((day, dayIndex) => {
             const dayStr = day.date ? day.date.slice(0, 10) : null;
             const dayTransports = transports.filter((t) => isoDate(t.departure_time) === dayStr || isoDate(t.arrival_time) === dayStr);
@@ -1528,36 +1620,33 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
             const isToday = dayStr === todayIso();
 
             return (
-              <div key={day.id} id={`day-${day.id}`} className="relative flex gap-4 pb-6" style={{ scrollMarginTop: "5rem" }}>
-                {/* Day node */}
-                <div className="flex flex-col items-center shrink-0 z-10" style={{ width: "5.2rem" }}>
-                  <div className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white shadow-md font-bold"
-                    style={{ background: accent, boxShadow: isToday ? `0 0 0 3px white, 0 0 0 5px ${accent}` : undefined }}>
-                    <span className="text-[10px] leading-none opacity-75 uppercase tracking-wide">{dayName}</span>
-                    <span className="text-lg leading-none font-extrabold">{dayNum}</span>
-                    <span className="text-[10px] leading-none opacity-75">{monthName}</span>
+              <div key={day.id} id={`day-${day.id}`} className="relative flex gap-3" style={{ scrollMarginTop: "5rem" }}>
+                {/* Dagmarkering: het dagnummer draagt de dag. Vandaag krijgt het
+                    heldere oranje — de enige plek waar die kleur mag opduiken. */}
+                <div className="shrink-0 text-right pt-1" style={{ width: "3.4rem" }}>
+                  <div className={`font-display text-[30px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
+                  <div className={`text-[10px] uppercase tracking-[0.12em] font-semibold mt-1 whitespace-nowrap ${isToday ? "text-sky-400" : "text-gray-400"}`}>
+                    {dayName} {monthName}
                   </div>
                   {dayIndex === 0 && days.length > 1 && (
-                    <span className="text-[10px] text-gray-400 mt-1 font-medium">Dag 1</span>
+                    <div className="text-[10px] text-gray-300 mt-1">Dag 1</div>
                   )}
                 </div>
 
                 {/* Day content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-2 pt-1.5">
+                <div className={`flex-1 min-w-0 border-l border-gray-200 pl-4 ${dayIndex === days.length - 1 ? "pb-2" : "pb-6"}`}>
+                  <div className="flex items-center justify-between mb-2 pt-1">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2">
                         {isToday && (
-                          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white" style={{ background: accent }}>
-                            Vandaag
-                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-sky-400">Vandaag</span>
                         )}
-                        {day.title && <span className="font-semibold text-gray-700 text-sm">{day.title}</span>}
+                        {day.title && <span className="font-display text-gray-800 text-[15px]">{day.title}</span>}
                         {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
                       </div>
                       {nightAccommodation && (
-                        <span className="text-xs text-amber-700 flex items-center gap-1">
-                          <span>🏨</span>
+                        <span className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <Icon name="bed" size={13} className="text-gray-400" />
                           <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
                         </span>
                       )}
@@ -1565,9 +1654,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                     {!readOnly && (
                       <div className="flex items-center gap-1">
                         <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                          className="text-xs font-medium px-2.5 py-1 rounded-lg hover:opacity-80 transition-opacity text-white"
-                          style={{ background: accent }}>
-                          + Activiteit
+                          className="text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:border-sky-300 hover:text-sky-700 transition-colors inline-flex items-center gap-1">
+                          <Icon name="plus" size={13} />Activiteit
                         </button>
                       </div>
                     )}
@@ -1581,30 +1669,27 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                       return (
                         <div key={t.id + (isArrival ? "-a" : "-d")}
                           onClick={() => setEditingTransport(t)}
-                          className="flex items-center gap-2 rounded-xl px-3 py-2.5 border cursor-pointer hover:shadow-md transition-shadow"
-                          style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}>
-                          <div className="text-xl shrink-0">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
+                          className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-white border border-gray-200 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all">
+                          <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">
+                            {time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                          </span>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#1d4ed8" }}>
-                                {isArrival ? "Aankomst" : "Vertrek"}
-                              </span>
-                              {time && <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>
-                                {new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
-                              </span>}
-                              {t.booking_ref && <span className="font-mono bg-blue-100 text-blue-600 px-1 py-0.5 rounded text-xs hidden sm:inline">#{t.booking_ref}</span>}
-                              {t.cost && <span className="font-medium text-blue-700 text-xs ml-auto shrink-0">{fmtMoney(t.cost, trip.currency)}</span>}
+                            {/* Een route mag over twee regels; "Parijs CDG → Sha…" zegt niets. */}
+                            <div className="text-sm font-semibold text-gray-800 leading-snug">{t.from_location} → {t.to_location}</div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
+                              <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />
+                              <span>{isArrival ? "Aankomst" : "Vertrek"}</span>
+                              {t.booking_ref && <span className="tnum text-gray-400 hidden sm:inline">#{t.booking_ref}</span>}
+                              {t.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(t.cost, trip.currency)}</span>}
                             </div>
-                            <div className="text-sm font-medium text-gray-700 truncate">{t.from_location} → {t.to_location}</div>
-                            {t.booking_ref && <div className="text-xs text-gray-400 font-mono sm:hidden">#{t.booking_ref}</div>}
-                            {t.baggage_allowance && <div className="text-xs text-blue-600 truncate">🧳 {t.baggage_allowance}</div>}
+                            {t.baggage_allowance && <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><Icon name="suitcase" size={12} className="text-gray-400" /><span className="truncate">{t.baggage_allowance}</span></div>}
                           </div>
                           {t.to_location && (
                             <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
-                              className="shrink-0 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+                              className="shrink-0 rounded-lg border border-gray-200 text-gray-500 hover:text-sky-700 hover:border-sky-300 transition-colors"
                               title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">💡 Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">💡</span>
+                              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap"><Icon name="bulb" size={13} />Lokale tips</span>
+                              <span className="sm:hidden flex items-center justify-center w-8 h-8"><Icon name="bulb" size={16} /></span>
                             </button>
                           )}
                         </div>
@@ -1618,25 +1703,23 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                       return (
                         <div key={a.id}
                           onClick={() => setEditingAccommodation(a)}
-                          className="rounded-xl border cursor-pointer hover:shadow-md transition-shadow"
-                          style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-                          <div className="flex items-center gap-2 px-3 py-2.5">
-                            <div className="text-xl shrink-0">🏨</div>
+                          className="rounded-xl bg-white border border-gray-200 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all">
+                          <div className="flex items-center gap-3 px-3 py-2.5">
+                            <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">—</span>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: "#b45309" }}>
-                                  {isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}
-                                </span>
-                                {a.cost && <span className="text-xs font-medium text-amber-700 ml-auto shrink-0">{fmtMoney(a.cost, trip.currency)}</span>}
+                              <div className="text-sm font-semibold text-gray-800 truncate">{a.name}</div>
+                              <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
+                                <Icon name="bed" size={13} className="text-gray-400" />
+                                <span>{isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}</span>
+                                {a.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(a.cost, trip.currency)}</span>}
                               </div>
-                              <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
-                              {a.address && <div className="text-xs text-gray-400 truncate">📍 {a.address}</div>}
+                              {a.address && <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><Icon name="pin" size={12} /><span className="truncate">{a.address}</span></div>}
                             </div>
                             <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
-                              className="shrink-0 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors"
+                              className="shrink-0 rounded-lg border border-gray-200 text-gray-500 hover:text-sky-700 hover:border-sky-300 transition-colors"
                               title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap">🗺 Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8 text-base">🗺</span>
+                              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap"><Icon name="map" size={13} />Lokale tips</span>
+                              <span className="sm:hidden flex items-center justify-center w-8 h-8"><Icon name="map" size={16} /></span>
                             </button>
                           </div>
                         </div>
@@ -1646,7 +1729,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                     {/* Activity cards */}
                     {day.activities.map((act) => {
                       const photo = act.location ? locationPhotos[act.location] : null;
-                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
                         <div key={act.id}
                           onClick={() => setEditingActivity(act)}
@@ -1656,31 +1738,25 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                               <img src={photo} alt={act.location} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                               {act.location && (
-                                <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow">📍 {act.location}</div>
+                                <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow flex items-center gap-1"><Icon name="pin" size={12} />{act.location}</div>
                               )}
                             </div>
                           )}
-                          <div className="flex items-start gap-3 px-4 py-3">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0 mt-0.5"
-                              style={{ background: catColor + "18" }}>
-                              {CATEGORY_ICONS[act.category] || "📌"}
-                            </div>
+                          <div className="flex items-start gap-3 px-3 py-2.5">
+                            <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right pt-0.5">{act.time || "—"}</span>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {act.time && (
-                                  <span className="text-xs font-mono font-semibold text-white px-2 py-0.5 rounded-md" style={{ background: catColor }}>
-                                    {act.time}
-                                  </span>
-                                )}
-                                <span className="font-semibold text-gray-800 text-sm">{act.title}</span>
+                              <div className="text-sm font-semibold text-gray-800">{act.title}</div>
+                              <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
+                                <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />
+                                <span className="truncate">{act.category || "Activiteit"}</span>
+                                {act.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(act.cost, trip.currency)}</span>}
                               </div>
-                              {!photo && act.location && <div className="text-xs text-gray-400 mt-0.5">📍 {act.location}</div>}
+                              {!photo && act.location && <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1"><Icon name="pin" size={12} /><span className="truncate">{act.location}</span></div>}
                               {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
-                              {act.cost && <div className="text-xs font-semibold mt-1" style={{ color: catColor }}>{fmtMoney(act.cost, trip.currency)}</div>}
                             </div>
                             {!readOnly && (
                               <div className="flex gap-1 shrink-0">
-                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1">🗑</button>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-500 active:text-red-600 p-1" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
                               </div>
                             )}
                           </div>
@@ -1802,7 +1878,7 @@ function AccountModal({ user, onClose, onChanged }) {
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Inlogmethoden</label>
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-gray-50">
-              <span>🔵</span><span className="flex-1">Google</span>
+              <Icon name="google" size={17} /><span className="flex-1">Google</span>
               <span className={linked.google ? "text-green-600 text-xs font-semibold" : "text-gray-400 text-xs"}>
                 {linked.google ? "gekoppeld" : "niet gekoppeld"}
               </span>
@@ -1846,7 +1922,7 @@ function AccountModal({ user, onClose, onChanged }) {
               } catch (err) {
                 setMailResult({ ok: false, text: err.message || "Versturen mislukt" });
               } finally { setMailBusy(false); }
-            }}>{mailBusy ? "Versturen..." : "✉️ Testmail sturen"}</Button>
+            }}>{mailBusy ? "Versturen..." : <><Icon name="mail" size={14} className="mr-1.5" />Testmail sturen</>}</Button>
             {mailResult && (
               <div className={`mt-2 text-sm px-3 py-2 rounded-lg ${mailResult.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
                 {mailResult.text}
@@ -1890,7 +1966,7 @@ function LikeButton({ tripId, target, count, liked, onChanged, disabled }) {
         liked ? "bg-sky-50 border-sky-300 text-sky-700" : "bg-white border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"
       }`}
       title={liked ? "Like weghalen" : "Vind ik leuk"}>
-      <span className="leading-none">👍</span>
+      <Icon name="thumb" size={14} />
       {count > 0 && <span className="font-semibold leading-none">{count}</span>}
     </button>
   );
@@ -1926,8 +2002,8 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
   return (
     <div className="mt-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
       {comments.map((c) => (
-        <div key={c.id} className={`group flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-sm ${c.is_new ? "bg-amber-50 border border-amber-200" : "bg-gray-50"}`}>
-          <span className="shrink-0 text-xs mt-0.5">💬</span>
+        <div key={c.id} className={`group flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-sm ${c.is_new ? "bg-sky-50 border border-sky-200" : "bg-gray-50"}`}>
+          <Icon name="chat" size={13} className="mt-0.5 text-gray-400" />
           <div className="min-w-0 flex-1">
             <p className="text-gray-700 whitespace-pre-wrap leading-snug break-words">{c.body}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -1942,8 +2018,9 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
           </div>
           {c.user_id === currentUserId && (
             <button type="button" onClick={() => handleDelete(c.id)}
-              className="shrink-0 text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
-              🗑
+              className="shrink-0 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+              aria-label="Reactie verwijderen">
+              <Icon name="trash" size={14} />
             </button>
           )}
         </div>
@@ -1956,7 +2033,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
           <LikeButton tripId={tripId} target={slot} count={like.like_count} liked={like.liked_by_me} onChanged={onChanged} />
           <button type="button" onClick={() => setOpen(true)}
             className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
-            💬 {comments.length ? "Reageer ook" : "Reageer"}
+            <Icon name="chat" size={13} className="mr-1.5" />{comments.length ? "Reageer ook" : "Reageer"}
           </button>
         </div>
       )}
@@ -2003,12 +2080,12 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
   return (
     <div className="space-y-2">
       {othersEntries.map((e) => (
-        <div key={e.id} className={`rounded-lg px-3 py-2 ${e.is_new ? "bg-amber-50 border border-amber-200" : "bg-gray-50"}`}>
+        <div key={e.id} className={`rounded-lg px-3 py-2 ${e.is_new ? "bg-sky-50 border border-sky-200" : "bg-gray-50"}`}>
           <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{e.body}</p>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {e.author && <span className="text-xs text-gray-400">— {e.author}</span>}
             {e.is_new && (
-              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500 text-white">Nieuw</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.1em] px-2 py-0.5 rounded-full bg-sky-400 text-white">Nieuw</span>
             )}
           </div>
         </div>
@@ -2020,7 +2097,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
           <div className="flex items-center gap-2">
             <Button onClick={handleSave} disabled={saving || !text.trim()}>{saving ? "Opslaan..." : "Opslaan"}</Button>
             <Button variant="secondary" onClick={() => { setText(myEntry?.body || ""); setEditing(false); }}>Annuleren</Button>
-            {myEntry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700">🗑 Verwijderen</button>}
+            {myEntry && <button type="button" onClick={handleDelete} className="ml-auto text-xs text-red-500 hover:text-red-700"><Icon name="trash" size={14} className="mr-1.5" />Verwijderen</button>}
           </div>
         </div>
       ) : myEntry?.body ? (
@@ -2031,7 +2108,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
             {!readOnly && (
               <button type="button" onClick={() => setEditing(true)}
                 className="ml-auto text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
-                ✏️ Bewerken
+                <Icon name="pen" size={14} className="mr-1.5" />Bewerken
               </button>
             )}
           </div>
@@ -2066,7 +2143,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const [addingActivity, setAddingActivity] = useState(null);
   const [entriesLoaded, setEntriesLoaded] = useState(false);
   const didAutoScroll = useRef(false);
-  const accent = trip.cover_color || "#0369a1";
+  const accent = trip.cover_color || "#A03A08";
 
   const loadEntries = useCallback(async () => {
     try {
@@ -2139,7 +2216,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   if (days.length === 0) {
     return (
       <div className="text-center py-16 text-gray-400">
-        <div className="text-5xl mb-3">📖</div>
+        <Icon name="book" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
         <div className="font-medium">Nog geen dagen gepland</div>
         <div className="text-sm mt-1">Voeg dagen toe op de Dagplanning-tab om je dagboek te beginnen</div>
       </div>
@@ -2149,23 +2226,23 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   return (
     <div>
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
-        <h3 className="font-semibold text-gray-700">Dagboek</h3>
-        <div className="flex gap-2 flex-wrap justify-end">
+        <h3 className="font-display text-[19px] text-gray-800">Dagboek</h3>
+        <div className="flex gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
           {newCount > 0 && (
             <button onClick={scrollToFirstNew}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors">
-              ✨ {newCount} nieuw
+              className="text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-400 text-white hover:bg-sky-500 transition-colors inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-white" /><span className="tnum">{newCount}</span> nieuw
             </button>
           )}
           {!readOnly && todayDay && (
             <Button onClick={() => setAddingActivity({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>
           )}
-          {todayDay && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
+          {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
           {onShare && !readOnly && (
-            <Button onClick={onShare} variant="secondary">🔗 Delen</Button>
+            <Button onClick={onShare} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Delen</Button>
           )}
           {onPreviewViewer && !readOnly && (
-            <Button onClick={onPreviewViewer} variant="secondary">👀 Bekijk als gast</Button>
+            <Button onClick={onPreviewViewer} variant="secondary"><Icon name="eye" size={14} className="mr-1.5" />Bekijk als gast</Button>
           )}
         </div>
       </div>
@@ -2213,36 +2290,33 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
           return (
             <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white" style={{ scrollMarginTop: "5rem" }}>
-              <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-50" style={{ background: accent + "0d" }}>
-                <div className="w-10 h-10 rounded-xl flex flex-col items-center justify-center text-white shadow-sm font-bold shrink-0"
-                  style={{ background: accent, boxShadow: isToday ? `0 0 0 2px white, 0 0 0 4px ${accent}` : undefined }}>
-                  <span className="text-[9px] leading-none opacity-75 uppercase">{dayName}</span>
-                  <span className="text-sm leading-none font-extrabold">{dayNum}</span>
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+                {/* Zelfde dagmarkering als op de planning, zodat de twee schermen
+                    familie van elkaar blijven zonder identiek te zijn. */}
+                <div className="shrink-0 text-right" style={{ width: "2.6rem" }}>
+                  <div className={`font-display text-[26px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
+                  <div className={`text-[9px] uppercase tracking-[0.12em] font-semibold mt-0.5 whitespace-nowrap ${isToday ? "text-sky-400" : "text-gray-400"}`}>
+                    {dayName} {monthName}
+                  </div>
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 border-l border-gray-200 pl-3 self-stretch flex flex-col justify-center">
                   <div className="flex items-center gap-2">
                     {isToday && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white shrink-0" style={{ background: accent }}>
-                        Vandaag
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-sky-400 shrink-0">Vandaag</span>
                     )}
-                    <div className="font-semibold text-gray-700 text-sm truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                    <div className="font-display text-gray-800 text-[15px] truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {day.title && <span className="text-xs text-gray-400">{dayName} {dayNum} {monthName}</span>}
-                    {nightAccommodation && (
-                      <span className="text-xs text-amber-700 flex items-center gap-1 min-w-0">
-                        <span>🏨</span>
-                        <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
-                      </span>
-                    )}
-                  </div>
+                  {nightAccommodation && (
+                    <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0 mt-0.5">
+                      <Icon name="bed" size={12} className="text-gray-400" />
+                      <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
+                    </span>
+                  )}
                 </div>
                 {!readOnly && (
                   <button onClick={() => setAddingActivity({ dayId: day.id })}
-                    className="ml-auto shrink-0 text-xs font-semibold px-3 py-2 rounded-lg text-white shadow-sm hover:opacity-80 active:scale-95 transition-all"
-                    style={{ background: accent }}>
-                    + Activiteit
+                    className="ml-auto shrink-0 text-xs font-semibold px-3 py-2 rounded-full border border-gray-200 text-gray-600 hover:border-sky-300 hover:text-sky-700 active:scale-95 transition-all inline-flex items-center gap-1">
+                    <Icon name="plus" size={13} />Activiteit
                   </button>
                 )}
               </div>
@@ -2261,8 +2335,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {dayTransports.map((t) => {
                       const tEntries = entries.filter((e) => e.transport_id === t.id);
                       return (
-                        <div key={"t" + t.id} className="pl-3 border-l-2" style={{ borderColor: "#bfdbfe" }}>
-                          <div className="text-xs font-semibold text-blue-700 mb-1">{TRANSPORT_ICONS[t.type] || "🚀"} {t.from_location} → {t.to_location}</div>
+                        <div key={"t" + t.id} className="pl-3 border-l border-gray-200">
+                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                            <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />{t.from_location} → {t.to_location}
+                          </div>
                           <JournalEntryBox entries={tEntries} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
                             onSave={(text) => saveEntry({ transport_id: t.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
@@ -2276,8 +2352,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {dayAccommodations.map((a) => {
                       const aEntries = entries.filter((e) => e.accommodation_id === a.id);
                       return (
-                        <div key={"a" + a.id} className="pl-3 border-l-2" style={{ borderColor: "#fde68a" }}>
-                          <div className="text-xs font-semibold text-amber-700 mb-1">🏨 {a.name}</div>
+                        <div key={"a" + a.id} className="pl-3 border-l border-gray-200">
+                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                            <Icon name="bed" size={13} className="text-gray-400" />{a.name}
+                          </div>
                           <JournalEntryBox entries={aEntries} currentUserId={currentUserId} placeholder="Vertel over dit verblijf..."
                             onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
@@ -2290,10 +2368,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     })}
                     {day.activities.map((act) => {
                       const actEntries = entries.filter((e) => e.activity_id === act.id);
-                      const catColor = CATEGORY_COLORS[act.category] || "#374151";
                       return (
-                        <div key={"act" + act.id} className="pl-3 border-l-2" style={{ borderColor: catColor + "55" }}>
-                          <div className="text-xs font-semibold mb-1" style={{ color: catColor }}>{CATEGORY_ICONS[act.category] || "📌"} {act.title}</div>
+                        <div key={"act" + act.id} className="pl-3 border-l border-gray-200">
+                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                            <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />{act.title}
+                          </div>
                           <JournalEntryBox entries={actEntries} currentUserId={currentUserId} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
@@ -2353,13 +2432,13 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Accommodaties</h3>
+        <h3 className="font-display text-[19px] text-gray-800">Accommodaties</h3>
         {!readOnly && <Button onClick={() => setShowForm(true)} variant="secondary">+ Verblijf toevoegen</Button>}
       </div>
 
       {accommodations.length === 0 ? (
         <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">🏨</div>
+          <Icon name="bed" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div>Nog geen verblijven toegevoegd</div>
         </div>
       ) : (
@@ -2372,10 +2451,10 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
             return (
             <div key={acc.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
               <div className="flex gap-4 items-start">
-                <div className="text-2xl">🏨</div>
+                <Icon name="bed" size={20} className="text-gray-400 mt-0.5" />
                 <div className="flex-1">
                   <div className="font-semibold text-gray-800">{acc.name}</div>
-                  {acc.address && <div className="text-sm text-gray-500">📍 {acc.address}</div>}
+                  {acc.address && <div className="text-sm text-gray-500 flex items-center gap-1"><Icon name="pin" size={13} />{acc.address}</div>}
                   <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
                     {acc.check_in && <span>Check-in: {fmt(acc.check_in)}</span>}
                     {acc.check_out && <span>Check-out: {fmt(acc.check_out)}</span>}
@@ -2392,8 +2471,8 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
                   {acc.notes && <div className="text-sm text-gray-500 mt-1">{acc.notes}</div>}
                 </div>
                 <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
-                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600">{readOnly ? "👁" : "✏️"}</button>
-                  {!readOnly && <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
+                  <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600"><Icon name={readOnly ? "eye" : "pen"} size={16} /></button>
+                  {!readOnly && <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
                 </div>
               </div>
             </div>
@@ -2415,7 +2494,8 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
 }
 
 // ---------- Transport tab ----------
-const TRANSPORT_ICONS = { Vliegtuig: "✈️", Trein: "🚆", Bus: "🚌", Huurauto: "🚗", Taxi: "🚕", Boot: "⛴️", Anders: "🚀" };
+const TRANSPORT_ICONS = { Vliegtuig: "plane", Trein: "train", Bus: "bus", Huurauto: "car", Taxi: "car", Boot: "boat", Anders: "route" };
+function transportIcon(type) { return TRANSPORT_ICONS[type] || "route"; }
 
 function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) {
   const [showForm, setShowForm] = useState(false);
@@ -2443,13 +2523,13 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Vervoer</h3>
+        <h3 className="font-display text-[19px] text-gray-800">Vervoer</h3>
         {!readOnly && <Button onClick={() => setShowForm(true)} variant="secondary">+ Vervoer toevoegen</Button>}
       </div>
 
       {transports.length === 0 ? (
         <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">✈️</div>
+          <Icon name="plane" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div>Nog geen vervoer toegevoegd</div>
         </div>
       ) : (
@@ -2457,7 +2537,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
           {transports.map((t) => (
             <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 group">
               <div className="flex items-start gap-3">
-                <div className="text-2xl">{TRANSPORT_ICONS[t.type] || "🚀"}</div>
+                <Icon name={transportIcon(t.type)} size={20} className="text-gray-400 mt-0.5" />
                 <div className="flex-1">
                   <div className="font-semibold text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
                   <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
@@ -2466,12 +2546,12 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
                     {t.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
                     {t.cost && <span className="text-sky-700 font-medium">{fmtMoney(t.cost)}</span>}
                   </div>
-                  {t.baggage_allowance && <div className="text-sm text-blue-600 mt-1">🧳 {t.baggage_allowance}</div>}
+                  {t.baggage_allowance && <div className="text-sm text-gray-500 mt-1 flex items-center gap-1.5"><Icon name="suitcase" size={14} />{t.baggage_allowance}</div>}
                   {t.notes && <div className="text-sm text-gray-500 mt-1">{t.notes}</div>}
                 </div>
                 <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
-                  <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600">{readOnly ? "👁" : "✏️"}</button>
-                  {!readOnly && <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
+                  <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600"><Icon name={readOnly ? "eye" : "pen"} size={16} /></button>
+                  {!readOnly && <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
                 </div>
               </div>
             </div>
@@ -2521,7 +2601,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-700">Budget & uitgaven</h3>
+        <h3 className="font-display text-[19px] text-gray-800">Budget & uitgaven</h3>
         <Button onClick={() => setShowForm(true)} variant="secondary">+ Uitgave toevoegen</Button>
       </div>
 
@@ -2533,7 +2613,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
             <div className="text-sm text-gray-500">van {budget > 0 ? fmtMoney(budget, trip.currency) : "geen budget ingesteld"}</div>
           </div>
           {pct !== null && (
-            <div className={`text-lg font-bold ${pct > 90 ? "text-red-500" : pct > 70 ? "text-yellow-500" : "text-green-600"}`}>
+            <div className={`text-lg font-bold ${pct > 90 ? "text-red-500" : pct > 70 ? "text-amber-600" : "text-green-600"}`}>
               {Math.round(pct)}%
             </div>
           )}
@@ -2558,7 +2638,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
       {/* Expense list */}
       {expenses.length === 0 ? (
         <div className="text-center py-12 text-gray-400">
-          <div className="text-4xl mb-2">💰</div>
+          <Icon name="wallet" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div>Nog geen uitgaven geregistreerd</div>
         </div>
       ) : (
@@ -2577,8 +2657,8 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
                 </div>
                 <div className="font-semibold text-gray-800">{fmtMoney(exp.amount, trip.currency)}</div>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button onClick={() => setEditing(exp)} className="text-gray-400 hover:text-sky-600 text-xs">✏️</button>
-                  <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑</button>
+                  <button onClick={() => setEditing(exp)} className="text-gray-400 hover:text-sky-700" aria-label="Bewerken"><Icon name="pen" size={14} /></button>
+                  <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={14} /></button>
                 </div>
               </div>
             ))}
@@ -2590,7 +2670,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
       {transports.some((t) => t.cost) && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">✈️ Vervoer</span>
+            <span className="font-semibold text-gray-700 text-sm flex items-center gap-1.5"><Icon name="plane" size={14} className="text-gray-400" />Vervoer</span>
             <span className="font-semibold text-gray-800 text-sm">{fmtMoney(transportTotal, trip.currency)}</span>
           </div>
           <div className="divide-y divide-gray-50">
@@ -2608,7 +2688,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
       {accommodations.some((a) => a.cost) && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">🏨 Verblijf</span>
+            <span className="font-semibold text-gray-700 text-sm flex items-center gap-1.5"><Icon name="bed" size={14} className="text-gray-400" />Verblijf</span>
             <span className="font-semibold text-gray-800 text-sm">{fmtMoney(accommodationTotal, trip.currency)}</span>
           </div>
           <div className="divide-y divide-gray-50">
@@ -2638,7 +2718,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
       {activities.some((a) => a.cost) && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-            <span className="font-semibold text-gray-700 text-sm">🗓 Activiteiten</span>
+            <span className="font-semibold text-gray-700 text-sm flex items-center gap-1.5"><Icon name="route" size={14} className="text-gray-400" />Activiteiten</span>
             <span className="font-semibold text-gray-800 text-sm">{fmtMoney(activityTotal, trip.currency)}</span>
           </div>
           <div className="divide-y divide-gray-50">
@@ -2660,12 +2740,12 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
 
 // ---------- Tips accordion ----------
 const TIP_CATEGORIES = [
-  { category: "Lokaal vervoer", icon: "🚇" },
-  { category: "Taxi & apps", icon: "🚕" },
-  { category: "Restaurants", icon: "🍽" },
-  { category: "Activiteiten", icon: "🎯" },
-  { category: "Met kinderen", icon: "👨‍👩‍👧" },
-  { category: "Evenementen & agenda", icon: "🎉" },
+  { category: "Lokaal vervoer", icon: "train" },
+  { category: "Taxi & apps", icon: "car" },
+  { category: "Restaurants", icon: "fork" },
+  { category: "Activiteiten", icon: "flag" },
+  { category: "Met kinderen", icon: "family" },
+  { category: "Evenementen & agenda", icon: "ticket" },
 ];
 
 function TipAccordion({ tripId, category, icon, accentColor, location, cacheKeyPrefix }) {
@@ -2774,7 +2854,7 @@ function TipsModal({ tripId, trip, location, onClose }) {
         <div className="text-xs text-gray-400 text-center pb-1">Klik op een categorie om tips te laden</div>
         {TIP_CATEGORIES.map(({ category, icon }) => (
           <TipAccordion key={category} tripId={tripId} category={category} icon={icon}
-            accentColor="#0369a1" location={location} cacheKeyPrefix={cacheKeyPrefix} />
+            accentColor="#A03A08" location={location} cacheKeyPrefix={cacheKeyPrefix} />
         ))}
       </div>
     </Modal>
@@ -2785,7 +2865,7 @@ function TipsModal({ tripId, trip, location, onClose }) {
 function TipsTab({ trip }) {
   const [didYouKnow, setDidYouKnow] = useState(null);
   const [dykLoading, setDykLoading] = useState(true);
-  const accent = trip.cover_color || "#0369a1";
+  const accent = trip.cover_color || "#A03A08";
   const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
   const cacheKeyPrefix = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
   const dykKey = `${cacheKeyPrefix}_dyk`;
@@ -2804,7 +2884,7 @@ function TipsTab({ trip }) {
 
   if (!trip.destination) return (
     <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">💡</div>
+      <Icon name="bulb" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
       <div className="font-medium">Geen bestemming ingesteld</div>
       <div className="text-sm mt-1">Voeg een bestemming toe aan je reis voor AI-tips</div>
     </div>
@@ -2813,8 +2893,8 @@ function TipsTab({ trip }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-gray-700">Tips voor {trip.destination}</h3>
-        <span className="text-xs text-gray-400">✨ Gegenereerd door Claude</span>
+        <h3 className="font-display text-[19px] text-gray-800">Tips voor {trip.destination}</h3>
+        <span className="text-xs text-gray-400 flex items-center gap-1"><Icon name="sparkle" size={12} />Gegenereerd door Claude</span>
       </div>
 
       {dykLoading ? (
@@ -2946,25 +3026,29 @@ function MapTab({ trip, accommodations, transports, days }) {
             const bulge = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lat - fromGeo.lat) + Math.abs(toGeo.lon - fromGeo.lon)) * 0.08;
             latlngs.push([lat + bulge, lon]);
           }
-          L.polyline(latlngs, { color: "#0369a1", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
+          L.polyline(latlngs, { color: "#33506B", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
         } else {
-          L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#059669", weight: 2, opacity: 0.6 }).addTo(map);
+          L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#2E6B4E", weight: 2, opacity: 0.6 }).addTo(map);
         }
       });
 
-      // Add markers
-      const iconSvg = (emoji, color) => L.divIcon({
+      // Add markers. Leaflet wil ruwe HTML, dus deze drie iconen staan hier als
+      // padstring in plaats van als JSX — het zijn dezelfde tekeningen.
+      const iconSvg = (paths, color) => L.divIcon({
         className: "leaflet-reisplanner-icon",
-        html: `<div style="background:${color};border:2.5px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center"><span style="transform:rotate(45deg);font-size:15px;line-height:1;display:block">${emoji}</span></div>`,
+        html: `<div style="background:${color};border:2.5px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center">`
+          + `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(45deg);display:block">${paths}</svg></div>`,
         iconSize: [34, 34],
         iconAnchor: [17, 34],
         popupAnchor: [0, -36],
       });
 
+      // Op een kaart wint onderscheidbaarheid het van kleurzuiverheid: drie
+      // duidelijk verschillende, diepe tinten die naast het oranje kunnen staan.
       const typeConfig = {
-        hotel: { emoji: "🏨", color: "#b45309" },
-        activity: { emoji: "🎯", color: "#0369a1" },
-        transport: { emoji: "✈️", color: "#6d28d9" },
+        hotel: { paths: '<path d="M3 18v-8"/><path d="M3 13h18v5"/><path d="M21 18v-4.5a2.5 2.5 0 0 0-2.5-2.5H10v2.5"/><circle cx="6.9" cy="11" r="1.9"/>', color: "#A03A08" },
+        activity: { paths: '<path d="M6 21V4"/><path d="M6 5h10.5l-1.8 3.6 1.8 3.6H6"/>', color: "#2E6B4E" },
+        transport: { paths: '<path d="M3 13.5 21 7l-4.5 12-3.2-5.1z"/><path d="M13.3 13.9 21 7"/>', color: "#33506B" },
       };
 
       // Deduplicate markers by query
@@ -2974,10 +3058,10 @@ function MapTab({ trip, accommodations, transports, days }) {
         seen.add(item.query);
         const geo = coordMap[item.query];
         const cfg = typeConfig[item.type] || typeConfig.activity;
-        const marker = L.marker([geo.lat, geo.lon], { icon: iconSvg(cfg.emoji, cfg.color) }).addTo(map);
+        const marker = L.marker([geo.lat, geo.lon], { icon: iconSvg(cfg.paths, cfg.color) }).addTo(map);
         const popup = `<div style="font-family:system-ui;min-width:140px">
-          <div style="font-weight:600;font-size:13px;color:#1f2937">${item.label}</div>
-          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">${item.sublabel}</div>` : ""}
+          <div style="font-weight:600;font-size:13px;color:#241D19">${item.label}</div>
+          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#7B6E67;margin-top:2px">${item.sublabel}</div>` : ""}
         </div>`;
         marker.bindPopup(popup);
         bounds.push([geo.lat, geo.lon]);
@@ -3001,7 +3085,7 @@ function MapTab({ trip, accommodations, transports, days }) {
 
   if (!hasLocations) return (
     <div className="text-center py-16 text-gray-400">
-      <div className="text-4xl mb-3">🗺</div>
+      <Icon name="map" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
       <div className="font-medium">Geen locaties om te tonen</div>
       <div className="text-sm mt-1">Voeg hotels, activiteiten of vervoer toe met locatiegegevens</div>
     </div>
@@ -3010,17 +3094,17 @@ function MapTab({ trip, accommodations, transports, days }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-700">Reiskaart</h3>
+        <h3 className="font-display text-[19px] text-gray-800">Reiskaart</h3>
         <div className="flex gap-3 text-xs text-gray-500">
-          <span>🏨 Hotel</span>
-          <span>🎯 Activiteit</span>
-          <span>✈️ Vervoer</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#A03A08" }} />Verblijf</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#33506B" }} />Vervoer</span>
         </div>
       </div>
       <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
         {status === "loading" && (
           <div className="absolute inset-0 bg-white/90 z-[1000] flex flex-col items-center justify-center gap-3">
-            <div className="text-3xl animate-pulse">🗺</div>
+            <Icon name="map" size={30} strokeWidth={1.2} className="animate-pulse text-gray-300" />
             <div className="text-sm text-gray-600 font-medium">Locaties ophalen…</div>
             {total > 0 && (
               <div className="w-48">
@@ -3035,7 +3119,7 @@ function MapTab({ trip, accommodations, transports, days }) {
         {status === "error" && (
           <div className="absolute inset-0 bg-white/90 z-[1000] flex items-center justify-center">
             <div className="text-center text-gray-400">
-              <div className="text-3xl mb-2">😕</div>
+              <Icon name="alert" size={30} strokeWidth={1.3} className="mx-auto mb-2 text-gray-300" />
               <div className="text-sm">Kaart kon niet worden geladen</div>
             </div>
           </div>
@@ -3211,7 +3295,7 @@ function ImportModal({ tripId, onImported, onClose }) {
           </p>
           <ul className="space-y-1">
             {conflicts.map((c) => (
-              <li key={c.id} className="text-sm bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-gray-700">
+              <li key={c.id} className="text-sm bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-gray-700">
                 {type === "transport" ? `${c.type}: ${c.from_location} → ${c.to_location}` : c.name}
               </li>
             ))}
@@ -3240,11 +3324,11 @@ function ImportModal({ tripId, onImported, onClose }) {
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
             <button type="button" onClick={() => setMode("text")}
               className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "text" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-              📋 Tekst plakken
+              <Icon name="clipboard" size={15} className="mr-1.5" />Tekst plakken
             </button>
             <button type="button" onClick={() => setMode("image")}
               className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${mode === "image" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-              📷 Foto uploaden
+              <Icon name="camera" size={15} className="mr-1.5" />Foto uploaden
             </button>
           </div>
 
@@ -3266,7 +3350,7 @@ function ImportModal({ tripId, onImported, onClose }) {
               ) : (
                 <div onClick={() => fileRef.current.click()}
                   className="border-2 border-dashed border-gray-200 rounded-xl p-10 text-center cursor-pointer hover:border-sky-400 hover:bg-sky-50 transition-colors">
-                  <div className="text-4xl mb-2">📷</div>
+                  <Icon name="camera" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
                   <div className="text-sm font-medium text-gray-600">Klik om een foto of screenshot te kiezen</div>
                   <div className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP — max 10 MB</div>
                 </div>
@@ -3277,7 +3361,7 @@ function ImportModal({ tripId, onImported, onClose }) {
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose}>Annuleren</Button>
             <Button type="submit" disabled={loading || (mode === "text" ? !text.trim() : !imageData)}>
-              {loading ? "Toevoegen..." : "✨ Toevoegen"}
+              {loading ? "Toevoegen..." : <><Icon name="plus" size={15} className="mr-1.5" />Toevoegen</>}
             </Button>
           </div>
         </form>
@@ -3285,7 +3369,7 @@ function ImportModal({ tripId, onImported, onClose }) {
         <div className="space-y-5">
           {totalFound === 0 ? (
             <div className="text-center py-8 text-gray-400">
-              <div className="text-4xl mb-2">🤔</div>
+              <Icon name="search" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
               <div>Niets gevonden in deze tekst.</div>
               <div className="text-sm mt-1">Probeer het met een andere bevestiging.</div>
             </div>
@@ -3295,7 +3379,7 @@ function ImportModal({ tripId, onImported, onClose }) {
 
               {result.transports.length > 0 && (
                 <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">✈️ Vervoer ({result.transports.length})</h3>
+                  <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Icon name="plane" size={15} className="text-gray-400" />Vervoer ({result.transports.length})</h3>
                   <div className="space-y-2">
                     {result.transports.map((t, i) => (
                       <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.transports.includes(i) ? "opacity-50" : ""}`}>
@@ -3310,7 +3394,7 @@ function ImportModal({ tripId, onImported, onClose }) {
                           {t.notes && <div className="text-xs text-gray-500 mt-1">{t.notes}</div>}
                         </div>
                         {saved.transports.includes(i)
-                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                          ? <span className="text-green-600 text-sm shrink-0 flex items-center gap-1"><Icon name="check" size={14} />Toegevoegd</span>
                           : <Button variant="secondary" onClick={() => saveTransport(t, i)} disabled={saving}>Toevoegen</Button>}
                       </div>
                     ))}
@@ -3320,7 +3404,7 @@ function ImportModal({ tripId, onImported, onClose }) {
 
               {result.accommodations.length > 0 && (
                 <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">🏨 Verblijf ({result.accommodations.length})</h3>
+                  <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Icon name="bed" size={15} className="text-gray-400" />Verblijf ({result.accommodations.length})</h3>
                   <div className="space-y-2">
                     {result.accommodations.map((a, i) => (
                       <div key={i} className={`bg-gray-50 rounded-xl p-4 flex items-start justify-between gap-4 ${saved.accommodations.includes(i) ? "opacity-50" : ""}`}>
@@ -3332,11 +3416,11 @@ function ImportModal({ tripId, onImported, onClose }) {
                             {a.booking_ref && <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded">#{a.booking_ref}</span>}
                             {a.cost != null && <span>{fmtMoney(a.cost)}</span>}
                           </div>
-                          {a.address && <div className="text-xs text-gray-500 mt-1">📍 {a.address}</div>}
+                          {a.address && <div className="text-xs text-gray-500 mt-1 flex items-center gap-1"><Icon name="pin" size={12} />{a.address}</div>}
                           {a.notes && <div className="text-xs text-gray-500 mt-1">{a.notes}</div>}
                         </div>
                         {saved.accommodations.includes(i)
-                          ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                          ? <span className="text-green-600 text-sm shrink-0 flex items-center gap-1"><Icon name="check" size={14} />Toegevoegd</span>
                           : <Button variant="secondary" onClick={() => saveAccommodation(a, i)} disabled={saving}>Toevoegen</Button>}
                       </div>
                     ))}
@@ -3346,7 +3430,7 @@ function ImportModal({ tripId, onImported, onClose }) {
 
               {result.activities.length > 0 && (
                 <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">🗓 Activiteiten ({result.activities.length})</h3>
+                  <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Icon name="route" size={15} className="text-gray-400" />Activiteiten ({result.activities.length})</h3>
                   <div className="space-y-2">
                     {result.activities.map((act, i) => (
                       <div key={i} className={`bg-gray-50 rounded-xl p-4 ${saved.activities.includes(i) ? "opacity-50" : ""}`}>
@@ -3354,15 +3438,15 @@ function ImportModal({ tripId, onImported, onClose }) {
                           <div className="flex-1">
                             <div className="font-medium text-gray-800">{act.title}</div>
                             <div className="text-sm text-gray-500 mt-0.5 flex gap-3 flex-wrap">
-                              {act.date && <span>📅 {fmt(act.date)}</span>}
-                              {act.time && <span>🕐 {act.time}</span>}
-                              {act.location && <span>📍 {act.location}</span>}
+                              {act.date && <span className="flex items-center gap-1"><Icon name="calendar" size={12} />{fmt(act.date)}</span>}
+                              {act.time && <span className="flex items-center gap-1"><Icon name="clock" size={12} /><span className="tnum">{act.time}</span></span>}
+                              {act.location && <span className="flex items-center gap-1"><Icon name="pin" size={12} />{act.location}</span>}
                               {act.cost != null && <span>{fmtMoney(act.cost)}</span>}
                             </div>
                             {act.notes && <div className="text-xs text-gray-500 mt-1">{act.notes}</div>}
                           </div>
                           {saved.activities.includes(i)
-                            ? <span className="text-green-600 text-sm shrink-0">✓ Toegevoegd</span>
+                            ? <span className="text-green-600 text-sm shrink-0 flex items-center gap-1"><Icon name="check" size={14} />Toegevoegd</span>
                             : <Button variant="secondary" onClick={() => saveActivity(act, i)} disabled={saving || !activityDays[i]}>Toevoegen</Button>}
                         </div>
                         {!saved.activities.includes(i) && (
@@ -3444,7 +3528,7 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
       <div className="space-y-4">
         <div className={`rounded-xl px-3 py-2.5 ${role === "editor" ? "bg-sky-50 border border-sky-200" : "bg-gray-50 border border-gray-200"}`}>
           <div className="text-sm font-semibold text-gray-800">
-            {role === "editor" ? "✏️ Reisgenoot" : "👀 Alleen-lezen"}
+            {role === "editor" ? "Reisgenoot" : "Alleen-lezen"}
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
             {role === "editor"
@@ -3465,14 +3549,14 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
                 onClick={(e) => e.target.select()}
               />
               <Button onClick={handleCopy} variant={copied ? "secondary" : "primary"}>
-                {copied ? "✓ Gekopieerd" : "Kopiëren"}
+                {copied ? <><Icon name="check" size={14} className="mr-1.5" />Gekopieerd</> : "Kopiëren"}
               </Button>
             </div>
             <a
               href={`mailto:?subject=${encodeURIComponent("Uitnodiging: bekijk onze reis")}&body=${encodeURIComponent(`Hoi!\n\nIk wil deze reis met je delen via Reisplanner.\n\nKlik op de link hieronder om toegang te krijgen:\n${link}\n\nTot snel!`)}`}
               className="flex items-center justify-center gap-2 w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
             >
-              ✉️ Verstuur via Mail
+              <Icon name="mail" size={15} className="mr-1.5" />Verstuur via Mail
             </a>
           </>
         )}
@@ -3505,7 +3589,7 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
                         <div className="text-xs text-gray-400">
-                          {m.role === "viewer" ? "👀 Alleen-lezen" : "✏️ Bewerker"}
+                          {m.role === "viewer" ? "Alleen-lezen" : "Bewerker"}
                           {m.visits > 0 && ` · ${m.visits}x langsgeweest`}
                           {m.minutes > 0 && ` · ${fmtDuration(m.minutes)} gelezen`}
                           {m.last_active_at && ` · laatst ${fmtDatetime(m.last_active_at)}`}
@@ -3526,14 +3610,14 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
                             ))}
                         </div>
                         <div className="text-xs text-gray-500">
-                          💬 {m.comments} reactie{m.comments === 1 ? "" : "s"} · 👍 {m.likes} duimpje{m.likes === 1 ? "" : "s"}
+                          <Icon name="chat" size={12} className="mr-1" />{m.comments} reactie{m.comments === 1 ? "" : "s"} · <Icon name="thumb" size={12} className="mx-1" />{m.likes} duimpje{m.likes === 1 ? "" : "s"}
                           {m.first_active_at && ` · volgt sinds ${fmtDatetime(m.first_active_at)}`}
                         </div>
                         {m.recent.length > 0 && (
                           <div className="space-y-1">
                             {m.recent.map((a, i) => (
                               <div key={i} className="text-xs text-gray-500 flex gap-2">
-                                <span className="shrink-0">{a.kind === "comment" ? "💬" : "👍"}</span>
+                                <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400" />
                                 <span className="flex-1 min-w-0 truncate">
                                   {a.kind === "comment" ? a.detail : "gaf een duimpje"}
                                 </span>
@@ -3564,21 +3648,21 @@ function photoAssignmentInfo(photo, days, transports, accommodations) {
   if (photo.activity_id) {
     for (const day of days) {
       const act = (day.activities || []).find((a) => a.id === photo.activity_id);
-      if (act) return { icon: CATEGORY_ICONS[act.category] || "📌", text: act.title };
+      if (act) return { icon: categoryIcon(act.category), text: act.title };
     }
-    return { icon: "📌", text: "Activiteit" };
+    return { icon: categoryIcon(), text: "Activiteit" };
   }
   if (photo.transport_id) {
     const t = transports.find((t) => t.id === photo.transport_id);
-    return { icon: TRANSPORT_ICONS[t?.type] || "🚀", text: t ? `${t.from_location} → ${t.to_location}` : "Vervoer" };
+    return { icon: transportIcon(t?.type), text: t ? `${t.from_location} → ${t.to_location}` : "Vervoer" };
   }
   if (photo.accommodation_id) {
     const a = accommodations.find((a) => a.id === photo.accommodation_id);
-    return { icon: "🏨", text: a ? a.name : "Verblijf" };
+    return { icon: "bed", text: a ? a.name : "Verblijf" };
   }
   if (photo.day_id) {
     const day = days.find((d) => d.id === photo.day_id);
-    return { icon: "📅", text: day ? dayOptionLabel(day) : "Dag" };
+    return { icon: "calendar", text: day ? dayOptionLabel(day) : "Dag" };
   }
   return null;
 }
@@ -3676,10 +3760,10 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
-        <h3 className="font-semibold text-gray-700">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
+        <h3 className="font-display text-[19px] text-gray-800">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
         <div className="flex gap-2">
-          {todayPhoto && <Button onClick={scrollToToday} variant="secondary">📍 Vandaag</Button>}
-          {!readOnly && <Button onClick={() => setBulkUploading(true)}>📷 Foto's uploaden</Button>}
+          {todayPhoto && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
+          {!readOnly && <Button onClick={() => setBulkUploading(true)}><Icon name="camera" size={14} className="mr-1.5" />Foto's uploaden</Button>}
         </div>
       </div>
 
@@ -3691,7 +3775,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
 
       {photos.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
-          <div className="text-5xl mb-3">📷</div>
+          <Icon name="camera" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div className="font-medium">Nog geen foto's</div>
           <div className="text-sm mt-1">Gebruik "Foto's uploaden" hierboven, of voeg ze toe bij een verhaal in het Dagboek</div>
         </div>
@@ -3702,15 +3786,15 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
             return (
               <button key={p.id} id={`gallery-photo-${p.id}`} onClick={() => setViewingIndex(i)}
                 className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group"
-                style={{ scrollMarginTop: "5rem", boxShadow: p.id === todayPhoto?.id ? "0 0 0 3px #0369a1" : undefined }}>
+                style={{ scrollMarginTop: "5rem", boxShadow: p.id === todayPhoto?.id ? "0 0 0 3px #E4571A" : undefined }}>
                 <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 {assignment ? (
                   <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white text-xs font-medium truncate flex items-center gap-1">
-                    <span className="shrink-0">{assignment.icon}</span><span className="truncate">{assignment.text}</span>
+                    <Icon name={assignment.icon} size={13} /><span className="truncate">{assignment.text}</span>
                   </div>
                 ) : (
-                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-amber-200 text-xs font-semibold">Niet toegewezen</div>
+                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white/80 text-xs font-semibold">Niet toegewezen</div>
                 )}
               </button>
             );
@@ -3731,7 +3815,17 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
 }
 
 // ---------- Packing tab ----------
-const PACKING_CATEGORIES = ["📄 Documenten", "👕 Kleding", "🔌 Elektronica", "🧴 Toilettas", "💊 Medicijnen", "🎒 Overig"];
+// De sleutel staat als tekst in de database (packing_items.category), dus die
+// blijft ongewijzigd — inclusief de emoji, anders raken bestaande paklijsten hun
+// categorie kwijt. Alleen wat de gebruiker ziet is vervangen door label + icoon.
+const PACKING_CATEGORIES = [
+  { key: "📄 Documenten", label: "Documenten", icon: "doc" },
+  { key: "👕 Kleding", label: "Kleding", icon: "shirt" },
+  { key: "🔌 Elektronica", label: "Elektronica", icon: "plug" },
+  { key: "🧴 Toilettas", label: "Toilettas", icon: "bottle" },
+  { key: "💊 Medicijnen", label: "Medicijnen", icon: "pill" },
+  { key: "🎒 Overig", label: "Overig", icon: "suitcase" },
+];
 const PACKING_SUGGESTIONS = {
   "📄 Documenten": ["Paspoort", "Vliegtickets", "Reisverzekering", "Rijbewijs", "Hotelvouchers", "Visabewijzen"],
   "👕 Kleding": ["T-shirts", "Broeken", "Ondergoed", "Sokken", "Trui/vest", "Regenjas", "Zwemkleding", "Pyjama", "Schoenen", "Slippers"],
@@ -3744,7 +3838,7 @@ const PACKING_SUGGESTIONS = {
 function PackingTab({ tripId, readOnly }) {
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState("");
-  const [newCategory, setNewCategory] = useState(PACKING_CATEGORIES[0]);
+  const [newCategory, setNewCategory] = useState(PACKING_CATEGORIES[0].key);
   const [openCategory, setOpenCategory] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -3784,7 +3878,7 @@ function PackingTab({ tripId, readOnly }) {
   }
 
   const grouped = PACKING_CATEGORIES.reduce((acc, cat) => {
-    acc[cat] = items.filter(p => p.category === cat);
+    acc[cat.key] = items.filter(p => p.category === cat.key);
     return acc;
   }, {});
   const checkedCount = items.filter(p => p.checked).length;
@@ -3813,7 +3907,7 @@ function PackingTab({ tripId, readOnly }) {
         <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex gap-2">
           <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
             className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-400 shrink-0">
-            {PACKING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            {PACKING_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
           <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Item toevoegen..."
             className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 min-w-0" />
@@ -3823,21 +3917,22 @@ function PackingTab({ tripId, readOnly }) {
 
       {/* Categories */}
       {PACKING_CATEGORIES.map(cat => {
-        const catItems = grouped[cat] || [];
+        const catItems = grouped[cat.key] || [];
         const catChecked = catItems.filter(p => p.checked).length;
-        const isOpen = openCategory === cat;
-        const suggestions = (PACKING_SUGGESTIONS[cat] || []).filter(s => !catItems.some(p => p.item === s));
+        const isOpen = openCategory === cat.key;
+        const suggestions = (PACKING_SUGGESTIONS[cat.key] || []).filter(s => !catItems.some(p => p.item === s));
         return (
-          <div key={cat} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <button onClick={() => setOpenCategory(isOpen ? null : cat)}
+          <div key={cat.key} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <button onClick={() => setOpenCategory(isOpen ? null : cat.key)}
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-800 text-sm">{cat}</span>
+              <div className="flex items-center gap-2.5">
+                <Icon name={cat.icon} size={17} className="text-sky-700" />
+                <span className="font-medium text-gray-800 text-sm">{cat.label}</span>
                 {catItems.length > 0 && (
-                  <span className="text-xs text-gray-400">{catChecked}/{catItems.length}</span>
+                  <span className="text-xs text-gray-400 tnum">{catChecked}/{catItems.length}</span>
                 )}
               </div>
-              <span className="text-gray-400 text-xs">{isOpen ? "▲" : "▼"}</span>
+              <Icon name="arrowRight" size={15} className={`text-gray-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
             </button>
 
             {isOpen && (
@@ -3853,7 +3948,7 @@ function PackingTab({ tripId, readOnly }) {
                       <span className={`flex-1 text-sm ${item.checked ? "line-through text-gray-400" : "text-gray-800"}`}>{item.item}</span>
                       {!readOnly && (
                         <button onClick={() => handleDelete(item.id)}
-                          className="text-gray-300 hover:text-red-400 active:text-red-500 text-sm p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑</button>
+                          className="text-gray-300 hover:text-red-500 active:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
                       )}
                     </div>
                   ))}
@@ -3863,9 +3958,9 @@ function PackingTab({ tripId, readOnly }) {
                     <p className="text-xs text-gray-400 mb-1.5">Suggesties:</p>
                     <div className="flex flex-wrap gap-1.5">
                       {suggestions.slice(0, 6).map(s => (
-                        <button key={s} onClick={() => handleSuggest(cat, s)}
-                          className="text-xs px-2 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700 transition-colors">
-                          + {s}
+                        <button key={s} onClick={() => handleSuggest(cat.key, s)}
+                          className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700 transition-colors inline-flex items-center gap-1">
+                          <Icon name="plus" size={12} /> {s}
                         </button>
                       ))}
                     </div>
@@ -3879,7 +3974,7 @@ function PackingTab({ tripId, readOnly }) {
 
       {items.length === 0 && (
         <div className="text-center py-10 text-gray-400">
-          <div className="text-4xl mb-2">🎒</div>
+          <Icon name="suitcase" size={38} strokeWidth={1.2} className="mb-3 text-gray-300" />
           <div className="text-sm">Nog niets op de paklijst</div>
           <div className="text-xs mt-1">Voeg items toe of kies suggesties per categorie</div>
         </div>
@@ -3955,7 +4050,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   if (loadError && !trip) {
     return (
       <div className="text-center py-16">
-        <div className="text-5xl mb-3">😕</div>
+        <Icon name="alert" size={40} strokeWidth={1.3} className="mx-auto mb-3 text-gray-300" />
         <div className="font-medium text-gray-700">Reis kon niet worden geladen</div>
         <div className="text-sm text-gray-400 mt-1 mb-5">{loadError}</div>
         <div className="flex gap-2 justify-center">
@@ -3967,7 +4062,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   }
   if (!trip) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
-  const accent = trip.cover_color || "#0369a1";
+  const accent = trip.cover_color || "#A03A08";
   const readOnly = trip.role === "viewer" || previewViewer;
   const isOwnerActions = trip.is_owner && !previewViewer;
 
@@ -3982,26 +4077,26 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const viewExpenses = previewViewer ? [] : expenses;
 
   const tabs = [
-    { key: "days", label: "Dagplanning", icon: "🗓", primary: true },
-    ...(currentUserId ? [{ key: "journal", label: "Dagboek", icon: "📖" }] : []),
-    { key: "photos", label: "Foto's", icon: "📷" },
-    { key: "accommodation", label: "Verblijf", icon: "🏨" },
-    { key: "transport", label: "Vervoer", icon: "✈️" },
-    { key: "packing", label: "Paklijst", icon: "🎒" },
+    { key: "days", label: "Dagplanning", icon: "route", primary: true },
+    ...(currentUserId ? [{ key: "journal", label: "Dagboek", icon: "book" }] : []),
+    { key: "photos", label: "Foto's", icon: "camera" },
+    { key: "accommodation", label: "Verblijf", icon: "bed" },
+    { key: "transport", label: "Vervoer", icon: "plane" },
+    { key: "packing", label: "Paklijst", icon: "suitcase" },
   ];
 
   // Bottom nav tabs for mobile
   const bottomNavItems = [
-    { key: "days", icon: "🗓", label: "Planning" },
-    ...(currentUserId ? [{ key: "journal", icon: "📖", label: "Dagboek" }] : []),
-    { key: "photos", icon: "📷", label: "Foto's" },
+    { key: "days", icon: "route", label: "Planning" },
+    ...(currentUserId ? [{ key: "journal", icon: "book", label: "Dagboek" }] : []),
+    { key: "photos", icon: "camera", label: "Foto's" },
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
-    { key: "accommodation", icon: "🏨", label: "Verblijf" },
-    { key: "transport", icon: "✈️", label: "Vervoer" },
-    { key: "packing", icon: "🎒", label: "Paklijst" },
-    ...(readOnly ? [] : [{ key: "budget", icon: "💰", label: "Budget" }]),
+    { key: "accommodation", icon: "bed", label: "Verblijf" },
+    { key: "transport", icon: "plane", label: "Vervoer" },
+    { key: "packing", icon: "suitcase", label: "Paklijst" },
+    ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
@@ -4010,15 +4105,15 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       {previewViewer && (
         // In preview the tab bar and bottom nav disappear (that is what a
         // viewer gets), so this banner is the only way back — hence sticky.
-        <div className="sticky z-30 mb-4 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 flex items-center gap-3 shadow-sm"
+        <div className="sticky z-30 mb-4 rounded-xl bg-white border border-gray-200 px-3 py-2.5 flex items-center gap-3 shadow-sm"
           style={{ top: "calc(3.5rem + env(safe-area-inset-top) + 0.5rem)" }}>
-          <span className="text-lg leading-none shrink-0">👀</span>
+          <Icon name="eye" size={17} className="shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-amber-900">Gastweergave</div>
-            <div className="text-xs text-amber-700">Zo ziet iemand met een alleen-lezen link deze reis. Kosten en budget zijn verborgen.</div>
+            <div className="text-sm font-semibold text-gray-800">Gastweergave</div>
+            <div className="text-xs text-gray-500">Zo ziet iemand met een alleen-lezen link deze reis. Kosten en budget zijn verborgen.</div>
           </div>
           <button onClick={() => { setPreviewViewer(false); if (tab === "budget") setTab("days"); }}
-            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors">
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-700 text-white hover:bg-sky-800 transition-colors">
             Sluiten
           </button>
         </div>
@@ -4037,13 +4132,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
               <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
                 <div className="flex items-start gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/70 text-white backdrop-blur-sm">{readOnly ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/30 text-white backdrop-blur-sm">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
-                {trip.destination && <div className="text-white/85 mt-0.5 text-sm">📍 {trip.destination}</div>}
+                {trip.destination && <div className="text-white/85 mt-0.5 text-sm flex items-center gap-1"><Icon name="pin" size={13} />{trip.destination}</div>}
                 <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
-                  {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(viewTrip.budget, trip.currency)}</span>}
+                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
                 </div>
                 {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
@@ -4051,13 +4146,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             <div className="bg-white px-3 py-2.5 border-t border-gray-100">
               {!readOnly && tab !== "journal" && tab !== "photos" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all active:scale-95" style={{ background: accent }}>
-                  📧 Planning toevoegen
+                  <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
                 </button>
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5">✏️ Bewerken</Button>}
-                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5">🗑 Verwijderen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5"><Icon name="pen" size={14} className="mr-1.5" />Bewerken</Button>}
+                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5"><Icon name="trash" size={14} className="mr-1.5" />Verwijderen</Button>}
                 </div>
               )}
             </div>
@@ -4068,26 +4163,26 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
               <div className="relative flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-400/60 text-white">{readOnly ? "👀 Alleen-lezen" : "Gedeeld"}</span>}
+                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
                 <h2 className="text-2xl font-bold text-white drop-shadow">{trip.name}</h2>
-                {trip.destination && <div className="text-white/80 text-sm mt-0.5">📍 {trip.destination}</div>}
+                {trip.destination && <div className="text-white/80 text-sm mt-0.5 flex items-center gap-1"><Icon name="pin" size={13} />{trip.destination}</div>}
               </div>
             </div>
             <div className="bg-white px-4 py-3">
               <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
-                {trip.start_date && <span>📅 {fmt(trip.start_date)} — {fmt(trip.end_date)}{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span>💰 {fmtMoney(viewTrip.budget, trip.currency)}</span>}
+                {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
               </div>
               {!readOnly && tab !== "journal" && tab !== "photos" && (
                 <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold text-white shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent }}>
-                  📧 Planning toevoegen
+                  <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
                 </button>
               )}
               {tab !== "journal" && tab !== "photos" && (
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0">✏️ Bewerken</Button>}
-                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0">🗑 Verwijderen</Button>}
+                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0"><Icon name="pen" size={14} className="mr-1.5" />Bewerken</Button>}
+                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0"><Icon name="trash" size={14} className="mr-1.5" />Verwijderen</Button>}
                 </div>
               )}
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
@@ -4107,8 +4202,8 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
               style={tab === "days"
                 ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-                : { background: "#f1f5f9", color: "#374151" }}>
-              🗓 Dagplanning
+                : { background: "#F4F2EF", color: "#463D38" }}>
+              <Icon name="route" size={15} className="mr-1.5" />Dagplanning
             </button>
           </div>
         </>
@@ -4137,16 +4232,16 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               </span>
             </div>
             <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
-              <div style={{ width: `${tPct}%`, background: "#0369a1" }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
-              <div style={{ width: `${aPct}%`, background: "#b45309" }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
-              <div style={{ width: `${acPct}%`, background: "#059669" }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
-              <div style={{ width: `${ePct}%`, background: "#7c3aed" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
+              <div style={{ width: `${tPct}%`, background: "#A03A08" }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
+              <div style={{ width: `${aPct}%`, background: "#C9702A" }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
+              <div style={{ width: `${acPct}%`, background: "#2E6B4E" }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
+              <div style={{ width: `${ePct}%`, background: "#33506B" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
             </div>
             <div className="flex gap-3 mt-2 flex-wrap">
-              {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#0369a1"}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
-              {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#b45309"}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
-              {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#059669"}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
-              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#7c3aed"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
+              {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#A03A08"}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
+              {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#C9702A"}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
+              {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#2E6B4E"}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
+              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#33506B"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
             </div>
           </button>
         );
@@ -4175,14 +4270,14 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
             style={{ right: 12, bottom: "calc(68px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
             <button onClick={() => { setShowMoreMenu(false); onBack(); }}
               className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left text-gray-700 border-b border-gray-100">
-              <span className="text-lg leading-none">←</span>
+              <Icon name="arrowLeft" size={17} />
               Terug
             </button>
             {moreMenuItems.map((item) => (
               <button key={item.key} onClick={() => { setTab(item.key); setShowMoreMenu(false); }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left"
-                style={{ color: tab === item.key ? accent : "#374151" }}>
-                <span className="text-lg leading-none">{item.icon}</span>
+                style={{ color: tab === item.key ? accent : "#463D38" }}>
+                <Icon name={item.icon} size={17} />
                 {item.label}
               </button>
             ))}
@@ -4197,17 +4292,17 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           {bottomNavItems.map((item) => (
             <button key={item.key} onClick={() => setTab(item.key)}
               className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-colors min-w-0"
-              style={{ color: tab === item.key ? accent : "#9ca3af", minHeight: 68 }}>
-              <span className="text-2xl leading-none">{item.icon}</span>
-              <span className="text-sm font-medium leading-none mt-0.5">{item.label}</span>
+              style={{ color: tab === item.key ? accent : "#A99C93", minHeight: 68 }}>
+              <Icon name={item.icon} size={21} />
+              <span className="text-[11px] font-medium leading-none mt-1">{item.label}</span>
               {tab === item.key && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
             </button>
           ))}
           <button onClick={() => setShowMoreMenu((v) => !v)}
             className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-colors min-w-0 relative"
-            style={{ color: isMoreActive || showMoreMenu ? accent : "#9ca3af", minHeight: 68 }}>
-            <span className="text-2xl leading-none">⋯</span>
-            <span className="text-sm font-medium leading-none mt-0.5">Meer</span>
+            style={{ color: isMoreActive || showMoreMenu ? accent : "#A99C93", minHeight: 68 }}>
+            <Icon name="more" size={21} />
+            <span className="text-[11px] font-medium leading-none mt-1">Meer</span>
             {isMoreActive && <span className="absolute bottom-0 w-8 h-0.5 rounded-full" style={{ background: accent }} />}
           </button>
         </div>
@@ -4270,11 +4365,11 @@ function AdminView({ onBack }) {
         <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
           <button onClick={() => setTab("trips")}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "trips" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-            ✈️ Reizen ({trips.length})
+            <Icon name="plane" size={15} className="mr-1.5" />Reizen ({trips.length})
           </button>
           <button onClick={() => setTab("users")}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "users" ? "bg-white shadow text-sky-700" : "text-gray-500 hover:text-gray-700"}`}>
-            👥 Gebruikers ({users.length})
+            <Icon name="users" size={15} className="mr-1.5" />Gebruikers ({users.length})
           </button>
         </div>
       </div>
@@ -4293,10 +4388,10 @@ function AdminView({ onBack }) {
                   <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
                     {t.cover_image
                       ? <img src={t.cover_image} className="w-14 h-14 rounded-lg object-cover shrink-0" />
-                      : <div className="w-14 h-14 rounded-lg shrink-0" style={{ background: t.cover_color || "#0369a1" }} />}
+                      : <div className="w-14 h-14 rounded-lg shrink-0" style={{ background: t.cover_color || "#A03A08" }} />}
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-gray-800">{t.name}</div>
-                      {t.destination && <div className="text-sm text-gray-500">📍 {t.destination}</div>}
+                      {t.destination && <div className="text-sm text-gray-500 flex items-center gap-1"><Icon name="pin" size={13} />{t.destination}</div>}
                       {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
                     </div>
                     <div className="shrink-0">
@@ -4323,16 +4418,16 @@ function AdminView({ onBack }) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-gray-800">{u.name || "—"}</span>
-                  {u.is_admin && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Admin</span>}
+                  {u.is_admin && <span className="text-xs bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full font-medium">Admin</span>}
                 </div>
                 <div className="text-sm text-gray-500">{u.email}</div>
                 <div className="flex gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
-                  <span>🔑 {LOGIN_METHOD(u)}</span>
+                  <span className="flex items-center gap-1"><Icon name="key" size={12} />{LOGIN_METHOD(u)}</span>
                   {u.last_login_at && <span>Laatst: {fmt(u.last_login_at)}</span>}
                   <span>Lid sinds: {fmt(u.created_at)}</span>
                 </div>
                 <div className="flex gap-3 mt-1 text-xs flex-wrap">
-                  <span className="font-medium text-gray-600">🔓 {u.login_count} x ingelogd</span>
+                  <span className="font-medium text-gray-600 flex items-center gap-1"><Icon name="unlock" size={12} /><span className="tnum">{u.login_count}</span> x ingelogd</span>
                   {Number(u.logins_24h) > 0
                     ? <span className="font-semibold text-green-600">● {u.logins_24h}x afgelopen 24u</span>
                     : <span className="text-gray-300">● niet actief vandaag</span>}
@@ -4403,15 +4498,16 @@ function App() {
       {/* Sticky compact header */}
       <header className="sticky top-0 z-40 bg-sky-800 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
-          <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2 font-bold text-lg leading-none min-w-0">
-            ✈️ <span className="truncate">Reisplanner</span>
+          <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2.5 leading-none min-w-0">
+            <Icon name="plane" size={18} /><span className="truncate font-display text-[19px]">Reisplanner</span>
           </button>
           <div className="flex items-center gap-2 shrink-0">
             {user ? (
               <>
                 {user.is_admin && view.name !== "admin" && (
-                  <button onClick={() => setView({ name: "admin" })} className="text-sky-300 hover:text-white text-xs px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
-                    👁
+                  <button onClick={() => setView({ name: "admin" })} title="Beheer"
+                    className="text-sky-200 hover:text-white px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
+                    <Icon name="eye" size={16} />
                   </button>
                 )}
                 <button onClick={handleLogout} className="text-sky-200 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
@@ -4445,11 +4541,11 @@ function App() {
                   {tripStats && <div className="text-sm text-gray-500 mt-0.5">{tripStats}</div>}
                 </>
               ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
-                  <span className="text-xl shrink-0">👤</span>
+                <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-start gap-3">
+                  <Icon name="user" size={19} className="text-gray-500" />
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-amber-800 text-sm">Je gebruikt de app als gast</div>
-                    <div className="text-xs text-amber-700 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in met Google of Apple</a> om ze overal beschikbaar te hebben.</div>
+                    <div className="font-semibold text-gray-800 text-sm">Je gebruikt de app als gast</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Je reizen worden alleen op dit apparaat bewaard. <a href="/login" className="underline font-medium">Log in met Google of Apple</a> om ze overal beschikbaar te hebben.</div>
                   </div>
                 </div>
               )}
@@ -4458,7 +4554,7 @@ function App() {
               <div className="text-center py-16 text-gray-400">Laden...</div>
             ) : trips.length === 0 ? (
               <div className="text-center py-24 text-gray-400">
-                <div className="text-6xl mb-4">🗺️</div>
+                <Icon name="globe" size={48} strokeWidth={1.1} className="mx-auto mb-4 text-gray-300" />
                 <div className="text-xl font-semibold text-gray-600 mb-2">Nog geen reizen</div>
                 <div className="mb-6 text-sm">Maak je eerste reis aan om te beginnen</div>
               </div>
@@ -4473,7 +4569,7 @@ function App() {
             <button
               onClick={() => setShowTripForm(true)}
               className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-5 py-4 rounded-2xl text-white font-bold text-base shadow-xl active:scale-95 transition-all"
-              style={{ background: "linear-gradient(135deg,#0369a1,#0ea5e9)", boxShadow: "0 8px 24px rgba(3,105,161,0.45)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+              style={{ background: "linear-gradient(135deg,#A03A08,#C9450A)", boxShadow: "0 8px 24px rgba(160,58,8,0.4)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
             >
               + Nieuwe reis
             </button>
