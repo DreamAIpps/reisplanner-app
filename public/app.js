@@ -3313,7 +3313,7 @@ function MapTab({ trip, accommodations, transports, days }) {
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#6B3145" }} />Vervoer</span>
       </div>
-      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
+      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
         {status === "loading" && (
           <div className="absolute inset-0 bg-white/90 z-[1000] flex flex-col items-center justify-center gap-3">
             <Icon name="map" size={30} strokeWidth={1.2} className="animate-pulse text-gray-300" />
@@ -3462,7 +3462,7 @@ function VisitedMap({ trip }) {
         )}
       </div>
 
-      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm" style={{ height: 480 }}>
+      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
@@ -3530,7 +3530,7 @@ function DayMiniMap({ places }) {
   }, []);
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-100" style={{ height: 140 }}>
+    <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 140 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
