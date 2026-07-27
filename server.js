@@ -675,14 +675,24 @@ route("POST", "/api/admin/backfill-photo-gps", async (req, res) => {
 });
 
 // Eenmalige nabewerking voor foto's die al vóór de 2000px-cap zijn geüpload —
-// die staan nog op hun volledige, vaak veel grotere formaat. Loopt door ALLE
-// foto's (niet alleen de "grote", want dat vergt zelf al een decode om te
-// weten) en herschrijft een rij alleen als het resultaat ook echt kleiner is.
-route("POST", "/api/admin/shrink-photos", async (req, res) => {
+// die staan nog op hun volledige, vaak veel grotere formaat. In batches, niet
+// in één keer: bij een paar honderd foto's duurt een volledige decodeer- en
+// hercodeerslag per stuk lang genoeg om één groot verzoek over Railway's eigen
+// proxy-timeout heen te trekken — de browser meldt dat dan als een kale
+// "Load failed", niet als een nette foutmelding. De client roept deze route
+// herhaald aan met een oplopende afterId tot hasMore false is.
+const SHRINK_BATCH_SIZE = 15;
+route("POST", "/api/admin/shrink-photos", async (req, res, params, body) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { rows } = await query("SELECT id, mime_type, data FROM photos");
+  const afterId = Number(body?.afterId) || 0;
+  const { rows } = await query(
+    "SELECT id, mime_type, data FROM photos WHERE id > $1 ORDER BY id LIMIT $2",
+    [afterId, SHRINK_BATCH_SIZE + 1]
+  );
+  const hasMore = rows.length > SHRINK_BATCH_SIZE;
+  const batch = hasMore ? rows.slice(0, SHRINK_BATCH_SIZE) : rows;
   let resized = 0, bytesBefore = 0, bytesAfter = 0;
-  for (const row of rows) {
+  for (const row of batch) {
     try {
       let buffer = row.data, mediaType = row.mime_type;
       // Nog niet-omgezette HEIC eerst via dezelfde route als bij upload: die
@@ -710,7 +720,11 @@ route("POST", "/api/admin/shrink-photos", async (req, res) => {
       console.error(`Verkleinen mislukt voor foto ${row.id}:`, err.message);
     }
   }
-  sendJson(res, 200, { checked: rows.length, resized, bytesBefore, bytesAfter });
+  sendJson(res, 200, {
+    checked: batch.length, resized, bytesBefore, bytesAfter,
+    lastId: batch.length ? batch[batch.length - 1].id : afterId,
+    hasMore,
+  });
 });
 
 // Foto's staan als bytea in Postgres zelf, dus "geen ruimte meer" is een

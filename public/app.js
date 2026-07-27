@@ -399,7 +399,7 @@ const api = {
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   getStorageInfo: () => apiFetch("/api/admin/storage"),
-  shrinkPhotos: () => apiFetch("/api/admin/shrink-photos", { method: "POST", body: "{}" }),
+  shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
@@ -4771,18 +4771,37 @@ function AdminView({ onBack }) {
   async function handleShrinkPhotos() {
     setShrinkBusy(true);
     setShrinkResult(null);
+    // In batches: bij een paar honderd foto's duurt één herschrijf-slag per
+    // foto lang genoeg dat één groot verzoek Railway's eigen proxy-timeout kan
+    // raken — de browser meldt dat dan als een kale "Load failed", niet als
+    // een bruikbare foutmelding. Zo blijft elk verzoek klein, en zie je de
+    // voortgang terwijl het loopt in plaats van pas (of nooit) aan het eind.
+    let afterId = 0, totalChecked = 0, totalResized = 0, bytesBefore = 0, bytesAfter = 0;
     try {
-      const r = await api.shrinkPhotos();
-      const saved = r.bytesBefore - r.bytesAfter;
+      for (;;) {
+        const r = await api.shrinkPhotos(afterId);
+        totalChecked += r.checked;
+        totalResized += r.resized;
+        bytesBefore += r.bytesBefore;
+        bytesAfter += r.bytesAfter;
+        afterId = r.lastId;
+        setShrinkResult({
+          ok: true,
+          text: totalResized > 0
+            ? `Bezig... ${totalResized} van ${totalChecked} gecontroleerde foto's verkleind, ${fmtBytes(bytesBefore - bytesAfter)} bespaard tot nu toe.`
+            : `Bezig... ${totalChecked} foto's gecontroleerd, nog niets te verkleinen.`,
+        });
+        if (!r.hasMore) break;
+      }
       setShrinkResult({
         ok: true,
-        text: r.resized > 0
-          ? `${r.resized} van ${r.checked} foto's verkleind, ${fmtBytes(saved)} bespaard (was ${fmtBytes(r.bytesBefore)}, nu ${fmtBytes(r.bytesAfter)}).`
-          : `Niets te verkleinen — alle ${r.checked} foto's waren al klein genoeg.`,
+        text: totalResized > 0
+          ? `Klaar: ${totalResized} van ${totalChecked} foto's verkleind, ${fmtBytes(bytesBefore - bytesAfter)} bespaard (was ${fmtBytes(bytesBefore)}, nu ${fmtBytes(bytesAfter)}).`
+          : `Klaar — niets te verkleinen, alle ${totalChecked} foto's waren al klein genoeg.`,
       });
       api.getStorageInfo().then(setStorage).catch(() => {});
     } catch (err) {
-      setShrinkResult({ ok: false, text: err.message || "Verkleinen mislukt" });
+      setShrinkResult({ ok: false, text: (err.message || "Verkleinen mislukt") + ` (tot hier: ${totalResized} van ${totalChecked} verkleind)` });
     } finally {
       setShrinkBusy(false);
     }
