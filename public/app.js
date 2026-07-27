@@ -2382,7 +2382,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               || dayTransports.some((t) => t.id === p.transport_id)
               || dayAccommodations.some((a) => a.id === p.accommodation_id)
               || day.activities.some((act) => act.id === p.activity_id));
-            dayPlaces = clusterPhotoPlaces(dayPhotoSet);
+            dayPlaces = labelPlaces(clusterPhotoPlaces(dayPhotoSet), day.activities);
           }
           const showDayMap = dayPlaces.length > 3;
 
@@ -3112,6 +3112,34 @@ function fmtDistance(m) {
   return `${Math.round(m / 1000).toLocaleString("nl-NL")} km`;
 }
 
+// Een label als "14:07" oogt op een kaart alsof het naar de minuut nauwkeurig
+// is gepland, wat het nooit is. Afgerond op een kwartier leest het als wat het
+// is: een indicatie.
+function roundTimeToQuarterHour(time) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(time || "");
+  if (!m) return null;
+  const total = (Number(m[1]) * 60 + Number(m[2]));
+  const rounded = Math.round(total / 15) * 15 % (24 * 60);
+  const h = Math.floor(rounded / 60);
+  const min = rounded % 60;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+// Koppelt elke foto-cluster op de dagboek-kaart aan de activiteit waar de
+// meeste van zijn foto's bij horen, zodat de kaart niet alleen stippen toont
+// maar ook waar je was en (afgerond) hoe laat.
+function labelPlaces(places, activities) {
+  places.forEach((pl) => {
+    const counts = {};
+    pl.photos.forEach((p) => { if (p.activity_id) counts[p.activity_id] = (counts[p.activity_id] || 0) + 1; });
+    const topId = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    const act = topId && activities.find((a) => String(a.id) === topId);
+    pl.label = act ? act.title : null;
+    pl.time = act ? roundTimeToQuarterHour(act.time) : null;
+  });
+  return places;
+}
+
 // ---------- Kaart tab ----------
 // Mapbox-tegels als er een token staat, anders de gratis CARTO-tegels. Eén keer
 // ophalen per sessie; de kaart mag er niet op wachten als het misgaat.
@@ -3515,11 +3543,21 @@ function DayMiniMap({ places }) {
           }),
         }).addTo(map);
         marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+        if (pl.label) {
+          const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
+          const timeSuffix = pl.time ? ` · ${pl.time}` : "";
+          marker.bindTooltip(`<span style="font-weight:600">${shortLabel}</span>${timeSuffix}`, {
+            permanent: true, direction: "top", offset: [0, -8], opacity: 0.95,
+            className: "leaflet-reisplanner-tooltip",
+          });
+        }
       });
 
+      // Iets ruimer uitgezoomd dan strikt nodig — met de naam-labels erbij oogt
+      // een kaartje dat precies om de stippen sluit al snel te vol.
       const bounds = places.map((p) => [p.lat, p.lon]);
-      if (bounds.length === 1) map.setView(bounds[0], 15);
-      else map.fitBounds(bounds, { padding: [24, 24] });
+      if (bounds.length === 1) map.setView(bounds[0], 13);
+      else map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
     })();
 
     return () => { cancelled = true; };
@@ -3530,7 +3568,7 @@ function DayMiniMap({ places }) {
   }, []);
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 140 }}>
+    <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}

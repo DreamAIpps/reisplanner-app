@@ -61,6 +61,12 @@
   </script>
   <style>
     .leaflet-reisplanner-icon { background: none !important; border: none !important; }
+    /* Compact activiteit-label op de dagboek-kaart — Leaflets standaard tooltip
+       is te fors (6px padding, schaduw, pijltje) voor een klein kaartje vol stippen. */
+    .leaflet-reisplanner-tooltip {
+      padding: 2px 7px; font-size: 11px; line-height: 1.5; border-radius: 6px;
+      border: none; box-shadow: 0 1px 3px rgba(36,29,25,.25);
+    }
     * { box-sizing: border-box; }
     /* Tailwinds tekstschaal (text-xs t/m text-2xl) is in rem, dus deze ene regel
        maakt alle lopende tekst iets groter zonder dat elke className aangepast
@@ -91,6 +97,6 @@
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=121"></script>
+  <script type="text/babel" src="app.js?v=122"></script>
 </body>
 </html>
