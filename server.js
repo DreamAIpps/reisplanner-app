@@ -999,6 +999,92 @@ function readHeicOrientation(buf) {
   return readTiffOrientation(buf, tiff);
 }
 
+// GPS lives in its own IFD, pointed to by tag 0x8825 in IFD0 — same
+// byte-order-aware walk as readTiffOrientation, one level deeper. GPSLatitude/
+// GPSLongitude are each three RATIONALs (degrees, minutes, seconds; a
+// numerator/denominator pair per value), too big for an IFD entry's 4-byte
+// value field, so the entry holds an offset to where they actually live.
+function readGpsFromTiff(buf, tiff) {
+  if (tiff < 0 || tiff + 8 > buf.length) return null;
+  const marker = buf.toString("ascii", tiff, tiff + 2);
+  if (marker !== "II" && marker !== "MM") return null;
+  const le = marker === "II";
+  const u16 = (p) => (le ? buf.readUInt16LE(p) : buf.readUInt16BE(p));
+  const u32 = (p) => (le ? buf.readUInt32LE(p) : buf.readUInt32BE(p));
+
+  const findTag = (ifdStart, wantedTag) => {
+    if (ifdStart < 0 || ifdStart + 2 > buf.length) return null;
+    const count = u16(ifdStart);
+    for (let i = 0; i < count; i++) {
+      const e = ifdStart + 2 + i * 12;
+      if (e + 12 > buf.length) break;
+      if (u16(e) === wantedTag) return e;
+    }
+    return null;
+  };
+
+  const ifd0 = tiff + u32(tiff + 4);
+  const gpsEntry = findTag(ifd0, 0x8825);
+  if (!gpsEntry) return null;
+  const gpsIfd = tiff + u32(gpsEntry + 8);
+
+  const readRational3 = (entry) => {
+    // count is a 4-byte field (LONG); reading only its first 2 bytes picks up
+    // the high half on big-endian data, which is zero for any small count —
+    // the exact bug readTiffOrientation had to work around for Orientation.
+    if (u32(entry + 4) < 3) return null;
+    const offset = tiff + u32(entry + 8);
+    if (offset < 0 || offset + 24 > buf.length) return null;
+    const vals = [];
+    for (let i = 0; i < 3; i++) {
+      const num = u32(offset + i * 8);
+      const den = u32(offset + i * 8 + 4);
+      vals.push(den ? num / den : 0);
+    }
+    return vals;
+  };
+
+  const latEntry = findTag(gpsIfd, 0x0002);
+  const lonEntry = findTag(gpsIfd, 0x0004);
+  if (!latEntry || !lonEntry) return null;
+  const latDms = readRational3(latEntry);
+  const lonDms = readRational3(lonEntry);
+  if (!latDms || !lonDms) return null;
+
+  let lat = latDms[0] + latDms[1] / 60 + latDms[2] / 3600;
+  let lon = lonDms[0] + lonDms[1] / 60 + lonDms[2] / 3600;
+  const latRefEntry = findTag(gpsIfd, 0x0001);
+  const lonRefEntry = findTag(gpsIfd, 0x0003);
+  if (latRefEntry && String.fromCharCode(buf[latRefEntry + 8]) === "S") lat = -lat;
+  if (lonRefEntry && String.fromCharCode(buf[lonRefEntry + 8]) === "W") lon = -lon;
+  return { latitude: lat, longitude: lon };
+}
+
+function readHeicGps(buf) {
+  const tag = buf.indexOf(Buffer.from("Exif\0\0", "binary"));
+  if (tag >= 0) return readGpsFromTiff(buf, tag + 6);
+  const ii = buf.indexOf(Buffer.from([0x49, 0x49, 0x2a, 0x00]));
+  const mm = buf.indexOf(Buffer.from([0x4d, 0x4d, 0x00, 0x2a]));
+  const tiff = ii >= 0 && (mm < 0 || ii < mm) ? ii : mm;
+  return readGpsFromTiff(buf, tiff);
+}
+
+function readJpegGps(buf) {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let off = 2;
+  while (off + 4 <= buf.length) {
+    if (buf[off] !== 0xff) break;
+    const marker = buf[off + 1];
+    const size = buf.readUInt16BE(off + 2);
+    if (marker === 0xe1 && buf.toString("ascii", off + 4, off + 10) === "Exif\0\0") {
+      return readGpsFromTiff(buf, off + 10);
+    }
+    if (marker === 0xda) break; // start of scan; no EXIF before the image data
+    off += 2 + size;
+  }
+  return null;
+}
+
 // Applies EXIF orientations 1-8 to an RGBA buffer.
 function applyOrientation(data, width, height, orientation) {
   if (orientation === 1) return { data, width, height };
@@ -1094,11 +1180,29 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   }
   let buffer = Buffer.from(image.data, "base64");
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
+  const originalBuffer = buffer;
+  const originalMediaType = image.mediaType;
   let mimeType = image.mediaType;
   ({ buffer, mediaType: mimeType } = await normalizeImage(buffer, mimeType));
   if (buffer.length > MAX_PHOTO_BYTES) return sendError(res, 413, "Afbeelding is te groot (max 8 MB)");
-  const lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
-  const lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
+  let lat = typeof latitude === "number" && latitude >= -90 && latitude <= 90 ? latitude : null;
+  let lon = typeof longitude === "number" && longitude >= -180 && longitude <= 180 ? longitude : null;
+  // De browser's exif-js kan geen HEIC lezen (dat is geen JPEG/TIFF-structuur),
+  // dus bij iPhone-foto's die als HEIC binnenkomen mist de client altijd de
+  // GPS-tags — niet omdat de foto geen locatie heeft, maar omdat er client-side
+  // niets uit te lezen viel. Lees de GPS daarom hier alsnog uit de originele
+  // bytes (vóór de HEIC->JPEG-conversie, die geen Exif meeneemt), maar alleen
+  // als de client zelf niets meegaf — die blijft de snelle eerste keuze.
+  if (lat === null && lon === null) {
+    try {
+      const gps = looksLikeHeic(originalBuffer, originalMediaType)
+        ? readHeicGps(originalBuffer)
+        : readJpegGps(originalBuffer);
+      if (gps) { lat = gps.latitude; lon = gps.longitude; }
+    } catch (err) {
+      console.error("Server-side GPS-extractie mislukt:", err.message);
+    }
+  }
   // Content hash de-dupes identical photos within a trip: re-uploading the same
   // bytes reuses the existing row instead of storing a duplicate blob, keeping
   // its current assignment (day/activity/transport/accommodation) if it has one.
