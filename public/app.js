@@ -1,5 +1,11 @@
 const { useState, useEffect, useCallback, useRef } = React;
 
+// Alleen nodig voor pushmeldingen (zie PushToggle) — geen offline-cache, dus
+// hier verandert verder niets aan hoe de app laadt of ververst.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 // ---------- Error boundary ----------
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
@@ -391,6 +397,9 @@ const api = {
   toggleJournalLike: (tripId, d) => _guestMode ? guestApi.toggleJournalLike(tripId, d) : apiFetch(`/api/trips/${tripId}/journal-likes`, { method: "POST", body: JSON.stringify(d) }),
   sendTestMail: () => apiFetch("/api/admin/test-mail", { method: "POST", body: "{}" }),
   setNotifyEmail: (enabled) => apiFetch("/auth/notify-email", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  getPushPublicKey: () => apiFetch("/api/push/public-key"),
+  subscribePush: (subscription) => apiFetch("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription) }),
+  unsubscribePush: (endpoint) => apiFetch("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) }),
   pingTrip: (tripId) => _guestMode ? Promise.resolve() : apiFetch(`/api/trips/${tripId}/ping`, { method: "POST", body: "{}" }),
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
@@ -1914,6 +1923,84 @@ function loadAppleSdk() {
   });
 }
 
+// De VAPID-sleutel komt als base64url-tekst van de server, maar de Push API
+// wil 'm als Uint8Array — standaard kost-wat-kost-conversie, hoort bij elke
+// Web Push implementatie.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+// Pushmeldingen zijn per toestel/browser, niet per account — de knop laat dus
+// zien of DIT toestel een actief abonnement heeft, niet een serverbrede
+// voorkeur zoals de e-mail-toggle hierboven.
+function PushToggle() {
+  const [supported, setSupported] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [publicKey, setPublicKey] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      try {
+        const cfg = await api.getPushPublicKey();
+        if (!cfg.key) return; // server heeft geen VAPID-sleutels ingesteld
+        setPublicKey(cfg.key);
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setSubscribed(!!sub);
+        setSupported(true);
+      } catch {}
+    })();
+  }, []);
+
+  async function toggle(e) {
+    const next = e.target.checked;
+    setBusy(true); setError(null);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (next) {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") { setError("Toestemming geweigerd"); return; }
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+        await api.subscribePush(sub.toJSON());
+        setSubscribed(true);
+      } else {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) { await api.unsubscribePush(sub.endpoint); await sub.unsubscribe(); }
+        setSubscribed(false);
+      }
+    } catch (err) {
+      setError(err.message || "Instellen mislukt");
+    } finally { setBusy(false); }
+  }
+
+  if (!supported) return IS_IOS ? (
+    <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+      Pushmeldingen op iPhone kunnen alleen als de app op je beginscherm staat: deel-icoon → "Zet op beginscherm".
+    </p>
+  ) : null;
+
+  return (
+    <div className="mt-2">
+      <label className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-gray-50 cursor-pointer">
+        <input type="checkbox" checked={subscribed} disabled={busy} onChange={toggle} />
+        <span className="flex-1">Pushmeldingen op dit toestel</span>
+      </label>
+      {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+    </div>
+  );
+}
+
 function AccountModal({ user, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -2000,6 +2087,7 @@ function AccountModal({ user, onClose, onChanged }) {
               }} />
             <span className="flex-1">Mail me bij nieuwe verhalen, foto's en reacties</span>
           </label>
+          <PushToggle />
         </div>
 
         {user.is_admin && (
@@ -3664,6 +3752,11 @@ function JournalOverviewMap({ days, photos }) {
             iconSize: [30, 30],
             iconAnchor: [15, 15],
           }),
+          // Twee dagen op (bijna) dezelfde plek vallen bij een uitgezoomde reis
+          // al snel samen tot één stip. Leaflet tekent dan standaard de laatst
+          // toegevoegde — dus de laatste dag — bovenop; met deze offset wint
+          // altijd de vroegste dag, want dat is de dag waarop je er aankwam.
+          zIndexOffset: 100000 - pl.dayNumber * 100,
         }).addTo(map);
         marker.bindTooltip(`Dag ${pl.dayNumber}`, { direction: "top", offset: [0, -16] });
         marker.on("click", () => {

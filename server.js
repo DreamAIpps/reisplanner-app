@@ -14,6 +14,7 @@ catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnail
 const jpegJs = require("jpeg-js");
 const heicDecode = require("heic-decode");
 const { query, initDb } = require("./db");
+const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropicClient = new Anthropic();
 
@@ -260,8 +261,45 @@ async function sendMail({ to, subject, text }) {
   return true;
 }
 
+// ---------- Push notifications ----------
+// Same "dormant until configured" shape as e-mail: without VAPID keys set the
+// feature just does nothing, so the app runs unchanged until they are added.
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webPush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:info@example.com",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+function pushEnabled() {
+  return !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
+// Pushes go to every subscribed device of one user. A subscription that the
+// browser has revoked answers with 404/410 — that is the signal to forget it,
+// not an error to retry.
+async function sendPushToUser(userId, payload) {
+  if (!pushEnabled()) return;
+  const { rows } = await query("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1", [userId]);
+  const body = JSON.stringify(payload);
+  await Promise.all(rows.map(async (sub) => {
+    try {
+      await webPush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, body);
+    } catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        await query("DELETE FROM push_subscriptions WHERE endpoint = $1", [sub.endpoint]).catch(() => {});
+      } else {
+        console.error("Push versturen mislukt:", err.message);
+      }
+    }
+  }));
+}
+
 // Notifications run both ways: viewers hear when the trip is updated, managers
 // hear when someone reacts. Whoever caused the event is never told about it.
+// Push goes out to every recipient with an active subscription regardless of
+// their e-mail preference — subscribing is itself the opt-in for push, the
+// same way notify_email is the opt-in for mail.
 async function notifyTripMembers(tripId, actorId, audience, kind, summary, actorName) {
   try {
     const sql = audience === "viewers"
@@ -269,17 +307,27 @@ async function notifyTripMembers(tripId, actorId, audience, kind, summary, actor
       : `SELECT user_id AS id FROM trips WHERE id = $1
          UNION
          SELECT user_id FROM trip_members WHERE trip_id = $1 AND role <> 'viewer'`;
-    const { rows } = await query(
-      `SELECT DISTINCT m.id FROM (${sql}) m
-         JOIN users u ON u.id = m.id
-        WHERE m.id IS NOT NULL AND m.id <> $2 AND u.notify_email`,
+    const { rows: recipients } = await query(
+      `SELECT DISTINCT m.id FROM (${sql}) m WHERE m.id IS NOT NULL AND m.id <> $2`,
       [tripId, actorId]
     );
-    for (const { id } of rows) {
+    if (!recipients.length) return;
+
+    const { rows: mailRecipients } = await query(
+      "SELECT id FROM users WHERE id = ANY($1) AND notify_email",
+      [recipients.map((r) => r.id)]
+    );
+    for (const { id } of mailRecipients) {
       await query(
         "INSERT INTO notifications (user_id, trip_id, kind, actor_name, summary) VALUES ($1,$2,$3,$4,$5)",
         [id, tripId, kind, actorName || null, summary]
       );
+    }
+
+    if (pushEnabled()) {
+      const { rows: tripRows } = await query("SELECT name FROM trips WHERE id = $1", [tripId]);
+      const title = tripRows[0]?.name || "Reisplanner";
+      await Promise.all(recipients.map(({ id }) => sendPushToUser(id, { title, body: summary, tripId })));
     }
   } catch (err) {
     // A notification must never take down the action that triggered it.
@@ -1803,6 +1851,29 @@ route("PUT", "/auth/notify-email", async (req, res, params, body) => {
   const enabled = body?.enabled !== false;
   await query("UPDATE users SET notify_email = $1 WHERE id = $2", [enabled, user.id]);
   sendJson(res, 200, { notify_email: enabled });
+});
+
+// Public key alone, never the private one — the browser needs it to build a
+// subscription. Null when no VAPID keys are configured, so the client can hide
+// the toggle instead of offering a switch that silently does nothing.
+route("GET", "/api/push/public-key", async (req, res) => {
+  sendJson(res, 200, { key: pushEnabled() ? process.env.VAPID_PUBLIC_KEY : null });
+});
+
+route("POST", "/api/push/subscribe", async (req, res, params, body) => {
+  const { endpoint, keys } = body || {};
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return sendError(res, 400, "Ongeldige subscriptie");
+  await query(
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`,
+    [req.user.id, endpoint, keys.p256dh, keys.auth]
+  );
+  sendJson(res, 201, { subscribed: true });
+});
+
+route("POST", "/api/push/unsubscribe", async (req, res, params, body) => {
+  if (body?.endpoint) await query("DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2", [body.endpoint, req.user.id]);
+  sendJson(res, 200, { subscribed: false });
 });
 
 route("POST", "/auth/apple/link", async (req, res, params, body) => {

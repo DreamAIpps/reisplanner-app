@@ -12,10 +12,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.54.0",
     "dotenv": "^17.4.2",
+    "heic-decode": "^2.1.0",
+    "jpeg-js": "^0.4.4",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.21.0",
-    "jpeg-js": "^0.4.4",
-    "heic-decode": "^2.1.0"
+    "web-push": "^3.6.7"
   },
   "optionalDependencies": {
     "sharp": "^0.35.3"

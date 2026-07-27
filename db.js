@@ -341,6 +341,20 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS notifications_pending_idx ON notifications(user_id, trip_id) WHERE sent_at IS NULL;
 
+    -- Eén rij per toestel/browser dat pushmeldingen heeft geaccepteerd. Een
+    -- gebruiker kan er meerdere hebben (telefoon én laptop); endpoint is uniek
+    -- per subscriptie, dus opnieuw registreren vanaf hetzelfde toestel is een
+    -- upsert in plaats van een dubbele rij.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions(user_id);
+
     CREATE TABLE IF NOT EXISTS journal_reads (
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
