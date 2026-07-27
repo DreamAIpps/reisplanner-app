@@ -4947,7 +4947,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sticky compact header */}
-      <header className="sticky top-0 z-40 bg-sky-800 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <header className="sticky top-0 z-40 bg-sky-700 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
           <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2.5 leading-none min-w-0">
             <Icon name="plane" size={18} /><span className="truncate font-display text-[21px]">Reisplanner</span>
@@ -4957,23 +4957,23 @@ function App() {
               <>
                 {user.is_admin && view.name !== "admin" && (
                   <button onClick={() => setView({ name: "admin" })} title="Beheer"
-                    className="text-sky-200 hover:text-gray-900 px-2 py-1.5 rounded-lg hover:bg-sky-700 transition-colors">
+                    className="text-white hover:text-gray-900 px-2 py-1.5 rounded-lg hover:bg-black/15 transition-colors">
                     <Icon name="eye" size={16} />
                   </button>
                 )}
-                <button onClick={handleLogout} className="text-sky-200 hover:text-gray-900 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">
+                <button onClick={handleLogout} className="text-white hover:text-gray-900 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-white/40 hover:bg-black/15 transition-colors">
                   Uitloggen
                 </button>
                 <button onClick={() => setShowAccount(true)} title="Account" className="shrink-0">
                   {user.avatar
-                    ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-sky-400" />
+                    ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-white/70" />
                     : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
                   }
                 </button>
               </>
             ) : (
               <>
-                <a href="/login" className="text-sky-200 hover:text-gray-900 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-sky-600 hover:bg-sky-700 transition-colors">Inloggen</a>
+                <a href="/login" className="text-white hover:text-gray-900 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-white/40 hover:bg-black/15 transition-colors">Inloggen</a>
 
               </>
             )}
