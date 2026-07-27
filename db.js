@@ -36,7 +36,7 @@ async function initDb() {
       currency TEXT DEFAULT 'EUR',
       status TEXT DEFAULT 'planning',
       notes TEXT,
-      cover_color TEXT DEFAULT '#7c3aed',
+      cover_color TEXT DEFAULT '#FF7A00',
       cover_image TEXT,
       user_id INTEGER,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -339,6 +339,25 @@ async function initDb() {
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (trip_id, user_id)
     );
+  `);
+
+  // Trips created before the "fris oranje" redesign still carry a cover_color
+  // from the old blue/violet/teal palette — changing the app's color CONSTANTS
+  // never touched rows already written to the database. Remap each retired
+  // value to its equivalent slot in the new palette; harmless to repeat every
+  // boot, since after the first run no row matches the WHERE clause anymore.
+  await query(`
+    UPDATE trips SET cover_color = CASE cover_color
+      WHEN '#0369a1' THEN '#FF7A00'
+      WHEN '#7c3aed' THEN '#8A4B12'
+      WHEN '#b45309' THEN '#6B3A2A'
+      WHEN '#065f46' THEN '#4A5D3A'
+      WHEN '#9f1239' THEN '#4A2F42'
+      WHEN '#1e40af' THEN '#3D2E22'
+      WHEN '#92400e' THEN '#6B3145'
+      WHEN '#134e4a' THEN '#5A4632'
+    END
+    WHERE cover_color IN ('#0369a1','#7c3aed','#b45309','#065f46','#9f1239','#1e40af','#92400e','#134e4a');
   `);
 
   // Merge any photos already duplicated (same trip, identical bytes) before

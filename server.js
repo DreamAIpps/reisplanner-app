@@ -700,7 +700,7 @@ route("POST", "/api/trips", async (req, res, params, body) => {
   const { rows } = await query(
     `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, req.user.id]
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, req.user.id]
   );
   // Auto-create day entries if dates are set. Generated in SQL rather than by
   // stepping a JS Date: "YYYY-MM-DD" parses as UTC midnight while setDate()
@@ -724,7 +724,7 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   const { rows } = await query(
     `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
      WHERE id=$11 AND user_id=$12 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#7c3aed", cover_image||null, params.id, req.user.id]
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
@@ -1763,18 +1763,6 @@ route("POST", "/auth/apple/callback", async (req, res) => {
     res.writeHead(302, { Location: "/login?error=apple-db" });
     res.end();
   }
-});
-
-// ---------- App icon (SVG, used as PWA icon) ----------
-route("GET", "/icon-192.png", async (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#0369a1"/><text x="96" y="130" font-size="100" text-anchor="middle">✈️</text></svg>`;
-  res.writeHead(200, { "Content-Type": "image/svg+xml" });
-  res.end(svg);
-});
-route("GET", "/icon-512.png", async (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="#0369a1"/><text x="256" y="340" font-size="260" text-anchor="middle">✈️</text></svg>`;
-  res.writeHead(200, { "Content-Type": "image/svg+xml" });
-  res.end(svg);
 });
 
 // ---------- AI destination tips ----------
