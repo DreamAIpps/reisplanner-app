@@ -2328,6 +2328,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           )}
         </div>
       </div>
+      <JournalOverviewMap days={days} photos={tripPhotos} />
       <div className="space-y-4">
         {(() => {
           // Claim each transport/accommodation on the first day it matches
@@ -2424,7 +2425,14 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               </div>
 
               <div className="p-4 space-y-4">
-                {showDayMap && <DayMiniMap places={dayPlaces} />}
+                {showDayMap && (
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 mb-1.5">
+                      De locaties van {isToday ? "vandaag" : "gisteren"}:
+                    </div>
+                    <DayMiniMap places={dayPlaces} />
+                  </div>
+                )}
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Hoe was deze dag?"
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
@@ -3106,6 +3114,22 @@ function routeDistanceMeters(route) {
   return total;
 }
 
+// Een boogje in plaats van een rechte lijn tussen twee punten — dezelfde
+// vluchtroute-boog als op de planningskaart, hier hergebruikt voor elke etappe
+// tussen twee bezochte plekken. De boog schaalt met de afstand: vlak bij elkaar
+// is hij bijna recht, ver uit elkaar duidelijk gebogen, zoals een vluchtpad.
+function arcLatLngs(from, to, bulge = 0.08, steps = 40) {
+  const latlngs = [];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const lat = from.lat + (to.lat - from.lat) * t;
+    const lon = from.lon + (to.lon - from.lon) * t;
+    const arc = Math.sin(Math.PI * t) * (Math.abs(to.lat - from.lat) + Math.abs(to.lon - from.lon)) * bulge;
+    latlngs.push([lat + arc, lon]);
+  }
+  return latlngs;
+}
+
 function fmtDistance(m) {
   if (m < 1000) return `${Math.round(m)} m`;
   if (m < 100000) return `${(m / 1000).toFixed(1).replace(".", ",")} km`;
@@ -3258,18 +3282,7 @@ function MapTab({ trip, accommodations, transports, days }) {
         if (!fromGeo || !toGeo) return;
         const isAir = (pair.type || "").toLowerCase().includes("vlieg") || (pair.type || "").toLowerCase().includes("fly") || (pair.type || "").toLowerCase().includes("air") || !pair.type;
         if (isAir) {
-          // Great-circle arc approximation
-          const steps = 40;
-          const latlngs = [];
-          for (let s = 0; s <= steps; s++) {
-            const t2 = s / steps;
-            const lat = fromGeo.lat + (toGeo.lat - fromGeo.lat) * t2;
-            const lon = fromGeo.lon + (toGeo.lon - fromGeo.lon) * t2;
-            // Bulge perpendicular to route (northward arc)
-            const bulge = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lat - fromGeo.lat) + Math.abs(toGeo.lon - fromGeo.lon)) * 0.08;
-            latlngs.push([lat + bulge, lon]);
-          }
-          L.polyline(latlngs, { color: "#6B3145", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
+          L.polyline(arcLatLngs(fromGeo, toGeo), { color: "#6B3145", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
         } else {
           L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#2E6B4E", weight: 2, opacity: 0.6 }).addTo(map);
         }
@@ -3569,6 +3582,90 @@ function DayMiniMap({ places }) {
 
   return (
     <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
+      <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      {viewing && (
+        <PhotoLightbox photos={viewing.photos} index={viewing.index}
+          onClose={() => setViewing(null)}
+          onIndexChange={(i) => setViewing((v) => ({ ...v, index: i }))} />
+      )}
+    </div>
+  );
+}
+
+// De kaart waar het dagboek nu mee opent: elke stip is een bezochte plek,
+// genummerd op de dag van de reis waarop hij hoort, en verbonden met speelse
+// boogjes — dezelfde vluchtroute-boog als op de planningskaart — in plaats
+// van rechte lijnen. Geeft in één oogopslag het verloop van de reis, nog
+// voordat je een dag hebt opengeklapt.
+function JournalOverviewMap({ days, photos }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const [viewing, setViewing] = useState(null);
+
+  const dayNumberByDate = React.useMemo(() => {
+    const m = new Map();
+    days.forEach((d, i) => { if (d.date) m.set(String(d.date).slice(0, 10), i + 1); });
+    return m;
+  }, [days]);
+
+  const places = React.useMemo(() => {
+    const pls = clusterPhotoPlaces(photos || []);
+    pls.forEach((pl) => { pl.dayNumber = pl.first ? dayNumberByDate.get(String(pl.first).slice(0, 10)) : null; });
+    return pls;
+  }, [photos, dayNumberByDate]);
+  const route = React.useMemo(() => visitRoute(places), [places]);
+
+  useEffect(() => {
+    if (!mapRef.current || places.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const cfg = await mapConfig();
+      if (cancelled || !mapRef.current) return;
+      const L = window.L;
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const map = L.map(mapRef.current, { scrollWheelZoom: false });
+      mapInstanceRef.current = map;
+      addBaseLayer(L, map, cfg);
+
+      for (let i = 1; i < route.length; i++) {
+        if (route[i] === route[i - 1]) continue;
+        L.polyline(arcLatLngs(route[i - 1], route[i]), { color: "#FF7A00", weight: 2.5, opacity: 0.75 }).addTo(map);
+      }
+
+      places.forEach((pl) => {
+        const marker = L.marker([pl.lat, pl.lon], {
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:30px;height:30px;border-radius:50%;background:#FF7A00;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(36,29,25,.35);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">${pl.dayNumber || "?"}</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+          }),
+        }).addTo(map);
+        if (pl.dayNumber) marker.bindTooltip(`Dag ${pl.dayNumber}`, { direction: "top", offset: [0, -16] });
+        marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+      });
+
+      const bounds = places.map((p) => [p.lat, p.lon]);
+      if (bounds.length === 1) map.setView(bounds[0], 13);
+      else map.fitBounds(bounds, { padding: [36, 36] });
+    })();
+
+    return () => { cancelled = true; };
+  }, [places, route]);
+
+  useEffect(() => () => {
+    if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+  }, []);
+
+  if (places.length === 0) return (
+    <div className="rounded-2xl border border-gray-100 bg-gray-50 text-center py-8 px-4 mb-6 text-sm text-gray-400">
+      Zodra je foto's met locatie uploadt, verschijnt hier de kaart van je reis.
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0 mb-6" style={{ height: 280 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
