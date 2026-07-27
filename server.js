@@ -801,14 +801,14 @@ route("GET", "/api/trips/:id", async (req, res, params) => {
 });
 
 route("POST", "/api/trips", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
+  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, timezone } = body;
   if (!name) return sendError(res, 400, "Name is required");
   const dateErr = invalidDates({ start_date, end_date });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
-    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, req.user.id]
+    `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, timezone, user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, timezone||null, req.user.id]
   );
   // Auto-create day entries if dates are set. Generated in SQL rather than by
   // stepping a JS Date: "YYYY-MM-DD" parses as UTC midnight while setDate()
@@ -826,13 +826,13 @@ route("POST", "/api/trips", async (req, res, params, body) => {
 });
 
 route("PUT", "/api/trips/:id", async (req, res, params, body) => {
-  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image } = body;
+  const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, timezone } = body;
   const dateErr = invalidDates({ start_date, end_date });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
-    `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10
-     WHERE id=$11 AND user_id=$12 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, params.id, req.user.id]
+    `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10, timezone=$11
+     WHERE id=$12 AND user_id=$13 RETURNING *`,
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, timezone||null, params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
@@ -1714,9 +1714,14 @@ route("POST", "/api/trips/:id/journal-likes", async (req, res, params, body) => 
   sendJson(res, 201, { liked: true });
 }, { tripScope: "param", allowViewer: true });
 
+// De eigenaar van de reis mag ook reacties van anderen verwijderen — anders
+// kan een misplaatste of verkeerd-op-de-dag-terechtgekomen reactie nooit meer
+// opgeruimd worden zonder degene die 'm plaatste erbij te halen.
 route("DELETE", "/api/journal-comments/:id", async (req, res, params) => {
-  const { rowCount } = await query("DELETE FROM journal_comments WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
-  if (!rowCount) return sendError(res, 403, "Je kunt alleen je eigen reactie verwijderen");
+  const result = req.tripRole === "owner"
+    ? await query("DELETE FROM journal_comments WHERE id = $1", [params.id])
+    : await query("DELETE FROM journal_comments WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!result.rowCount) return sendError(res, 403, "Je kunt alleen je eigen reactie verwijderen");
   res.writeHead(204); res.end();
 }, { tripScope: "journal_comments", allowViewer: true });
 

@@ -474,15 +474,31 @@ function daysUntilDeparture(startDate) {
 // treat it as an updater and call it with no receiver.
 function asList(v) { return Array.isArray(v) ? v : []; }
 
-function yesterdayIso() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Zonder tijdzone bepaalt de klok van het eigen toestel wat "vandaag" is. Bij
+// een reis buiten de eigen tijdzone (bv. Tokio vanuit Nederland) kan dat
+// "vandaag" een dag laten verschillen van wat er op de bestemming zelf geldt
+// — met als gevolg dat een reactie op de verkeerde dagkaart belandt. Is er een
+// IANA-tijdzone bekend (het reisdoel), dan telt die in plaats van het toestel.
+function dateIsoInTimezone(date, timezone) {
+  if (!timezone) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  try {
+    // en-CA geeft direct YYYY-MM-DD terug, zonder zelf onderdelen te herschikken.
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  } catch {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
 }
 
-function todayIso() {
+function yesterdayIso(timezone) {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  d.setDate(d.getDate() - 1);
+  return dateIsoInTimezone(d, timezone);
+}
+
+function todayIso(timezone) {
+  return dateIsoInTimezone(new Date(), timezone);
 }
 function greeting(name) {
   const h = new Date().getHours();
@@ -578,10 +594,24 @@ function Tabs({ tabs, active, onChange, accentColor }) {
 }
 
 // ---------- Trip form ----------
-const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#FF7A00", cover_image: "" };
+const EMPTY_TRIP = { name: "", destination: "", start_date: "", end_date: "", budget: "", currency: "EUR", notes: "", cover_color: "#FF7A00", cover_image: "", timezone: "" };
+
+// Bepaalt of "vandaag" op de reisbestemming rekent of op de klok van wie er
+// toevallig op de app kijkt. Leeg (automatisch) is de standaard, want die
+// klopt bijna altijd — alleen bij een reis in een duidelijk andere tijdzone
+// dan de reizigers zelf loont het om 'm expliciet te zetten.
+const TIMEZONE_OPTIONS = (() => {
+  try { return Intl.supportedValuesOf("timeZone"); }
+  catch {
+    return ["Europe/Amsterdam", "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome",
+      "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+      "Asia/Tokyo", "Asia/Bangkok", "Asia/Dubai", "Asia/Singapore", "Asia/Hong_Kong",
+      "Australia/Sydney", "Australia/Perth", "Pacific/Auckland"];
+  }
+})();
 
 function TripForm({ initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "" } : { ...EMPTY_TRIP });
+  const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "", timezone: initial.timezone || "" } : { ...EMPTY_TRIP });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [photoLoading, setPhotoLoading] = useState(false);
@@ -623,6 +653,13 @@ function TripForm({ initial, onSaved, onClose }) {
           <Field label="Vertrekdatum"><Input type="date" value={form.start_date} onChange={set("start_date")} /></Field>
           <Field label="Terugkomstdatum"><Input type="date" value={form.end_date} onChange={set("end_date")} /></Field>
         </div>
+        <Field label="Tijdzone van de bestemming">
+          <Select value={form.timezone} onChange={set("timezone")}>
+            <option value="">— Automatisch (toestel van elke kijker) —</option>
+            {TIMEZONE_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>)}
+          </Select>
+          <p className="text-xs text-gray-400 mt-1">Alleen nodig als de reis in een andere tijdzone is dan de reizigers — voorkomt dat "vandaag" per toestel verschilt.</p>
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Budget">
             <Input type="number" min="0" step="0.01" value={form.budget} onChange={set("budget")} placeholder="0,00" />
@@ -734,7 +771,7 @@ function TripCard({ trip, onClick }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated }) {
+function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated }) {
   // Once created, the activity behaves like an existing one for the rest of this
   // dialog, which is what unlocks the dagboek section below.
   const [created, setCreated] = useState(null);
@@ -753,7 +790,7 @@ function ActivityForm({ dayId, tripId, initial, days, onSaved, onClose, onImport
     // The day whose "+ Activiteit" button was pressed is an explicit choice and
     // always wins. Today is only the default when no day was specified at all
     // (and only if today actually falls inside the trip).
-    const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso());
+    const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso(tripTimezone));
     return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", day_id: dayId ?? todayDay?.id ?? "" };
   });
   const [saving, setSaving] = useState(false);
@@ -1603,7 +1640,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   }
 
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
-  const todayDay = days.find((d) => isoDate(d.date) === todayIso());
+  const todayDay = days.find((d) => isoDate(d.date) === todayIso(trip.timezone));
 
   function scrollToToday() {
     if (!todayDay) return;
@@ -1662,7 +1699,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
               return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
             }) : null;
 
-            const isToday = dayStr === todayIso();
+            const isToday = dayStr === todayIso(trip.timezone);
 
             return (
               <div key={day.id} id={`day-${day.id}`} className="relative flex gap-3" style={{ scrollMarginTop: "5rem" }}>
@@ -1825,13 +1862,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
       </div>
 
       {showActivityForm && (
-        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id} days={days}
+        <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
           onClose={() => setShowActivityForm(null)}
           onImport={() => { setShowActivityForm(null); setImporting(true); }} />
       )}
       {editingActivity && (
-        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} initial={editingActivity} days={days}
+        <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} tripTimezone={trip.timezone} initial={editingActivity} days={days}
           journalEntries={tripJournal.filter((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
@@ -2020,7 +2057,7 @@ function LikeButton({ tripId, target, count, liked, onChanged, disabled }) {
 
 // Reactions under a story. Read-only members can post these — it is the one
 // write a viewer is allowed, so family following a trip can respond.
-function JournalComments({ slot, comments, like, tripId, currentUserId, onChanged }) {
+function JournalComments({ slot, comments, like, tripId, currentUserId, isOwner, onChanged }) {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2061,7 +2098,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
               )}
             </div>
           </div>
-          {c.user_id === currentUserId && (
+          {(c.user_id === currentUserId || isOwner) && (
             <button type="button" onClick={() => handleDelete(c.id)}
               className="shrink-0 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
               aria-label="Reactie verwijderen">
@@ -2097,7 +2134,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, onChange
 }
 
 
-function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
+function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -2167,7 +2204,7 @@ function JournalEntryBox({ entries, currentUserId, placeholder, onSave, onDelete
 
       {reactions && tripId != null && (
         <JournalComments slot={reactions.slot} comments={reactions.comments} like={reactions.like}
-          tripId={tripId} currentUserId={currentUserId} onChanged={onCommentsChange} />
+          tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
       )}
 
       {showPhotos && tripId != null && (photos?.length > 0 || !readOnly) && (
@@ -2217,7 +2254,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     await loadEntries();
   }
 
-  const todayDay = days.find((d) => isoDate(d.date) === todayIso());
+  const todayDay = days.find((d) => isoDate(d.date) === todayIso(trip.timezone));
 
   // Land on today when the dagboek opens — that is the entry you came to read
   // or write. Guarded so it happens once per trip: re-running it after every
@@ -2331,8 +2368,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
             if (!a.check_in || !a.check_out) return false;
             return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
           }) : null;
-          const isToday = dayStr === todayIso();
-          const isYesterday = dayStr === yesterdayIso();
+          const isToday = dayStr === todayIso(trip.timezone);
+          const isYesterday = dayStr === yesterdayIso(trip.timezone);
 
           // Kaartje alleen bij vandaag en gisteren — de dagen die je nog vers
           // bijhoudt — en alleen als er genoeg plekken zijn om iets te tonen.
@@ -2388,7 +2425,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
               <div className="p-4 space-y-4">
                 {showDayMap && <DayMiniMap places={dayPlaces} />}
-                <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} placeholder="Hoe was deze dag?"
+                <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Hoe was deze dag?"
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
@@ -2405,7 +2442,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />{t.from_location} → {t.to_location}
                           </div>
-                          <JournalEntryBox entries={tEntries} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
+                          <JournalEntryBox entries={tEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over deze reis..."
                             onSave={(text) => saveEntry({ transport_id: t.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
@@ -2422,7 +2459,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name="bed" size={13} className="text-gray-400" />{a.name}
                           </div>
-                          <JournalEntryBox entries={aEntries} currentUserId={currentUserId} placeholder="Vertel over dit verblijf..."
+                          <JournalEntryBox entries={aEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over dit verblijf..."
                             onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
@@ -2439,7 +2476,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                           <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />{act.title}
                           </div>
-                          <JournalEntryBox entries={actEntries} currentUserId={currentUserId} placeholder={`Vertel over ${act.title}...`}
+                          <JournalEntryBox entries={actEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
                             onDelete={deleteEntry} onCommentsChange={loadEntries}
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
@@ -2459,7 +2496,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
       </div>
 
       {addingActivity && (
-        <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} days={days} showPhotos
+        <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days} showPhotos
           stayOpenAfterCreate
           onCreated={onRefresh}
           photos={tripPhotos} onPhotosChange={loadPhotos}
@@ -4123,13 +4160,13 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
   const { dayGroups, otherTransports, otherAccommodations } = computeDayGroups(days, transports, accommodations);
 
-  const todayGroup = dayGroups.find((g) => isoDate(g.day.date) === todayIso());
+  const todayGroup = dayGroups.find((g) => isoDate(g.day.date) === todayIso(trip.timezone));
   const todayPhoto = todayGroup && photos.find((p) => {
     if (p.day_id === todayGroup.day.id) return true;
     if (p.activity_id && (todayGroup.day.activities || []).some((a) => a.id === p.activity_id)) return true;
     if (p.transport_id && todayGroup.transports.some((t) => t.id === p.transport_id)) return true;
     if (p.accommodation_id && todayGroup.accommodations.some((a) => a.id === p.accommodation_id)) return true;
-    if (isoDate(p.taken_at) === todayIso()) return true;
+    if (isoDate(p.taken_at) === todayIso(trip.timezone)) return true;
     return false;
   });
   function scrollToToday() {

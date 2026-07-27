@@ -43,6 +43,10 @@ async function initDb() {
     );
     ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image TEXT;
     ALTER TABLE trips ADD COLUMN IF NOT EXISTS user_id INTEGER;
+    -- IANA-naam (bv. "Asia/Tokyo"). Leeg laat "vandaag" op de klok van elk
+    -- toestel afgaan; ingevuld maakt het reisdoel bepalend, zodat een medereiziger
+    -- met een andere tijdzone een reactie niet meer op de verkeerde dagkaart plaatst.
+    ALTER TABLE trips ADD COLUMN IF NOT EXISTS timezone TEXT;
 
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
