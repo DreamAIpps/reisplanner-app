@@ -336,7 +336,8 @@ const guestApi = {
     const c = { id: _gid(), trip_id: tripId, body: data.body, created_at: new Date().toISOString(),
       author: null, is_new: false, like_count: 0, liked_by_me: false,
       day_id: data.day_id || null, activity_id: data.activity_id || null,
-      transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null };
+      transport_id: data.transport_id || null, accommodation_id: data.accommodation_id || null,
+      photo_id: data.photo_id || null };
     d.journal_comments = [...(d.journal_comments || []), c]; _gw(d); return Promise.resolve(c);
   },
   deleteJournalComment(id) {
@@ -1325,7 +1326,7 @@ function PhotoCaption({ photo, readOnly, onChanged, maxWidth }) {
   );
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
@@ -1395,6 +1396,14 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
           {large && (
             <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth="70vw" />
+          )}
+          {large && comments && (
+            <div className="mt-1.5" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
+              <JournalComments slot={{ photo_id: p.id }}
+                comments={comments.filter((c) => c.photo_id === p.id)}
+                like={(slotLikes && slotLikes[`photo_id:${p.id}`]) || { like_count: 0, liked_by_me: false }}
+                tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
+            </div>
           )}
           {!readOnly && (
             <button type="button" onClick={() => handleDelete(p.id)}
@@ -2134,7 +2143,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, isOwner,
 }
 
 
-function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true }) {
+function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true, comments, slotLikes }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -2210,7 +2219,8 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
       {showPhotos && tripId != null && (photos?.length > 0 || !readOnly) && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
           <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
-            days={days} transports={transports} accommodations={accommodations} large />
+            days={days} transports={transports} accommodations={accommodations} large
+            comments={comments} slotLikes={slotLikes} currentUserId={currentUserId} isOwner={isOwner} onCommentsChange={onCommentsChange} />
         </div>
       )}
     </div>
@@ -2407,7 +2417,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {isToday && (
                       <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-sky-400 shrink-0">Vandaag</span>
                     )}
-                    <div className="font-display text-gray-800 text-[17px] truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                    {day.title && <div className="font-display text-gray-800 text-[17px] truncate">{day.title}</div>}
                   </div>
                   {nightAccommodation && (
                     <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0 mt-0.5">
@@ -2439,6 +2449,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                   reactions={reactionsFor({ day_id: day.id })}
+                  comments={comments} slotLikes={slotLikes}
                   days={days} transports={transports} accommodations={accommodations} />
 
                 {hasSubItems && (
@@ -2456,6 +2467,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.transport_id === t.id)}
                             tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ transport_id: t.id })}
+                            comments={comments} slotLikes={slotLikes}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -2473,6 +2485,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
                             tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ accommodation_id: a.id })}
+                            comments={comments} slotLikes={slotLikes}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -2490,6 +2503,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             photos={tripPhotos.filter((p) => p.activity_id === act.id)}
                             tripId={trip.id} dayId={day.id} activityId={act.id} onPhotosChange={loadPhotos} readOnly={readOnly}
                             reactions={reactionsFor({ activity_id: act.id })}
+                            comments={comments} slotLikes={slotLikes}
                             days={days} transports={transports} accommodations={accommodations} />
                         </div>
                       );
@@ -4768,15 +4782,17 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           <div className="hidden sm:block">
             <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
           </div>
-          <div className="sm:hidden mb-4">
-            <button onClick={() => setTab("days")}
-              className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
-              style={tab === "days"
-                ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-                : { background: "#F4F2EF", color: "#463D38" }}>
-              <Icon name="route" size={15} className="mr-1.5" />Dagplanning
-            </button>
-          </div>
+          {tab !== "journal" && (
+            <div className="sm:hidden mb-4">
+              <button onClick={() => setTab("days")}
+                className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
+                style={tab === "days"
+                  ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
+                  : { background: "#F4F2EF", color: "#463D38" }}>
+                <Icon name="route" size={15} className="mr-1.5" />Dagplanning
+              </button>
+            </div>
+          )}
         </>
       )}
 

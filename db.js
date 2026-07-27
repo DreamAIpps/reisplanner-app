@@ -272,6 +272,9 @@ async function initDb() {
     ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE;
     ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
     ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
+    -- Reacties onder één specifieke foto, los van de dag/activiteit/etc. waar
+    -- die foto toevallig aan hangt — zodat je op de foto zelf kunt reageren.
+    ALTER TABLE journal_comments ADD COLUMN IF NOT EXISTS photo_id INTEGER REFERENCES photos(id) ON DELETE CASCADE;
     UPDATE journal_comments c SET day_id = e.day_id, activity_id = e.activity_id,
            transport_id = e.transport_id, accommodation_id = e.accommodation_id
       FROM journal_entries e
@@ -300,6 +303,7 @@ async function initDb() {
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE;
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS transport_id INTEGER REFERENCES transports(id) ON DELETE CASCADE;
     ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS accommodation_id INTEGER REFERENCES accommodations(id) ON DELETE CASCADE;
+    ALTER TABLE journal_likes ADD COLUMN IF NOT EXISTS photo_id INTEGER REFERENCES photos(id) ON DELETE CASCADE;
     -- Guarded: after the column is dropped this block must not reference it
     -- again, or every later boot fails and the server never starts.
     DO $$
@@ -319,6 +323,7 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_activity_user ON journal_likes(activity_id, user_id) WHERE activity_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_transport_user ON journal_likes(transport_id, user_id) WHERE transport_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_accommodation_user ON journal_likes(accommodation_id, user_id) WHERE accommodation_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS journal_likes_photo_user ON journal_likes(photo_id, user_id) WHERE photo_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS journal_likes_trip_idx ON journal_likes(trip_id);
 
     -- Outbox for e-mail notifications. Rows are written when something happens

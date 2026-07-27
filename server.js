@@ -443,7 +443,7 @@ async function resolveTripId(tripScope, params) {
 
 // Guards against a request pinning a photo or journal entry to a day/activity/
 // transport/stay that belongs to a different trip than the one just authorized.
-const TARGET_TABLES = { day_id: "days", activity_id: "activities", transport_id: "transports", accommodation_id: "accommodations" };
+const TARGET_TABLES = { day_id: "days", activity_id: "activities", transport_id: "transports", accommodation_id: "accommodations", photo_id: "photos" };
 
 async function targetsBelongToTrip(tripId, targets) {
   for (const [field, table] of Object.entries(TARGET_TABLES)) {
@@ -1591,10 +1591,11 @@ async function advanceJournalRead(tripId, userId) {
   return marker;
 }
 
-// A dagboek block is a day, activity, transport or stay. Reactions hang off the
-// block rather than off a particular person's entry, so a day nobody has written
-// about — or one with only photos — can still be commented on and liked.
-const SLOT_COLS = ["day_id", "activity_id", "transport_id", "accommodation_id"];
+// A dagboek block is a day, activity, transport, stay, or one specific photo.
+// Reactions hang off the block rather than off a particular person's entry, so
+// a day nobody has written about — or one with only photos — can still be
+// commented on and liked, and now a single photo can be too.
+const SLOT_COLS = ["day_id", "activity_id", "transport_id", "accommodation_id", "photo_id"];
 const slotKey = (row) => {
   const col = SLOT_COLS.find((c) => row[c]);
   return col ? `${col}:${row[col]}` : null;
@@ -1625,7 +1626,7 @@ route("GET", "/api/trips/:id/journal", async (req, res, params) => {
        ORDER BY c.created_at ASC`,
       [params.id]
     ),
-    query("SELECT day_id, activity_id, transport_id, accommodation_id, comment_id, user_id FROM journal_likes WHERE trip_id = $1", [params.id]),
+    query("SELECT day_id, activity_id, transport_id, accommodation_id, photo_id, comment_id, user_id FROM journal_likes WHERE trip_id = $1", [params.id]),
   ]);
 
   const isNew = (ts, authorId) =>
