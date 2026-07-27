@@ -3606,31 +3606,41 @@ function DayMiniMap({ places }) {
   );
 }
 
-// De kaart waar het dagboek nu mee opent: elke stip is een bezochte plek,
-// genummerd op de dag van de reis waarop hij hoort, en verbonden met speelse
-// boogjes — dezelfde vluchtroute-boog als op de planningskaart — in plaats
-// van rechte lijnen. Geeft in één oogopslag het verloop van de reis, nog
-// voordat je een dag hebt opengeklapt.
+// De kaart waar het dagboek nu mee opent: één stip per dag — de eerst
+// bezochte plek van die dag — genummerd op het dagnummer en verbonden met
+// speelse boogjes, dezelfde vluchtroute-boog als op de planningskaart, in
+// plaats van rechte lijnen. Een tik op een dagnummer springt direct naar dat
+// dagkaartje verderop in het dagboek, zodat de kaart een navigatiemiddel is,
+// niet alleen een plaatje.
 function JournalOverviewMap({ days, photos }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const [viewing, setViewing] = useState(null);
 
-  const dayNumberByDate = React.useMemo(() => {
+  const dayInfoByDate = React.useMemo(() => {
     const m = new Map();
-    days.forEach((d, i) => { if (d.date) m.set(String(d.date).slice(0, 10), i + 1); });
+    days.forEach((d, i) => { if (d.date) m.set(String(d.date).slice(0, 10), { number: i + 1, id: d.id }); });
     return m;
   }, [days]);
 
-  const places = React.useMemo(() => {
-    const pls = clusterPhotoPlaces(photos || []);
-    pls.forEach((pl) => { pl.dayNumber = pl.first ? dayNumberByDate.get(String(pl.first).slice(0, 10)) : null; });
-    return pls;
-  }, [photos, dayNumberByDate]);
-  const route = React.useMemo(() => visitRoute(places), [places]);
+  // clusterPhotoPlaces levert de plekken al in de volgorde waarin ze voor het
+  // eerst voorkwamen (chronologisch) — de eerste plek per dagnummer die we
+  // tegenkomen is dus meteen de eerst bezochte plek van die dag.
+  const dayMarkers = React.useMemo(() => {
+    const places = clusterPhotoPlaces(photos || []);
+    const seen = new Set();
+    const markers = [];
+    places.forEach((pl) => {
+      const dayIso = pl.first ? String(pl.first).slice(0, 10) : null;
+      const info = dayIso ? dayInfoByDate.get(dayIso) : null;
+      if (!info || seen.has(info.number)) return;
+      seen.add(info.number);
+      markers.push({ ...pl, dayNumber: info.number, dayId: info.id });
+    });
+    return markers;
+  }, [photos, dayInfoByDate]);
 
   useEffect(() => {
-    if (!mapRef.current || places.length === 0) return;
+    if (!mapRef.current || dayMarkers.length === 0) return;
     let cancelled = false;
 
     (async () => {
@@ -3642,37 +3652,38 @@ function JournalOverviewMap({ days, photos }) {
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
 
-      for (let i = 1; i < route.length; i++) {
-        if (route[i] === route[i - 1]) continue;
-        L.polyline(arcLatLngs(route[i - 1], route[i]), { color: "#FF7A00", weight: 2.5, opacity: 0.75 }).addTo(map);
+      for (let i = 1; i < dayMarkers.length; i++) {
+        L.polyline(arcLatLngs(dayMarkers[i - 1], dayMarkers[i]), { color: "#FF7A00", weight: 2.5, opacity: 0.75 }).addTo(map);
       }
 
-      places.forEach((pl) => {
+      dayMarkers.forEach((pl) => {
         const marker = L.marker([pl.lat, pl.lon], {
           icon: L.divIcon({
             className: "leaflet-reisplanner-icon",
-            html: `<div style="width:30px;height:30px;border-radius:50%;background:#FF7A00;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(36,29,25,.35);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">${pl.dayNumber || "?"}</div>`,
+            html: `<div style="width:30px;height:30px;border-radius:50%;background:#FF7A00;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(36,29,25,.35);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer">${pl.dayNumber}</div>`,
             iconSize: [30, 30],
             iconAnchor: [15, 15],
           }),
         }).addTo(map);
-        if (pl.dayNumber) marker.bindTooltip(`Dag ${pl.dayNumber}`, { direction: "top", offset: [0, -16] });
-        marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+        marker.bindTooltip(`Dag ${pl.dayNumber}`, { direction: "top", offset: [0, -16] });
+        marker.on("click", () => {
+          document.getElementById(`journal-day-${pl.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
       });
 
-      const bounds = places.map((p) => [p.lat, p.lon]);
+      const bounds = dayMarkers.map((p) => [p.lat, p.lon]);
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [36, 36] });
     })();
 
     return () => { cancelled = true; };
-  }, [places, route]);
+  }, [dayMarkers]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
   }, []);
 
-  if (places.length === 0) return (
+  if (dayMarkers.length === 0) return (
     <div className="rounded-2xl border border-gray-100 bg-gray-50 text-center py-8 px-4 mb-6 text-sm text-gray-400">
       Zodra je foto's met locatie uploadt, verschijnt hier de kaart van je reis.
     </div>
@@ -3681,11 +3692,6 @@ function JournalOverviewMap({ days, photos }) {
   return (
     <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0 mb-6" style={{ height: 280 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
-      {viewing && (
-        <PhotoLightbox photos={viewing.photos} index={viewing.index}
-          onClose={() => setViewing(null)}
-          onIndexChange={(i) => setViewing((v) => ({ ...v, index: i }))} />
-      )}
     </div>
   );
 }
