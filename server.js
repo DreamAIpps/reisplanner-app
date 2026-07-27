@@ -674,6 +674,45 @@ route("POST", "/api/admin/backfill-photo-gps", async (req, res) => {
   sendJson(res, 200, { checked: rows.length, updated });
 });
 
+// Eenmalige nabewerking voor foto's die al vóór de 2000px-cap zijn geüpload —
+// die staan nog op hun volledige, vaak veel grotere formaat. Loopt door ALLE
+// foto's (niet alleen de "grote", want dat vergt zelf al een decode om te
+// weten) en herschrijft een rij alleen als het resultaat ook echt kleiner is.
+route("POST", "/api/admin/shrink-photos", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query("SELECT id, mime_type, data FROM photos");
+  let resized = 0, bytesBefore = 0, bytesAfter = 0;
+  for (const row of rows) {
+    try {
+      let buffer = row.data, mediaType = row.mime_type;
+      // Nog niet-omgezette HEIC eerst via dezelfde route als bij upload: die
+      // bakt de EXIF-rotatie correct in de pixels. resizeFullPhoto gebruikt
+      // sharp, dat voor HEIC alleen de container-rotatie kent, niet de
+      // EXIF-rotatie waar iPhones 'm juist in zetten — precies de sideways-
+      // foto-bug die voor nieuwe uploads al is opgelost, hier niet opnieuw
+      // introduceren voor oude.
+      if (looksLikeHeic(buffer, mediaType)) {
+        ({ buffer, mediaType } = await normalizeImage(buffer, mediaType));
+      }
+      const out = await resizeFullPhoto(buffer, mediaType);
+      if (out.buffer.length < row.data.length) {
+        const thumb = await makeThumbnail(out.buffer);
+        const contentHash = crypto.createHash("md5").update(out.buffer).digest("hex");
+        await query(
+          "UPDATE photos SET data=$1, mime_type=$2, thumb_data=COALESCE($3, thumb_data), thumb_rev=$4, content_hash=$5 WHERE id=$6",
+          [out.buffer, out.mediaType, thumb, thumb ? THUMB_REV : 0, contentHash, row.id]
+        );
+        bytesBefore += row.data.length;
+        bytesAfter += out.buffer.length;
+        resized++;
+      }
+    } catch (err) {
+      console.error(`Verkleinen mislukt voor foto ${row.id}:`, err.message);
+    }
+  }
+  sendJson(res, 200, { checked: rows.length, resized, bytesBefore, bytesAfter });
+});
+
 // Foto's staan als bytea in Postgres zelf, dus "geen ruimte meer" is een
 // database-schijf die vol loopt, niet een losstaande foto-opslag. Dit geeft
 // een beheerder zicht op wat daar de ruimte inneemt, zodat duidelijk is of
@@ -1236,6 +1275,14 @@ const FULL_MAX_EDGE = 2000;
 async function resizeFullPhoto(buffer, mediaType) {
   if (sharp) {
     try {
+      // Eerst alleen de afmetingen opvragen (goedkoop, geen volledige decode).
+      // Zonder deze check herschreef "Verkleinen" in Beheer élke foto bij elke
+      // klik opnieuw op kwaliteit 85 — ook een foto die al binnen de grens
+      // paste kreeg dan een zinloze extra generatie JPEG-verlies, keer op keer,
+      // zonder dat er ook maar iets aan formaat gewonnen werd.
+      const meta = await sharp(buffer).metadata();
+      const alreadyFits = Math.max(meta.width || 0, meta.height || 0) <= FULL_MAX_EDGE;
+      if (alreadyFits && /jpe?g/i.test(mediaType)) return { buffer, mediaType };
       const out = await sharp(buffer).rotate()
         .resize(FULL_MAX_EDGE, FULL_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 85 })
@@ -1251,6 +1298,8 @@ async function resizeFullPhoto(buffer, mediaType) {
   // in plaats van risico te lopen op een zelfgeschreven decoder.
   if (!/jpe?g/i.test(mediaType)) return { buffer, mediaType };
   try {
+    const decoded = jpegJs.decode(buffer, { useTArray: true });
+    if (Math.max(decoded.width, decoded.height) <= FULL_MAX_EDGE) return { buffer, mediaType };
     return { buffer: Buffer.from(resizeJpegPureJs(buffer, FULL_MAX_EDGE, 85)), mediaType: "image/jpeg" };
   } catch (err) {
     console.error("Foto verkleinen mislukt (pure JS):", err.message);

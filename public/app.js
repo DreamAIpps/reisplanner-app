@@ -399,6 +399,7 @@ const api = {
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   getStorageInfo: () => apiFetch("/api/admin/storage"),
+  shrinkPhotos: () => apiFetch("/api/admin/shrink-photos", { method: "POST", body: "{}" }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
@@ -4751,6 +4752,8 @@ function AdminView({ onBack }) {
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
   const [storage, setStorage] = useState(null);
+  const [shrinkBusy, setShrinkBusy] = useState(false);
+  const [shrinkResult, setShrinkResult] = useState(null);
 
   async function handleBackfillGps() {
     setBackfillBusy(true);
@@ -4762,6 +4765,26 @@ function AdminView({ onBack }) {
       setBackfillResult({ ok: false, text: err.message || "Nabewerking mislukt" });
     } finally {
       setBackfillBusy(false);
+    }
+  }
+
+  async function handleShrinkPhotos() {
+    setShrinkBusy(true);
+    setShrinkResult(null);
+    try {
+      const r = await api.shrinkPhotos();
+      const saved = r.bytesBefore - r.bytesAfter;
+      setShrinkResult({
+        ok: true,
+        text: r.resized > 0
+          ? `${r.resized} van ${r.checked} foto's verkleind, ${fmtBytes(saved)} bespaard (was ${fmtBytes(r.bytesBefore)}, nu ${fmtBytes(r.bytesAfter)}).`
+          : `Niets te verkleinen — alle ${r.checked} foto's waren al klein genoeg.`,
+      });
+      api.getStorageInfo().then(setStorage).catch(() => {});
+    } catch (err) {
+      setShrinkResult({ ok: false, text: err.message || "Verkleinen mislukt" });
+    } finally {
+      setShrinkBusy(false);
     }
   }
 
@@ -4856,6 +4879,24 @@ function AdminView({ onBack }) {
         </div>
         {backfillResult && (
           <div className={`text-xs mt-2 ${backfillResult.ok ? "text-green-600" : "text-red-500"}`}>{backfillResult.text}</div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-gray-700">Bestaande foto's verkleinen</div>
+            <div className="text-xs text-gray-400 mt-0.5 max-w-md">
+              Herschrijft elke foto die groter is dan de nieuwe 2000px-grens naar dat formaat — hetzelfde wat
+              nieuwe uploads nu al krijgen, met terugwerkende kracht. Kan even duren bij veel foto's.
+            </div>
+          </div>
+          <Button variant="secondary" onClick={handleShrinkPhotos} disabled={shrinkBusy} className="shrink-0">
+            {shrinkBusy ? "Bezig..." : "Verkleinen"}
+          </Button>
+        </div>
+        {shrinkResult && (
+          <div className={`text-xs mt-2 ${shrinkResult.ok ? "text-green-600" : "text-red-500"}`}>{shrinkResult.text}</div>
         )}
       </div>
 
