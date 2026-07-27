@@ -119,7 +119,7 @@ const TRANSPORT_TYPES = ["Vliegtuig", "Trein", "Bus", "Huurauto", "Taxi", "Boot"
 const EXPENSE_CATEGORIES = ["Vluchten", "Accommodatie", "Vervoer", "Eten & Drinken", "Activiteiten", "Winkelen", "Overig"];
 const ACTIVITY_CATEGORIES = ["Bezienswaardigheid", "Restaurant", "Museum", "Natuur", "Sport", "Shopping", "Anders"];
 // Acht diepe, licht ingehouden tinten die alle acht naast het warme grijs kunnen staan.
-const COVER_COLORS = ["#FF7A00","#8A4B12","#6B3A2A","#4A5D3A","#2F5157","#3B4A6B","#6B3145","#5A4632"];
+const COVER_COLORS = ["#FF7A00","#8A4B12","#6B3A2A","#4A5D3A","#4A2F42","#3D2E22","#6B3145","#5A4632"];
 
 // ---------- API ----------
 async function apiFetch(url, options = {}) {
@@ -3174,7 +3174,7 @@ function MapTab({ trip, accommodations, transports, days }) {
             const bulge = Math.sin(Math.PI * t2) * (Math.abs(toGeo.lat - fromGeo.lat) + Math.abs(toGeo.lon - fromGeo.lon)) * 0.08;
             latlngs.push([lat + bulge, lon]);
           }
-          L.polyline(latlngs, { color: "#33506B", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
+          L.polyline(latlngs, { color: "#6B3145", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(map);
         } else {
           L.polyline([[fromGeo.lat, fromGeo.lon], [toGeo.lat, toGeo.lon]], { color: "#2E6B4E", weight: 2, opacity: 0.6 }).addTo(map);
         }
@@ -3196,7 +3196,7 @@ function MapTab({ trip, accommodations, transports, days }) {
       const typeConfig = {
         hotel: { paths: '<path d="M3 18v-8"/><path d="M3 13h18v5"/><path d="M21 18v-4.5a2.5 2.5 0 0 0-2.5-2.5H10v2.5"/><circle cx="6.9" cy="11" r="1.9"/>', color: "#FF7A00" },
         activity: { paths: '<path d="M6 21V4"/><path d="M6 5h10.5l-1.8 3.6 1.8 3.6H6"/>', color: "#2E6B4E" },
-        transport: { paths: '<path d="M3 13.5 21 7l-4.5 12-3.2-5.1z"/><path d="M13.3 13.9 21 7"/>', color: "#33506B" },
+        transport: { paths: '<path d="M3 13.5 21 7l-4.5 12-3.2-5.1z"/><path d="M13.3 13.9 21 7"/>', color: "#6B3145" },
       };
 
       // Deduplicate markers by query
@@ -3244,7 +3244,7 @@ function MapTab({ trip, accommodations, transports, days }) {
       <div className="flex gap-3 text-xs text-gray-500 mb-3 flex-wrap">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#FF7A00" }} />Verblijf</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#33506B" }} />Vervoer</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#6B3145" }} />Vervoer</span>
       </div>
       <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative" style={{ height: 480 }}>
         {status === "loading" && (
@@ -4543,13 +4543,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               <div style={{ width: `${tPct}%`, background: "#FF7A00" }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
               <div style={{ width: `${aPct}%`, background: "#C9702A" }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
               <div style={{ width: `${acPct}%`, background: "#2E6B4E" }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
-              <div style={{ width: `${ePct}%`, background: "#33506B" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
+              <div style={{ width: `${ePct}%`, background: "#6B3145" }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
             </div>
             <div className="flex gap-3 mt-2 flex-wrap">
               {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#FF7A00"}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
               {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#C9702A"}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
               {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#2E6B4E"}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
-              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#33506B"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
+              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#6B3145"}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
             </div>
           </button>
         );
