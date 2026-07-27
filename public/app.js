@@ -2325,8 +2325,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const isToday = dayStr === todayIso();
 
           return (
-            <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white" style={{ scrollMarginTop: "5rem" }}>
-              <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+            <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
+              {/* Blijft bovenin staan zolang er nog entries van déze dag in
+                  beeld zijn, en schuift dan weg zodra de volgende dag begint —
+                  zo weet je bij veel verhalen per dag altijd welke dag je leest. */}
+              <div className="sticky z-10 flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white rounded-t-2xl"
+                style={{ top: "calc(3.5rem + env(safe-area-inset-top))" }}>
                 {/* Zelfde dagmarkering als op de planning, zodat de twee schermen
                     familie van elkaar blijven zonder identiek te zijn. */}
                 <div className="shrink-0 text-right" style={{ width: "2.6rem" }}>
