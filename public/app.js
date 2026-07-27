@@ -471,6 +471,12 @@ function daysUntilDeparture(startDate) {
 // treat it as an updater and call it with no receiver.
 function asList(v) { return Array.isArray(v) ? v : []; }
 
+function yesterdayIso() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -2323,6 +2329,22 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
             return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
           }) : null;
           const isToday = dayStr === todayIso();
+          const isYesterday = dayStr === yesterdayIso();
+
+          // Kaartje alleen bij vandaag en gisteren — de dagen die je nog vers
+          // bijhoudt — en alleen als er genoeg plekken zijn om iets te tonen.
+          // Telt alle foto's die ergens op déze dag horen: los op de dag zelf,
+          // of aan een activiteit/vervoer/verblijf van die dag.
+          let dayPlaces = [];
+          if (isToday || isYesterday) {
+            const dayPhotoSet = tripPhotos.filter((p) =>
+              (p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)
+              || dayTransports.some((t) => t.id === p.transport_id)
+              || dayAccommodations.some((a) => a.id === p.accommodation_id)
+              || day.activities.some((act) => act.id === p.activity_id));
+            dayPlaces = clusterPhotoPlaces(dayPhotoSet);
+          }
+          const showDayMap = dayPlaces.length > 3;
 
           return (
             <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
@@ -2362,6 +2384,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               </div>
 
               <div className="p-4 space-y-4">
+                {showDayMap && <DayMiniMap places={dayPlaces} />}
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} placeholder="Hoe was deze dag?"
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
@@ -3408,6 +3431,67 @@ function VisitedMap({ trip }) {
         {withoutGps > 0 && ` ${withoutGps} ${withoutGps === 1 ? "foto heeft" : "foto's hebben"} geen locatie en staan hier dus niet op.`}
       </div>
 
+      {viewing && (
+        <PhotoLightbox photos={viewing.photos} index={viewing.index}
+          onClose={() => setViewing(null)}
+          onIndexChange={(i) => setViewing((v) => ({ ...v, index: i }))} />
+      )}
+    </div>
+  );
+}
+
+// Een klein, ingezoomd kaartje in het dagboek zelf: alleen voor vandaag en
+// gisteren (de dagen die je nog vers bijhoudt), en alleen als er genoeg
+// plekken zijn om een kaartje ook echt iets te laten zien. Places komen al
+// geclusterd binnen (clusterPhotoPlaces) — hier alleen tonen en fitBounds.
+function DayMiniMap({ places }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const [viewing, setViewing] = useState(null);
+
+  useEffect(() => {
+    if (!mapRef.current || places.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const cfg = await mapConfig();
+      if (cancelled || !mapRef.current) return;
+      const L = window.L;
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const map = L.map(mapRef.current, {
+        scrollWheelZoom: false, dragging: false, zoomControl: false,
+        attributionControl: false, tap: false,
+      });
+      mapInstanceRef.current = map;
+      addBaseLayer(L, map, cfg);
+
+      places.forEach((pl) => {
+        const marker = L.marker([pl.lat, pl.lon], {
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:14px;height:14px;border-radius:50%;background:#FF7A00;border:2px solid #fff;box-shadow:0 1px 4px rgba(36,29,25,.4)"></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          }),
+        }).addTo(map);
+        marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+      });
+
+      const bounds = places.map((p) => [p.lat, p.lon]);
+      if (bounds.length === 1) map.setView(bounds[0], 15);
+      else map.fitBounds(bounds, { padding: [24, 24] });
+    })();
+
+    return () => { cancelled = true; };
+  }, [places]);
+
+  useEffect(() => () => {
+    if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+  }, []);
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-gray-100" style={{ height: 140 }}>
+      <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
           onClose={() => setViewing(null)}
