@@ -674,6 +674,37 @@ route("POST", "/api/admin/backfill-photo-gps", async (req, res) => {
   sendJson(res, 200, { checked: rows.length, updated });
 });
 
+// Foto's staan als bytea in Postgres zelf, dus "geen ruimte meer" is een
+// database-schijf die vol loopt, niet een losstaande foto-opslag. Dit geeft
+// een beheerder zicht op wat daar de ruimte inneemt, zodat duidelijk is of
+// opschonen genoeg is of dat de Postgres-schijf op Railway groter moet.
+route("GET", "/api/admin/storage", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query(`
+    SELECT
+      COUNT(*)::int AS photo_count,
+      COALESCE(SUM(length(data)), 0)::bigint AS photos_bytes,
+      COALESCE(SUM(length(thumb_data)), 0)::bigint AS thumbs_bytes
+    FROM photos
+  `);
+  let databaseBytes = null;
+  try {
+    const dbSize = await query("SELECT pg_database_size(current_database()) AS bytes");
+    databaseBytes = Number(dbSize.rows[0].bytes);
+  } catch (err) {
+    // Vereist rechten die een beperkte connectie-rol niet altijd heeft —
+    // dan laten we dit veld gewoon weg in plaats van de hele route te laten
+    // struikelen over een cijfer dat niet strikt nodig is.
+    console.error("pg_database_size niet beschikbaar:", err.message);
+  }
+  sendJson(res, 200, {
+    photoCount: rows[0].photo_count,
+    photosBytes: Number(rows[0].photos_bytes),
+    thumbsBytes: Number(rows[0].thumbs_bytes),
+    databaseBytes,
+  });
+});
+
 route("GET", "/api/admin/trips", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { rows } = await query(`
@@ -1141,11 +1172,14 @@ function applyOrientation(data, width, height, orientation) {
 // Box-average downscale of a JPEG, no native code. Slower than sharp, but it
 // keeps thumbnails working on a host where the native binary is missing rather
 // than serving multi-megabyte originals.
-function makeThumbnailPureJs(buffer) {
+// Gedeeld door de thumbnail (600px) en de opgeslagen "volledige" foto (2000px)
+// — zelfde box-downscale, andere randen. Zie resizeFullPhoto voor waarom de
+// tweede pas bestaat.
+function resizeJpegPureJs(buffer, maxEdge, quality) {
   const decoded = jpegJs.decode(buffer, { useTArray: true });
   const img = applyOrientation(decoded.data, decoded.width, decoded.height, readExifOrientation(buffer));
-  const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(img.width, img.height));
-  if (scale >= 1) return jpegJs.encode(img, 75).data;
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  if (scale >= 1) return jpegJs.encode(img, quality).data;
   const w = Math.max(1, Math.round(img.width * scale));
   const h = Math.max(1, Math.round(img.height * scale));
   const out = Buffer.alloc(w * h * 4);
@@ -1165,7 +1199,11 @@ function makeThumbnailPureJs(buffer) {
       out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n; out[o + 3] = 255;
     }
   }
-  return jpegJs.encode({ data: out, width: w, height: h }, 75).data;
+  return jpegJs.encode({ data: out, width: w, height: h }, quality).data;
+}
+
+function makeThumbnailPureJs(buffer) {
+  return resizeJpegPureJs(buffer, THUMB_MAX_EDGE, 75);
 }
 
 async function makeThumbnail(buffer) {
@@ -1185,6 +1223,38 @@ async function makeThumbnail(buffer) {
   catch (err) {
     console.error("Pure-JS thumbnail failed:", err.message);
     return null;
+  }
+}
+
+// Een foto bekijk je op een scherm, niet op papier — 2000px op de lange kant
+// vult zelfs een groot beeldscherm ruimschoots, terwijl telefooncamera's
+// tegenwoordig 3000-4000px+ schieten. Alleen de thumbnail cappen loste "no
+// space left on device" niet op: de volledige foto ging alsnog ongewijzigd de
+// database in. Dit is de daadwerkelijke bottleneck voor de Postgres-schijf.
+const FULL_MAX_EDGE = 2000;
+
+async function resizeFullPhoto(buffer, mediaType) {
+  if (sharp) {
+    try {
+      const out = await sharp(buffer).rotate()
+        .resize(FULL_MAX_EDGE, FULL_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+      return { buffer: out, mediaType: "image/jpeg" };
+    } catch (err) {
+      console.error("Foto verkleinen mislukt (sharp):", err.message);
+      return { buffer, mediaType };
+    }
+  }
+  // Het pure-JS pad kan alleen JPEG decoderen. PNG/WebP komen hier zelden voor
+  // (schermafbeeldingen zijn zeldzaam in een reisdagboek) en blijven ongemoeid
+  // in plaats van risico te lopen op een zelfgeschreven decoder.
+  if (!/jpe?g/i.test(mediaType)) return { buffer, mediaType };
+  try {
+    return { buffer: Buffer.from(resizeJpegPureJs(buffer, FULL_MAX_EDGE, 85)), mediaType: "image/jpeg" };
+  } catch (err) {
+    console.error("Foto verkleinen mislukt (pure JS):", err.message);
+    return { buffer, mediaType };
   }
 }
 
@@ -1227,28 +1297,41 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
       console.error("Server-side GPS-extractie mislukt:", err.message);
     }
   }
+  ({ buffer, mediaType: mimeType } = await resizeFullPhoto(buffer, mimeType));
   // Content hash de-dupes identical photos within a trip: re-uploading the same
   // bytes reuses the existing row instead of storing a duplicate blob, keeping
   // its current assignment (day/activity/transport/accommodation) if it has one.
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const thumb = await makeThumbnail(buffer);
-  const { rows } = await query(
-    `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
-       day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
-       activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
-       transport_id = COALESCE(photos.transport_id, EXCLUDED.transport_id),
-       accommodation_id = COALESCE(photos.accommodation_id, EXCLUDED.accommodation_id),
-       caption = COALESCE(photos.caption, EXCLUDED.caption),
-       taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
-       latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
-       longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
-       thumb_data = COALESCE(EXCLUDED.thumb_data, photos.thumb_data),
-       thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END
-     RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
-    [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
-  );
+  let rows;
+  try {
+    ({ rows } = await query(
+      `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
+         day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
+         activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
+         transport_id = COALESCE(photos.transport_id, EXCLUDED.transport_id),
+         accommodation_id = COALESCE(photos.accommodation_id, EXCLUDED.accommodation_id),
+         caption = COALESCE(photos.caption, EXCLUDED.caption),
+         taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
+         latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
+         longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
+         thumb_data = COALESCE(EXCLUDED.thumb_data, photos.thumb_data),
+         thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END
+       RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
+      [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
+    ));
+  } catch (err) {
+    // Postgres geeft hier een letterlijke bestandssysteemfout terug ("could not
+    // extend file... No space left on device") die als ruwe tekst naar de
+    // gebruiker lekte — onbegrijpelijk en niet iets waar zij iets aan kunnen
+    // doen. Dit is de schijf van de database zelf die vol zit, niet deze foto.
+    if (/no space left on device/i.test(err.message)) {
+      return sendError(res, 507, "De opslag van de reisplanner zit vol. Er kunnen nu geen foto's bij — laat het weten aan wie de app beheert.");
+    }
+    throw err;
+  }
   const { inserted, ...photo } = rows[0];
   if (inserted) {
     const who = firstName(req.user) || "Iemand";

@@ -398,6 +398,7 @@ const api = {
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
+  getStorageInfo: () => apiFetch("/api/admin/storage"),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
@@ -4734,6 +4735,14 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 }
 
 // ---------- Admin view ----------
+function fmtBytes(n) {
+  if (n == null) return "onbekend";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
 function AdminView({ onBack }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
@@ -4741,6 +4750,7 @@ function AdminView({ onBack }) {
   const [tab, setTab] = useState("trips");
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
+  const [storage, setStorage] = useState(null);
 
   async function handleBackfillGps() {
     setBackfillBusy(true);
@@ -4762,6 +4772,7 @@ function AdminView({ onBack }) {
   };
 
   useEffect(() => { reload(); }, []);
+  useEffect(() => { api.getStorageInfo().then(setStorage).catch(() => {}); }, []);
 
   async function handleAssign(tripId, userId) {
     await api.assignTrip(tripId, userId || null);
@@ -4805,6 +4816,29 @@ function AdminView({ onBack }) {
           </button>
         </div>
       </div>
+
+      {storage && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
+          <div className="text-sm font-semibold text-gray-700 mb-2">Opslag</div>
+          <div className="flex gap-5 flex-wrap text-sm">
+            <div>
+              <div className="text-lg font-bold text-gray-900 tnum">{fmtBytes(storage.photosBytes + storage.thumbsBytes)}</div>
+              <div className="text-xs text-gray-400">{storage.photoCount} foto{storage.photoCount === 1 ? "" : "'s"}</div>
+            </div>
+            {storage.databaseBytes != null && (
+              <div>
+                <div className="text-lg font-bold text-gray-900 tnum">{fmtBytes(storage.databaseBytes)}</div>
+                <div className="text-xs text-gray-400">totale databasegrootte</div>
+              </div>
+            )}
+          </div>
+          <div className="text-xs text-gray-400 mt-2 max-w-md">
+            Foto's staan als data in de database zelf. Loopt dit vol ("Niet gelukt: ... No space left on
+            device" bij uploaden), dan helpt alleen oude foto's verwijderen of de Postgres-schijf op Railway
+            groter maken — dit scherm ververst niet vanzelf, herlaad de pagina om een nieuw cijfer te zien.
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
