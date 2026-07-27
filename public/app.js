@@ -1725,7 +1725,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                 </div>
 
                 {/* Day content */}
-                <div className={`flex-1 min-w-0 border-l border-gray-200 pl-4 ${dayIndex === days.length - 1 ? "pb-2" : "pb-6"}`}>
+                <div className={`flex-1 min-w-0 border-l-2 border-gray-200 pl-4 ${dayIndex === days.length - 1 ? "pb-2" : "pb-6"}`}>
                   <div className="flex items-center justify-between flex-wrap gap-y-1 mb-2 pt-1">
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <div className="flex items-center gap-2">
@@ -2403,7 +2403,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   beeld zijn, en schuift dan weg zodra de volgende dag begint —
                   zo weet je bij veel verhalen per dag altijd welke dag je leest. */}
               <div className="sticky z-10 flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white rounded-t-2xl"
-                style={{ top: "calc(3.5rem + env(safe-area-inset-top))" }}>
+                style={{ top: "calc(3rem + env(safe-area-inset-top))" }}>
                 {/* Zelfde dagmarkering als op de planning, zodat de twee schermen
                     familie van elkaar blijven zonder identiek te zijn. */}
                 <div className="shrink-0 text-right" style={{ width: "2.6rem" }}>
@@ -3368,7 +3368,7 @@ function MapTab({ trip, accommodations, transports, days }) {
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#2E6B4E" }} />Activiteit</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#6B3145" }} />Vervoer</span>
       </div>
-      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
+      <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
         {status === "loading" && (
           <div className="absolute inset-0 bg-white/90 z-[1000] flex flex-col items-center justify-center gap-3">
             <Icon name="map" size={30} strokeWidth={1.2} className="animate-pulse text-gray-300" />
@@ -3517,7 +3517,7 @@ function VisitedMap({ trip }) {
         )}
       </div>
 
-      <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
+      <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 480 }}>
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
@@ -3595,7 +3595,7 @@ function DayMiniMap({ places }) {
   }, []);
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
+    <div className="rounded-2xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
@@ -3690,7 +3690,7 @@ function JournalOverviewMap({ days, photos }) {
   );
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm relative z-0 mb-6" style={{ height: 280 }}>
+    <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0 mb-6" style={{ height: 280 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );
@@ -4697,7 +4697,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
         // In preview the tab bar and bottom nav disappear (that is what a
         // viewer gets), so this banner is the only way back — hence sticky.
         <div className="sticky z-30 mb-4 rounded-xl bg-white border border-gray-200 px-3 py-2.5 flex items-center gap-3 shadow-sm"
-          style={{ top: "calc(3.5rem + env(safe-area-inset-top) + 0.5rem)" }}>
+          style={{ top: "calc(3rem + env(safe-area-inset-top) + 0.5rem)" }}>
           <Icon name="eye" size={17} className="shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-gray-800">Gastweergave</div>
@@ -5236,9 +5236,9 @@ function App() {
     <div className="min-h-screen bg-gray-50">
       {/* Sticky compact header */}
       <header className="sticky top-0 z-40 bg-sky-700 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto px-4 h-12 flex items-center justify-between gap-3">
           <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2.5 leading-none min-w-0">
-            <Icon name="plane" size={18} /><span className="truncate font-display text-[21px]">Reisplanner</span>
+            <Icon name="plane" size={17} /><span className="truncate font-display text-[19px]">Reisplanner</span>
           </button>
           <div className="flex items-center gap-2 shrink-0">
             {user ? (
@@ -5254,8 +5254,8 @@ function App() {
                 </button>
                 <button onClick={() => setShowAccount(true)} title="Account" className="shrink-0">
                   {user.avatar
-                    ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-white/70" />
-                    : <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+                    ? <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full ring-2 ring-white/70" />
+                    : <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
                   }
                 </button>
               </>
