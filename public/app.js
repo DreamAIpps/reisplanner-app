@@ -1660,7 +1660,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                 {/* Dagmarkering: het dagnummer draagt de dag. Vandaag krijgt het
                     heldere oranje — de enige plek waar die kleur mag opduiken. */}
                 <div className="shrink-0 text-right pt-1" style={{ width: "3.4rem" }}>
-                  <div className={`font-display text-[30px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
+                  <div className={`font-display text-[33px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
                   <div className={`text-[10px] uppercase tracking-[0.12em] font-semibold mt-1 whitespace-nowrap ${isToday ? "text-sky-400" : "text-gray-400"}`}>
                     {dayName} {monthName}
                   </div>
@@ -1671,13 +1671,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
                 {/* Day content */}
                 <div className={`flex-1 min-w-0 border-l border-gray-200 pl-4 ${dayIndex === days.length - 1 ? "pb-2" : "pb-6"}`}>
-                  <div className="flex items-center justify-between mb-2 pt-1">
-                    <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between flex-wrap gap-y-1 mb-2 pt-1">
+                    <div className="flex flex-col gap-0.5 min-w-0">
                       <div className="flex items-center gap-2">
                         {isToday && (
                           <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-sky-400">Vandaag</span>
                         )}
-                        {day.title && <span className="font-display text-gray-800 text-[16px]">{day.title}</span>}
+                        {day.title && <span className="font-display text-gray-800 text-[17px]">{day.title}</span>}
                         {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
                       </div>
                       {nightAccommodation && (
@@ -2330,7 +2330,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                 {/* Zelfde dagmarkering als op de planning, zodat de twee schermen
                     familie van elkaar blijven zonder identiek te zijn. */}
                 <div className="shrink-0 text-right" style={{ width: "2.6rem" }}>
-                  <div className={`font-display text-[26px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
+                  <div className={`font-display text-[28px] leading-none tnum ${isToday ? "text-sky-400" : "text-gray-800"}`}>{dayNum}</div>
                   <div className={`text-[9px] uppercase tracking-[0.12em] font-semibold mt-0.5 whitespace-nowrap ${isToday ? "text-sky-400" : "text-gray-400"}`}>
                     {dayName} {monthName}
                   </div>
@@ -2340,7 +2340,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {isToday && (
                       <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-sky-400 shrink-0">Vandaag</span>
                     )}
-                    <div className="font-display text-gray-800 text-[16px] truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
+                    <div className="font-display text-gray-800 text-[17px] truncate">{day.title || `${dayName} ${dayNum} ${monthName}`}</div>
                   </div>
                   {nightAccommodation && (
                     <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0 mt-0.5">
@@ -4807,7 +4807,7 @@ function App() {
       <header className="sticky top-0 z-40 bg-sky-800 text-white shadow-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
           <button onClick={() => setView({ name: "list" })} className="flex items-center gap-2.5 leading-none min-w-0">
-            <Icon name="plane" size={18} /><span className="truncate font-display text-[19px]">Reisplanner</span>
+            <Icon name="plane" size={18} /><span className="truncate font-display text-[21px]">Reisplanner</span>
           </button>
           <div className="flex items-center gap-2 shrink-0">
             {user ? (
