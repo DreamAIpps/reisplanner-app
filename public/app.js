@@ -4645,7 +4645,27 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       })()}
 
       {readOnly ? (
-        <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />
+        <>
+          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel
+              deze twee: het dagboek dat ze kwamen lezen, en de kaart erbij —
+              die stond hiervoor voor hen onbereikbaar achter een tabblad dat
+              ze nooit te zien kregen. */}
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit">
+            <button onClick={() => setTab("journal")}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "map" ? "text-gray-500 hover:text-gray-700" : "bg-white shadow"}`}
+              style={tab === "map" ? {} : { color: legibleOn(accent) }}>
+              <Icon name="book" size={15} />Dagboek
+            </button>
+            <button onClick={() => setTab("map")}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "map" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+              style={tab === "map" ? { color: legibleOn(accent) } : {}}>
+              <Icon name="map" size={15} />Kaart
+            </button>
+          </div>
+          {tab === "map"
+            ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
+            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
+        </>
       ) : (
         <>
           {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} />}
