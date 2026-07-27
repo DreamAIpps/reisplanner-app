@@ -397,6 +397,7 @@ const api = {
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
+  backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
@@ -4718,6 +4719,21 @@ function AdminView({ onBack }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("trips");
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+
+  async function handleBackfillGps() {
+    setBackfillBusy(true);
+    setBackfillResult(null);
+    try {
+      const r = await api.backfillPhotoGps();
+      setBackfillResult({ ok: true, text: `${r.updated} van ${r.checked} foto's zonder locatie kregen alsnog GPS.` });
+    } catch (err) {
+      setBackfillResult({ ok: false, text: err.message || "Nabewerking mislukt" });
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
 
   const reload = () => {
     Promise.all([api.getAdminTrips(), api.getAdminUsers()])
@@ -4756,7 +4772,7 @@ function AdminView({ onBack }) {
     <div>
       <button onClick={onBack} className="text-sky-600 hover:text-sky-800 mb-4 inline-flex items-center gap-1 text-sm">← Mijn reizen</button>
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
         <h2 className="text-xl font-bold text-gray-800">Beheer</h2>
         <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
           <button onClick={() => setTab("trips")}
@@ -4768,6 +4784,25 @@ function AdminView({ onBack }) {
             <Icon name="users" size={15} className="mr-1.5" />Gebruikers ({users.length})
           </button>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-gray-700">Locatie nalopen bij bestaande foto's</div>
+            <div className="text-xs text-gray-400 mt-0.5 max-w-md">
+              Zoekt in alle foto's zonder locatie of er alsnog GPS uit de opgeslagen bytes te halen is. Werkt
+              alleen als die bytes nog de originele Exif hebben — een HEIC-foto die al is omgezet naar JPEG is
+              die kwijt en blijft zonder locatie.
+            </div>
+          </div>
+          <Button variant="secondary" onClick={handleBackfillGps} disabled={backfillBusy} className="shrink-0">
+            {backfillBusy ? "Bezig..." : "Nalopen"}
+          </Button>
+        </div>
+        {backfillResult && (
+          <div className={`text-xs mt-2 ${backfillResult.ok ? "text-green-600" : "text-red-500"}`}>{backfillResult.text}</div>
+        )}
       </div>
 
       {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : tab === "trips" ? (

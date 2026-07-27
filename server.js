@@ -650,6 +650,30 @@ route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => 
   sendJson(res, 200, rows[0]);
 });
 
+// Eenmalige nabewerking voor foto's die al vóór de GPS-terugval zijn geüpload.
+// Kan alleen iets vinden in rijen waarvan de opgeslagen bytes nog hun
+// originele Exif hebben: een HEIC die bij upload al succesvol is omgezet naar
+// JPEG heeft daarna geen Exif meer over (dezelfde reden waarom rotatie destijds
+// apart in de pixels gebakken moest worden) — die blijven na deze nabewerking
+// nog steeds zonder locatie, er is niets meer uit terug te halen.
+route("POST", "/api/admin/backfill-photo-gps", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query("SELECT id, mime_type, data FROM photos WHERE latitude IS NULL");
+  let updated = 0;
+  for (const row of rows) {
+    let gps = null;
+    try {
+      gps = looksLikeHeic(row.data, row.mime_type) ? readHeicGps(row.data) : readJpegGps(row.data);
+    } catch (err) {
+      console.error(`GPS-nabewerking mislukt voor foto ${row.id}:`, err.message);
+    }
+    if (!gps) continue;
+    await query("UPDATE photos SET latitude=$1, longitude=$2 WHERE id=$3", [gps.latitude, gps.longitude, row.id]);
+    updated++;
+  }
+  sendJson(res, 200, { checked: rows.length, updated });
+});
+
 route("GET", "/api/admin/trips", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { rows } = await query(`
