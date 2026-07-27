@@ -2439,7 +2439,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                       const tEntries = entries.filter((e) => e.transport_id === t.id);
                       return (
                         <div key={"t" + t.id} className="pl-3 border-l border-gray-200">
-                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                          <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />{t.from_location} → {t.to_location}
                           </div>
                           <JournalEntryBox entries={tEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over deze reis..."
@@ -2456,7 +2456,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                       const aEntries = entries.filter((e) => e.accommodation_id === a.id);
                       return (
                         <div key={"a" + a.id} className="pl-3 border-l border-gray-200">
-                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                          <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name="bed" size={13} className="text-gray-400" />{a.name}
                           </div>
                           <JournalEntryBox entries={aEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over dit verblijf..."
@@ -2473,7 +2473,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                       const actEntries = entries.filter((e) => e.activity_id === act.id);
                       return (
                         <div key={"act" + act.id} className="pl-3 border-l border-gray-200">
-                          <div className="text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+                          <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />{act.title}
                           </div>
                           <JournalEntryBox entries={actEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder={`Vertel over ${act.title}...`}
