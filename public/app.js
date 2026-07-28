@@ -3920,7 +3920,12 @@ function JournalOverviewMap({ days, photos }) {
       if (cancelled || !mapRef.current) return;
       const L = window.L;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
-      const map = L.map(mapRef.current, { scrollWheelZoom: false });
+      // dragging/tap uit: dit kaartje staat ingebed in een scrollende pagina, en
+      // een sleepgebaar dat wordt onderbroken (bv. door een tik die de kaart
+      // opnieuw opbouwt) kan Leaflet's touch-afhandeling in de war laten, met
+      // als gevolg dat de pagina daarna niet meer wil scrollen. Pinch-zoom en de
+      // zoomknoppen blijven gewoon werken, alleen slepen niet.
+      const map = L.map(mapRef.current, { scrollWheelZoom: false, dragging: false, tap: false });
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
 
