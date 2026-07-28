@@ -1792,7 +1792,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
           {!readOnly && <Button onClick={() => setAddingTransport(true)} variant="secondary">+ Vervoer/vlucht toevoegen</Button>}
           {!readOnly && <Button onClick={() => setAddingAccommodation(true)} variant="secondary">+ Verblijf toevoegen</Button>}
-          {!readOnly && <Button onClick={() => setImporting(true)} variant="secondary"><Icon name="mail" size={14} className="mr-1.5" />Reisbevestiging uploaden</Button>}
+          {!readOnly && <Button onClick={() => setImporting(true)}><Icon name="mail" size={14} className="mr-1.5" />Reisbevestiging uploaden</Button>}
           {onShareEditor && !readOnly && (
             <Button onClick={onShareEditor} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Reis delen met reisgenoot</Button>
           )}
@@ -2743,7 +2743,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {day.activities.map((act) => {
                       const actEntries = entries.filter((e) => e.activity_id === act.id);
                       return (
-                        <div key={"act" + act.id} className="pl-3 border-l border-gray-200">
+                        <div key={"act" + act.id} id={`journal-activity-${act.id}`} className="pl-3 border-l border-gray-200" style={{ scrollMarginTop: "5rem" }}>
                           <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />{act.title}
                           </div>
@@ -3424,6 +3424,7 @@ function labelPlaces(places, activities) {
     const act = topId && activities.find((a) => String(a.id) === topId);
     pl.label = act ? act.title : null;
     pl.time = act ? roundTimeToQuarterHour(act.time) : null;
+    pl.activityId = act ? act.id : null;
   });
   return places;
 }
@@ -3823,7 +3824,13 @@ function DayMiniMap({ places, accommodation }) {
             iconAnchor: [7, 7],
           }),
         }).addTo(map);
-        marker.on("click", () => setViewing({ photos: pl.photos, index: 0 }));
+        // Heeft de stip een activiteit als label, dan ga je daar naartoe — dat is
+        // waar iemand op tikt. Alleen bij een plek zonder activiteit (losse
+        // dagfoto's) blijft de oude foto-preview over als enige zinvolle actie.
+        marker.on("click", () => {
+          if (pl.activityId) document.getElementById(`journal-activity-${pl.activityId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          else setViewing({ photos: pl.photos, index: 0 });
+        });
         if (pl.label) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
           const timeSuffix = pl.time ? ` · ${pl.time}` : "";
@@ -4854,6 +4861,42 @@ function PackingTab({ tripId, readOnly }) {
   );
 }
 
+// Bewerken/verwijderen zijn destructief-aanpalend genoeg dat ze niet als grote
+// knoppen naast elkaar hoeven te staan — een klein "meer"-icoontje met een
+// uitklapmenu houdt ze uit het zicht tot iemand er echt naar zoekt.
+function TripActionsMenu({ onEdit, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Meer opties"
+        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 transition-colors">
+        <Icon name="more" size={18} />
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden py-1" style={{ minWidth: 170 }}>
+          <button type="button" onClick={() => { setOpen(false); onEdit(); }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left">
+            <Icon name="pen" size={15} />Bewerken
+          </button>
+          <button type="button" onClick={() => { setOpen(false); onDelete(); }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors text-left">
+            <Icon name="trash" size={15} />Verwijderen
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Trip detail ----------
 function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const [trip, setTrip] = useState(null);
@@ -5007,7 +5050,14 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 <div className="flex items-start gap-2 mb-1">
                   {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/30 text-white backdrop-blur-sm">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{trip.name}</h2>
+                <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">
+                  {trip.name}
+                  {!readOnly && tab !== "journal" && (
+                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-sm font-medium text-white/70 hover:text-white transition-colors">
+                      · Dagplanning
+                    </button>
+                  )}
+                </h2>
                 {trip.destination && <div className="text-white/85 mt-0.5 text-sm flex items-center gap-1"><Icon name="pin" size={13} />{trip.destination}</div>}
                 <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
                   {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
@@ -5016,19 +5066,11 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
               </div>
             </div>
-            <div className="bg-white px-3 py-2.5 border-t border-gray-100">
-              {!readOnly && tab !== "journal" && tab !== "photos" && (
-                <button onClick={() => setImporting(true)} className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all active:scale-95" style={{ background: accent, color: "#fff" }}>
-                  <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
-                </button>
-              )}
-              {tab !== "journal" && tab !== "photos" && (
-                <div className="flex gap-2 overflow-x-auto">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0 !text-xs !px-3 !py-1.5"><Icon name="pen" size={14} className="mr-1.5" />Bewerken</Button>}
-                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0 !text-xs !px-3 !py-1.5"><Icon name="trash" size={14} className="mr-1.5" />Verwijderen</Button>}
-                </div>
-              )}
-            </div>
+            {isOwnerActions && tab !== "journal" && tab !== "photos" && (
+              <div className="bg-white px-3 py-1.5 border-t border-gray-100 flex justify-end">
+                <TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} />
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -5038,50 +5080,37 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
                 <div className="flex items-center gap-2 mb-1">
                   {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
-                <h2 className="text-2xl font-bold drop-shadow text-white">{trip.name}</h2>
+                <h2 className="text-2xl font-bold drop-shadow text-white">
+                  {trip.name}
+                  {!readOnly && tab !== "journal" && (
+                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-sm font-medium text-white/70 hover:text-white transition-colors">
+                      · Dagplanning
+                    </button>
+                  )}
+                </h2>
                 {trip.destination && <div className="text-sm mt-0.5 flex items-center gap-1 text-white/80"><Icon name="pin" size={13} />{trip.destination}</div>}
               </div>
             </div>
             <div className="bg-white px-4 py-3">
-              <div className="text-sm text-gray-500 flex gap-4 flex-wrap mb-3">
-                {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
-              </div>
-              {!readOnly && tab !== "journal" && tab !== "photos" && (
-                <button onClick={() => setImporting(true)} className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-semibold shadow transition-all hover:opacity-90 active:scale-95" style={{ background: accent, color: "#fff" }}>
-                  <Icon name="mail" size={14} className="mr-1.5" />Planning toevoegen
-                </button>
-              )}
-              {tab !== "journal" && tab !== "photos" && (
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {isOwnerActions && <Button variant="secondary" onClick={() => setEditing(true)} className="shrink-0"><Icon name="pen" size={14} className="mr-1.5" />Bewerken</Button>}
-                  {isOwnerActions && <Button variant="danger" onClick={handleDelete} className="shrink-0"><Icon name="trash" size={14} className="mr-1.5" />Verwijderen</Button>}
+              <div className="text-sm text-gray-500 flex gap-4 flex-wrap items-center justify-between">
+                <div className="flex gap-4 flex-wrap">
+                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
                 </div>
-              )}
+                {isOwnerActions && tab !== "journal" && tab !== "photos" && <TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} />}
+              </div>
               {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
             </div>
           </>
         )}
       </div>
 
-      {/* Desktop tabs / mobile: alleen de grote Dagplanning knop */}
+      {/* Desktop tabs — op mobiel navigeert de onderste balk al, en "· Dagplanning"
+          naast de reisnaam hierboven is de subtiele snelkoppeling daar terug. */}
       {!readOnly && (
-        <>
-          <div className="hidden sm:block">
-            <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
-          </div>
-          {tab !== "journal" && (
-            <div className="sm:hidden mb-4">
-              <button onClick={() => setTab("days")}
-                className="w-full py-3.5 px-4 rounded-xl text-base font-bold transition-all shadow-sm"
-                style={tab === "days"
-                  ? { background: accent, color: "#fff", boxShadow: `0 4px 14px ${accent}55` }
-                  : { background: "#F4F2EF", color: "#463D38" }}>
-                <Icon name="route" size={15} className="mr-1.5" />Dagplanning
-              </button>
-            </div>
-          )}
-        </>
+        <div className="hidden sm:block">
+          <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
+        </div>
       )}
 
       {/* Budget balk */}
