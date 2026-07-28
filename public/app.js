@@ -1210,6 +1210,68 @@ function readExif(file) {
   });
 }
 
+// Uploaden loopt vaak over een trage mobiele verbinding, dus hoe minder bytes
+// de foto zelf kost hoe eerder hij aankomt. De server verkleint toch alles
+// boven FULL_MAX_EDGE — door dat al in de browser te doen stuurt een 4000px
+// telefoonfoto van 6 MB nog maar een paar honderd KB over de lijn in plaats
+// van het volledige origineel. HEIC laat de browser meestal niet eens tekenen
+// (canvas blijft leeg of faalt stil), dus die gaan ongemoeid naar de server,
+// die ze al kan converteren.
+const UPLOAD_MAX_EDGE = 2000;
+function downscaleImage(file) {
+  return new Promise((resolve) => {
+    if (!/^image\/(jpe?g|png|webp)$/i.test(file.type || "")) { resolve(null); return; }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, UPLOAD_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+      if (scale >= 1) { resolve(null); return; } // al klein genoeg — origineel is prima
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (!blob) { resolve(null); return; }
+        const reader = new FileReader();
+        reader.onload = () => resolve({ dataUrl: reader.result, mediaType: "image/jpeg" });
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      }, "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Kon foto niet lezen"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readForUpload(file) {
+  return (await downscaleImage(file)) || { dataUrl: await readAsDataUrl(file), mediaType: file.type };
+}
+
+// Voert fn per item uit met maximaal `limit` tegelijk, zodat een batch foto's
+// niet meer een voor een op elkaars volledige upload-rondje hoeft te wachten.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // Fullscreen photo viewer, shared by the dagboek strips and the Foto's grid.
 // The image fills the screen; everything else floats over it, so tapping a
 // photo gives you the photo rather than a boxed preview with panels under it.
@@ -1467,15 +1529,6 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     ? computeDayGroups(days, transports || [], accommodations || [])
     : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
 
-  function readAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function handleFiles(e) {
     const files = [...e.target.files];
     e.target.value = "";
@@ -1483,22 +1536,24 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     setUploading(true);
     // Each file stands alone: one failure used to abort the whole batch AND skip
     // the refresh, so already-uploaded photos stayed invisible and the rest were
-    // never attempted.
+    // never attempted. Uploads run a few at a time instead of strictly one after
+    // another — a batch of ten photos no longer waits for nine full round-trips
+    // before the tenth even starts.
     const failed = [];
-    for (const file of files) {
-      if (file.size > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); continue; }
+    await mapWithConcurrency(files, 3, async (file) => {
+      if (file.size > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
       try {
-        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
-        const base64 = dataUrl.split(",")[1];
+        const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        const base64 = image.dataUrl.split(",")[1];
         await api.addPhoto(tripId, {
           day_id: dayId || null, activity_id: activityId || null, transport_id: transportId || null, accommodation_id: accommodationId || null,
-          image: { data: base64, mediaType: file.type },
+          image: { data: base64, mediaType: image.mediaType },
           taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
         });
       } catch (err) {
         failed.push(`${file.name} (${err.message || "mislukt"})`);
       }
-    }
+    });
     setUploading(false);
     onChange();
     if (failed.length) {
@@ -1589,15 +1644,6 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   const [progress, setProgress] = useState(0);
   const fileRef = useRef(null);
 
-  function readAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error("Kon foto niet lezen"));
-      reader.readAsDataURL(file);
-    });
-  }
-
   function matchDay(takenAt) {
     if (!takenAt) return "";
     const dateStr = takenAt.slice(0, 10);
@@ -1610,17 +1656,16 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
     e.target.value = "";
     if (!files.length) return;
     setProcessing(true);
-    const newItems = [];
-    for (const file of files) {
+    const newItems = await mapWithConcurrency(files, 4, async (file) => {
       const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
-      if (file.size > MAX_PHOTO_BYTES) { newItems.push({ key, name: file.name, error: "Te groot (max 8 MB)" }); continue; }
+      if (file.size > MAX_PHOTO_BYTES) return { key, name: file.name, error: "Te groot (max 8 MB)" };
       try {
-        const [dataUrl, exif] = await Promise.all([readAsDataUrl(file), readExif(file)]);
-        newItems.push({ key, name: file.name, dataUrl, mediaType: file.type, exif, dayId: matchDay(exif.taken_at) });
+        const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        return { key, name: file.name, dataUrl: image.dataUrl, mediaType: image.mediaType, exif, dayId: matchDay(exif.taken_at) };
       } catch {
-        newItems.push({ key, name: file.name, error: "Kon foto niet lezen" });
+        return { key, name: file.name, error: "Kon foto niet lezen" };
       }
-    }
+    });
     setItems((prev) => [...prev, ...newItems]);
     setProcessing(false);
   }
@@ -1638,7 +1683,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   async function handleUploadAll() {
     if (!uploadable.length) return;
     setUploading(true); setProgress(0);
-    for (const it of uploadable) {
+    await mapWithConcurrency(uploadable, 3, async (it) => {
       const base64 = it.dataUrl.split(",")[1];
       try {
         await api.addPhoto(tripId, {
@@ -1648,7 +1693,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
         });
       } catch {}
       setProgress((p) => p + 1);
-    }
+    });
     setUploading(false);
     onUploaded();
     onClose();
