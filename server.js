@@ -297,9 +297,9 @@ async function sendPushToUser(userId, payload) {
 
 // Notifications run both ways: viewers hear when the trip is updated, managers
 // hear when someone reacts. Whoever caused the event is never told about it.
-// Push goes out to every recipient with an active subscription regardless of
-// their e-mail preference — subscribing is itself the opt-in for push, the
-// same way notify_email is the opt-in for mail.
+// One row feeds both channels: notify_email gates the mail digest, having a
+// push subscription gates push — a row goes in for anyone eligible for
+// either, and each flush marks only its own column (sent_at / push_sent_at).
 async function notifyTripMembers(tripId, actorId, audience, kind, summary, actorName) {
   try {
     const sql = audience === "viewers"
@@ -313,11 +313,13 @@ async function notifyTripMembers(tripId, actorId, audience, kind, summary, actor
     );
     if (!recipients.length) return;
 
-    const { rows: mailRecipients } = await query(
-      "SELECT id FROM users WHERE id = ANY($1) AND notify_email",
+    const { rows: notifyable } = await query(
+      `SELECT DISTINCT u.id FROM users u
+        WHERE u.id = ANY($1)
+          AND (u.notify_email OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id))`,
       [recipients.map((r) => r.id)]
     );
-    for (const { id } of mailRecipients) {
+    for (const { id } of notifyable) {
       await query(
         "INSERT INTO notifications (user_id, trip_id, kind, actor_name, summary) VALUES ($1,$2,$3,$4,$5)",
         [id, tripId, kind, actorName || null, summary]
@@ -325,9 +327,7 @@ async function notifyTripMembers(tripId, actorId, audience, kind, summary, actor
     }
 
     if (pushEnabled()) {
-      const { rows: tripRows } = await query("SELECT name FROM trips WHERE id = $1", [tripId]);
-      const title = tripRows[0]?.name || "Reisplanner";
-      await Promise.all(recipients.map(({ id }) => sendPushToUser(id, { title, body: summary, tripId })));
+      await Promise.all(recipients.map(({ id }) => maybeSendPush(id)));
     }
   } catch (err) {
     // A notification must never take down the action that triggered it.
@@ -435,6 +435,79 @@ async function flushNotifications() {
       // mail that actually went out.
       console.error(`Sending digest to ${person.email} failed:`, err.message);
     }
+  }
+}
+
+// Push moves much faster than mail — at most one every 30 minutes per person
+// instead of one per 12 hours — but the shape is the same: whatever piles up
+// during the cooldown rides along in the next one rather than getting lost.
+const PUSH_COOLDOWN_MINUTES = 30;
+
+// Sends whatever is pending for this user right now, across all their trips,
+// as one bundled push, and marks it all sent. Called both right after an
+// event (when the cooldown has already elapsed) and by the sweep (once it
+// elapses for whoever was mid-cooldown when their event came in).
+async function sendBundledPush(userId) {
+  const { rows: pending } = await query(
+    `SELECT n.trip_id, t.name AS trip_name,
+            COUNT(*) FILTER (WHERE n.kind = 'comment') AS comments,
+            COUNT(*) FILTER (WHERE n.kind = 'like') AS likes,
+            COUNT(*) FILTER (WHERE n.kind = 'entry') AS entries,
+            COUNT(*) FILTER (WHERE n.kind = 'photo') AS photos
+       FROM notifications n
+       JOIN trips t ON t.id = n.trip_id
+      WHERE n.user_id = $1 AND n.push_sent_at IS NULL
+      GROUP BY n.trip_id, t.name`,
+    [userId]
+  );
+  if (!pending.length) return;
+
+  const totals = pending.reduce((acc, t) => ({
+    entries: acc.entries + Number(t.entries), photos: acc.photos + Number(t.photos),
+    comments: acc.comments + Number(t.comments), likes: acc.likes + Number(t.likes),
+  }), { entries: 0, photos: 0, comments: 0, likes: 0 });
+
+  const title = pending.length === 1 ? pending[0].trip_name : "Reisplanner";
+  const body = pending.length === 1
+    ? countPhrase(describe(pending[0]))
+    : `${countPhrase(describe(totals))} bij je reizen`;
+
+  await sendPushToUser(userId, { title, body, tripId: pending.length === 1 ? pending[0].trip_id : null });
+  await query("UPDATE notifications SET push_sent_at = NOW() WHERE user_id = $1 AND push_sent_at IS NULL", [userId]);
+  await query("UPDATE users SET last_push_at = NOW() WHERE id = $1", [userId]);
+}
+
+// Called right after an event is queued. Sends immediately if this person's
+// cooldown has already elapsed (the common case — a lone event after a quiet
+// stretch); otherwise leaves the row for the sweep to pick up once it has.
+async function maybeSendPush(userId) {
+  if (!pushEnabled()) return;
+  const { rows: subRows } = await query("SELECT 1 FROM push_subscriptions WHERE user_id = $1 LIMIT 1", [userId]);
+  if (!subRows.length) return;
+
+  const { rows: userRows } = await query("SELECT last_push_at FROM users WHERE id = $1", [userId]);
+  const lastPush = userRows[0]?.last_push_at;
+  const cooldownElapsed = !lastPush || Date.now() - new Date(lastPush).getTime() >= PUSH_COOLDOWN_MINUTES * 60 * 1000;
+  if (!cooldownElapsed) return;
+
+  await sendBundledPush(userId);
+}
+
+// Catches what maybeSendPush left behind: anyone whose cooldown has since run
+// out but who never triggered a fresh event to notice.
+async function flushPushes() {
+  if (!pushEnabled()) return;
+  const { rows: due } = await query(
+    `SELECT DISTINCT n.user_id
+       FROM notifications n
+       JOIN users u ON u.id = n.user_id
+      WHERE n.push_sent_at IS NULL
+        AND EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = n.user_id)
+        AND (u.last_push_at IS NULL OR u.last_push_at < NOW() - INTERVAL '${PUSH_COOLDOWN_MINUTES} minutes')`
+  );
+  for (const { user_id } of due) {
+    try { await sendBundledPush(user_id); }
+    catch (err) { console.error(`Push-bundel versturen mislukt voor gebruiker ${user_id}:`, err.message); }
   }
 }
 
@@ -2440,6 +2513,7 @@ initDb()
       : "E-mailnotificaties staan uit (geen RESEND_API_KEY of POSTMARK_TOKEN ingesteld).");
     setInterval(() => {
       flushNotifications().catch((err) => console.error("Notification sweep failed:", err.message));
+      flushPushes().catch((err) => console.error("Push sweep failed:", err.message));
     }, NOTIFY_SWEEP_MS).unref();
   })
   .catch((err) => {

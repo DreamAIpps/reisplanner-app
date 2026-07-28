@@ -620,6 +620,128 @@ const TIMEZONE_OPTIONS = (() => {
   }
 })();
 
+function fmtShortDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} ${MONTH_NAMES[m - 1]}`;
+}
+
+// Zes weken (42 vakjes), maandag-eerst, met null voor de dagen buiten de
+// maand — zodat de aanroeper alleen de echte dagen hoeft te tekenen.
+function buildMonthGrid(year, month) {
+  const firstDay = new Date(Date.UTC(year, month, 1));
+  const firstWeekday = (firstDay.getUTCDay() + 6) % 7; // 0=ma .. 6=zo
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ iso: `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`, day: d });
+  }
+  return cells;
+}
+
+// Eén klikbaar veld dat een kalender opent waarin je met twee tikken een
+// periode selecteert — zoals bij boekingssites — in plaats van twee losse
+// datumvelden die je apart moet invullen.
+function DateRangePicker({ startDate, endDate, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(() => {
+    const base = startDate ? new Date(startDate + "T00:00:00Z") : new Date();
+    return { year: base.getUTCFullYear(), month: base.getUTCMonth() };
+  });
+  const [tempStart, setTempStart] = useState(startDate || null);
+  const [tempEnd, setTempEnd] = useState(endDate || null);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  function openPicker() {
+    setTempStart(startDate || null); setTempEnd(endDate || null);
+    if (startDate) {
+      const base = new Date(startDate + "T00:00:00Z");
+      setViewDate({ year: base.getUTCFullYear(), month: base.getUTCMonth() });
+    }
+    setOpen(true);
+  }
+
+  function changeMonth(delta) {
+    setViewDate(({ year, month }) => {
+      const d = new Date(Date.UTC(year, month + delta, 1));
+      return { year: d.getUTCFullYear(), month: d.getUTCMonth() };
+    });
+  }
+
+  function pickDay(iso) {
+    if (!tempStart || tempEnd) { setTempStart(iso); setTempEnd(null); }
+    else if (iso < tempStart) { setTempEnd(tempStart); setTempStart(iso); }
+    else { setTempEnd(iso); }
+  }
+
+  function apply() {
+    onChange({ start_date: tempStart || "", end_date: tempEnd || tempStart || "" });
+    setOpen(false);
+  }
+  function clear() {
+    onChange({ start_date: "", end_date: "" });
+    setOpen(false);
+  }
+
+  const label = startDate
+    ? `${fmtShortDate(startDate)}${endDate && endDate !== startDate ? ` – ${fmtShortDate(endDate)}` : ""}`
+    : "Selecteer data";
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button type="button" onClick={openPicker}
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-left flex items-center gap-2 hover:border-gray-300 transition-colors">
+        <Icon name="calendar" size={15} className="text-gray-400 shrink-0" />
+        <span className={startDate ? "text-gray-800" : "text-gray-400"}>{label}</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 p-4" style={{ width: 300 }}>
+          <div className="flex items-center justify-between mb-3">
+            <button type="button" onClick={() => changeMonth(-1)}
+              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500">‹</button>
+            <div className="font-semibold text-sm text-gray-800">
+              {["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"][viewDate.month]} {viewDate.year}
+            </div>
+            <button type="button" onClick={() => changeMonth(1)}
+              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500">›</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-[10px] text-gray-400 uppercase font-semibold mb-1 text-center">
+            {[1, 2, 3, 4, 5, 6, 0].map((i) => <div key={i}>{DAY_NAMES[i]}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {buildMonthGrid(viewDate.year, viewDate.month).map((cell, i) => {
+              if (!cell) return <div key={i} />;
+              const inRange = tempStart && tempEnd && cell.iso > tempStart && cell.iso < tempEnd;
+              const isEdge = cell.iso === tempStart || cell.iso === tempEnd;
+              return (
+                <button key={cell.iso} type="button" onClick={() => pickDay(cell.iso)}
+                  className={`text-xs h-8 rounded-full tnum transition-colors ${
+                    isEdge ? "bg-sky-700 text-white font-semibold"
+                      : inRange ? "bg-sky-50 text-gray-700"
+                        : "text-gray-600 hover:bg-gray-100"
+                  }`}>
+                  {cell.day}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+            <button type="button" onClick={clear} className="text-xs text-gray-400 hover:text-gray-600">Wissen</button>
+            <Button type="button" onClick={apply} className="!text-xs !px-4 !py-1.5">Klaar</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "", timezone: initial.timezone || "" } : { ...EMPTY_TRIP });
   const [saving, setSaving] = useState(false);
@@ -659,10 +781,10 @@ function TripForm({ initial, onSaved, onClose }) {
         <Field label="Bestemming">
           <Input value={form.destination} onChange={set("destination")} placeholder="bijv. Rome, Italië" />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Vertrekdatum"><Input type="date" value={form.start_date} onChange={set("start_date")} /></Field>
-          <Field label="Terugkomstdatum"><Input type="date" value={form.end_date} onChange={set("end_date")} /></Field>
-        </div>
+        <Field label="Reisperiode">
+          <DateRangePicker startDate={form.start_date} endDate={form.end_date}
+            onChange={({ start_date, end_date }) => setForm((f) => ({ ...f, start_date, end_date }))} />
+        </Field>
         <Field label="Tijdzone van de bestemming">
           <Select value={form.timezone} onChange={set("timezone")}>
             <option value="">— Automatisch (toestel van elke kijker) —</option>
@@ -1603,10 +1725,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
+  const [addingTransport, setAddingTransport] = useState(false);
   const [importing, setImporting] = useState(false);
   const [editingAccommodation, setEditingAccommodation] = useState(null);
-  const [addingDay, setAddingDay] = useState(false);
-  const [newDayDate, setNewDayDate] = useState("");
+  const [addingAccommodation, setAddingAccommodation] = useState(false);
   const [locationPhotos, setLocationPhotos] = useState({});
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
@@ -1646,12 +1768,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     if (!confirm("Activiteit verwijderen?")) return;
     await api.deleteActivity(id); onRefresh();
   }
-  async function handleAddDay(e) {
-    e.preventDefault();
-    if (!newDayDate) return;
-    await api.addDay(trip.id, { date: newDayDate });
-    setAddingDay(false); setNewDayDate(""); onRefresh();
-  }
   async function handleDeleteDay(id) {
     if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
     await api.deleteDay(id); onRefresh();
@@ -1674,28 +1790,20 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           {/* Quick-add while on the trip: opens the form pre-set to today.
               The per-day "+ Activiteit" buttons keep using their own day. */}
           {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
-          {!readOnly && <Button onClick={() => setAddingDay(true)} variant="secondary">+ Dag toevoegen</Button>}
+          {!readOnly && <Button onClick={() => setAddingTransport(true)} variant="secondary">+ Vervoer/vlucht toevoegen</Button>}
+          {!readOnly && <Button onClick={() => setAddingAccommodation(true)} variant="secondary">+ Verblijf toevoegen</Button>}
+          {!readOnly && <Button onClick={() => setImporting(true)} variant="secondary"><Icon name="mail" size={14} className="mr-1.5" />Reisbevestiging uploaden</Button>}
           {onShareEditor && !readOnly && (
             <Button onClick={onShareEditor} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Reis delen met reisgenoot</Button>
           )}
         </div>
       </div>
 
-      {addingDay && (
-        <form onSubmit={handleAddDay} className="rounded-xl p-4 mb-6 flex gap-3 items-end border" style={{ background: accent + "10", borderColor: accent + "33" }}>
-          <Field label="Datum">
-            <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} required />
-          </Field>
-          <Button type="submit">Toevoegen</Button>
-          <Button type="button" variant="secondary" onClick={() => setAddingDay(false)}>Annuleren</Button>
-        </form>
-      )}
-
       {days.length === 0 && (
         <div className="text-center py-16 text-gray-400">
           <Icon name="calendar" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
           <div className="font-medium">Nog geen dagen gepland</div>
-          <div className="text-sm mt-1">Voeg een dag toe om te beginnen</div>
+          <div className="text-sm mt-1">Stel een vertrek- en terugkomstdatum in bij de reis om te beginnen</div>
         </div>
       )}
 
@@ -1892,15 +2000,17 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           onClose={() => setEditingActivity(null)}
           onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
       )}
-      {editingTransport && (
-        <TransportForm tripId={trip.id} initial={editingTransport}
-          onSaved={() => { setEditingTransport(null); onRefresh(); }}
-          onClose={() => setEditingTransport(null)} />
+      {(editingTransport || addingTransport) && (
+        <TransportForm tripId={trip.id} initial={editingTransport || undefined}
+          onSaved={() => { setEditingTransport(null); setAddingTransport(false); onRefresh(); }}
+          onClose={() => { setEditingTransport(null); setAddingTransport(false); }}
+          onImport={() => { setEditingTransport(null); setAddingTransport(false); setImporting(true); }} />
       )}
-      {editingAccommodation && (
-        <AccommodationForm tripId={trip.id} initial={editingAccommodation}
-          onSaved={() => { setEditingAccommodation(null); onRefresh(); }}
-          onClose={() => setEditingAccommodation(null)} />
+      {(editingAccommodation || addingAccommodation) && (
+        <AccommodationForm tripId={trip.id} initial={editingAccommodation || undefined}
+          onSaved={() => { setEditingAccommodation(null); setAddingAccommodation(false); onRefresh(); }}
+          onClose={() => { setEditingAccommodation(null); setAddingAccommodation(false); }}
+          onImport={() => { setEditingAccommodation(null); setAddingAccommodation(false); setImporting(true); }} />
       )}
       {importing && <ImportModal tripId={trip.id} onImported={() => { setImporting(false); onRefresh(); }} onClose={() => setImporting(false)} />}
       {tipsLocation && (
@@ -1935,6 +2045,63 @@ function urlBase64ToUint8Array(base64String) {
 
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
+// Gedeeld door de handmatige schakelaar hieronder en de automatische
+// eerste-bezoek-prompt verderop: vraagt toestemming en registreert het
+// abonnement bij de server. Gooit door bij weigering/fout — de aanroeper vangt
+// dat zelf af.
+async function subscribeToPush(publicKey) {
+  const reg = await navigator.serviceWorker.ready;
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Toestemming geweigerd");
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey),
+  });
+  await api.subscribePush(sub.toJSON());
+  return sub;
+}
+
+// Vraagt automatisch, één keer per toestel, om pushtoestemming vlak nadat
+// iemand inlogt — in plaats van te wachten tot iemand het zelf opzoekt in
+// Account. Wie weigert of het wegklikt, wordt niet nogmaals gevraagd; de
+// schakelaar in Account blijft daarna gewoon staan om het later alsnog aan te
+// zetten. Toont zelf niets — de browser tekent zijn eigen dialoogje.
+function AutoPushPrompt({ user }) {
+  useEffect(() => {
+    if (!user) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    if (IS_IOS && !standalone) return; // buiten de geïnstalleerde app werkt dit op iOS toch niet
+
+    let alreadyPrompted = false;
+    try { alreadyPrompted = localStorage.getItem("rp_push_autoprompted") === "1"; } catch {}
+    if (alreadyPrompted) return;
+
+    let cancelled = false;
+    const markDone = () => { try { localStorage.setItem("rp_push_autoprompted", "1"); } catch {} };
+
+    (async () => {
+      try {
+        const cfg = await api.getPushPublicKey();
+        if (cancelled) return;
+        if (!cfg.key) return; // server nog niet geconfigureerd — dan later nog eens proberen
+        const reg = await navigator.serviceWorker.ready;
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) { markDone(); return; }
+        if (Notification.permission === "denied") { markDone(); return; }
+        await subscribeToPush(cfg.key);
+        markDone();
+      } catch {
+        markDone();
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [user]);
+
+  return null;
+}
+
 // Pushmeldingen zijn per toestel/browser, niet per account — de knop laat dus
 // zien of DIT toestel een actief abonnement heeft, niet een serverbrede
 // voorkeur zoals de e-mail-toggle hierboven.
@@ -1964,17 +2131,11 @@ function PushToggle() {
     const next = e.target.checked;
     setBusy(true); setError(null);
     try {
-      const reg = await navigator.serviceWorker.ready;
       if (next) {
-        const permission = await Notification.requestPermission();
-        if (permission !== "granted") { setError("Toestemming geweigerd"); return; }
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
-        });
-        await api.subscribePush(sub.toJSON());
+        await subscribeToPush(publicKey);
         setSubscribed(true);
       } else {
+        const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
         if (sub) { await api.unsubscribePush(sub.endpoint); await sub.unsubscribe(); }
         setSubscribed(false);
@@ -5443,6 +5604,7 @@ function App() {
       </header>
 
       <InstallPrompt />
+      <AutoPushPrompt user={user} />
 
       <main className="max-w-5xl mx-auto px-3 sm:px-8 pb-28 pt-4">
         {view.name === "list" ? (

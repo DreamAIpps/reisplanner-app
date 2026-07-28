@@ -74,6 +74,9 @@ async function initDb() {
     -- Recipients can turn notification mail off; on by default so sharing a trip
     -- keeps working without anyone having to opt in.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_email BOOLEAN NOT NULL DEFAULT TRUE;
+    -- Wanneer de laatste pushmelding echt is verstuurd, los van notify_email —
+    -- bepaalt de 30-minuten-cooldown tussen twee pushes aan dezelfde persoon.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_push_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -340,6 +343,10 @@ async function initDb() {
       sent_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS notifications_pending_idx ON notifications(user_id, trip_id) WHERE sent_at IS NULL;
+    -- push_sent_at staat los van sent_at (mail): dezelfde rij voedt beide
+    -- kanalen, elk met zijn eigen "verstuurd"-markering en eigen ritme.
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS push_sent_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS notifications_push_pending_idx ON notifications(user_id) WHERE push_sent_at IS NULL;
 
     -- Eén rij per toestel/browser dat pushmeldingen heeft geaccepteerd. Een
     -- gebruiker kan er meerdere hebben (telefoon én laptop); endpoint is uniek
