@@ -74,6 +74,7 @@ const ICONS = {
   clipboard: <><rect x="5" y="4.5" width="14" height="16" rx="2.5" /><path d="M9 4.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4.5v1.2H9z" /><path d="M9 11h6" /><path d="M9 15h4" /></>,
   arrowRight: <><path d="M4 12h15.5" /><path d="m14 6.5 5.5 5.5-5.5 5.5" /></>,
   arrowLeft: <><path d="M20 12H4.5" /><path d="m10 6.5-5.5 5.5 5.5 5.5" /></>,
+  arrowUp: <><path d="M12 20V4.5" /><path d="m6.5 10 5.5-5.5 5.5 5.5" /></>,
   arrowUpRight: <><path d="M7 17 17.5 6.5" /><path d="M8.5 6.5h9v9" /></>,
   close: <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></>,
 
@@ -2602,7 +2603,13 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           // still shows up — the claimed-set is what prevents the second match
           // from rendering it again.
           const matchesDay = (a, b, dayStr) => isoDate(a) === dayStr || isoDate(b) === dayStr;
-          return days.map((day) => {
+          // Where you sleep that night — the same rule the planning tab uses, so
+          // the dagboek reads with the same sense of place.
+          const nightAccommodationOn = (ds) => ds ? accommodations.find((a) => {
+            if (!a.check_in || !a.check_out) return false;
+            return isoDate(a.check_in) <= ds && isoDate(a.check_out) > ds;
+          }) : null;
+          return days.map((day, dayIndex) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
           const dayTransports = transports.filter((t) => {
             if (claimedTransportIds.has(t.id)) return false;
@@ -2621,13 +2628,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const dayNum = d ? d.getUTCDate() : "?";
           const dayName = d ? DAY_NAMES[d.getUTCDay()] : "";
           const monthName = d ? MONTH_NAMES[d.getUTCMonth()] : "";
-          const hasSubItems = day.activities.length > 0 || dayTransports.length > 0 || dayAccommodations.length > 0;
-          // Where you sleep that night — the same rule the planning tab uses, so
-          // the dagboek reads with the same sense of place.
-          const nightAccommodation = dayStr ? accommodations.find((a) => {
-            if (!a.check_in || !a.check_out) return false;
-            return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
-          }) : null;
+          const hasSubItems = day.activities.length > 0;
+          const nightAccommodation = nightAccommodationOn(dayStr);
+          const prevDayStr = dayIndex > 0 ? (days[dayIndex - 1].date ? days[dayIndex - 1].date.slice(0, 10) : null) : null;
+          const prevNightAccommodation = dayIndex > 0 ? nightAccommodationOn(prevDayStr) : null;
           const isToday = dayStr === todayIso(trip.timezone);
           const isYesterday = dayStr === yesterdayIso(trip.timezone);
 
@@ -2669,12 +2673,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     )}
                     {day.title && <div className="font-display text-gray-800 text-[17px] truncate">{day.title}</div>}
                   </div>
-                  {nightAccommodation && (
-                    <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0 mt-0.5">
-                      <Icon name="bed" size={12} className="text-gray-400" />
-                      <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
-                    </span>
-                  )}
                 </div>
                 {!readOnly && (
                   <button onClick={() => setAddingActivity({ dayId: day.id })}
@@ -2685,6 +2683,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               </div>
 
               <div className="p-4 space-y-4">
+                {nightAccommodation && (
+                  <AccommodationTransition current={nightAccommodation} previous={prevNightAccommodation} />
+                )}
                 {showDayMap && (
                   <div>
                     <div className="text-xs font-semibold text-gray-500 mb-1.5">
@@ -2704,42 +2705,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
                 {hasSubItems && (
                   <div className="pt-3 space-y-3 border-t border-gray-50">
-                    {dayTransports.map((t) => {
-                      const tEntries = entries.filter((e) => e.transport_id === t.id);
-                      return (
-                        <div key={"t" + t.id} className="pl-3 border-l border-gray-200">
-                          <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
-                            <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />{t.from_location} → {t.to_location}
-                          </div>
-                          <JournalEntryBox entries={tEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over deze reis..."
-                            onSave={(text) => saveEntry({ transport_id: t.id }, text)}
-                            onDelete={deleteEntry} onCommentsChange={loadEntries}
-                            photos={tripPhotos.filter((p) => p.transport_id === t.id)}
-                            tripId={trip.id} transportId={t.id} onPhotosChange={loadPhotos} readOnly={readOnly}
-                            reactions={reactionsFor({ transport_id: t.id })}
-                            comments={comments} slotLikes={slotLikes}
-                            days={days} transports={transports} accommodations={accommodations} />
-                        </div>
-                      );
-                    })}
-                    {dayAccommodations.map((a) => {
-                      const aEntries = entries.filter((e) => e.accommodation_id === a.id);
-                      return (
-                        <div key={"a" + a.id} className="pl-3 border-l border-gray-200">
-                          <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
-                            <Icon name="bed" size={13} className="text-gray-400" />{a.name}
-                          </div>
-                          <JournalEntryBox entries={aEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Vertel over dit verblijf..."
-                            onSave={(text) => saveEntry({ accommodation_id: a.id }, text)}
-                            onDelete={deleteEntry} onCommentsChange={loadEntries}
-                            photos={tripPhotos.filter((p) => p.accommodation_id === a.id)}
-                            tripId={trip.id} accommodationId={a.id} onPhotosChange={loadPhotos} readOnly={readOnly}
-                            reactions={reactionsFor({ accommodation_id: a.id })}
-                            comments={comments} slotLikes={slotLikes}
-                            days={days} transports={transports} accommodations={accommodations} />
-                        </div>
-                      );
-                    })}
                     {day.activities.map((act) => {
                       const actEntries = entries.filter((e) => e.activity_id === act.id);
                       return (
@@ -2776,6 +2741,15 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           onSaved={() => { setAddingActivity(null); onRefresh?.(); }}
           onClose={() => setAddingActivity(null)} />
       )}
+
+      {/* Altijd bereikbaar, ongeacht hoever je bent doorgescrold — snel terug
+          naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
+      <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        title="Naar boven"
+        className="fixed right-4 z-40 w-11 h-11 rounded-full flex items-center justify-center text-white shadow-xl active:scale-95 transition-all"
+        style={{ background: "linear-gradient(135deg,#FF7A00,#E8630A)", boxShadow: "0 8px 20px rgba(255,122,0,0.4)", bottom: "calc(68px + env(safe-area-inset-bottom) + 16px)" }}>
+        <Icon name="arrowUp" size={19} />
+      </button>
     </div>
   );
 }
@@ -3457,17 +3431,23 @@ function addBaseLayer(L, map, cfg) {
   }).addTo(map);
 }
 
+// v2: neemt addressdetails mee zodat er een schone plaatsnaam uit te halen is
+// (city/town/village/municipality — een adres heeft niet altijd hetzelfde
+// niveau). Eigen cache-prefix, want oudere gecachte resultaten (vóór dit
+// veld bestond) mogen niet zonder city teruggegeven worden.
 async function geocode(query) {
-  const key = `geocode_${query}`;
+  const key = `geocode2_${query}`;
   try {
     const c = localStorage.getItem(key);
     if (c) return JSON.parse(c);
   } catch {}
   await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
   const res = await fetch(url, { headers: { "Accept-Language": "nl", "User-Agent": "ReisplannerApp/1.0" } });
   const data = await res.json();
-  const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name } : null;
+  const addr = data[0]?.address || {};
+  const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
+  const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city } : null;
   if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
   return result;
 }
@@ -3880,6 +3860,96 @@ function DayMiniMap({ places, accommodation }) {
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
           onClose={() => setViewing(null)}
           onIndexChange={(i) => setViewing((v) => ({ ...v, index: i }))} />
+      )}
+    </div>
+  );
+}
+
+// Toont waar je die nacht sliep, met een schone plaatsnaam (geocodeerd, net als
+// het huisje op de dag-kaart) in plaats van het rauwe adres. Verandert het
+// verblijf ten opzichte van de vorige dag — een reisdag — dan komt er ook een
+// klein kaartje bij met beide plekken, verbonden met hetzelfde boogje als de
+// andere kaarten in de app.
+function AccommodationTransition({ current, previous }) {
+  const [currentGeo, setCurrentGeo] = useState(null);
+  const [previousGeo, setPreviousGeo] = useState(null);
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const isTravelDay = !!(current && previous && current.id !== previous.id);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const q = current?.address || current?.name;
+      const geo = q ? await geocode(q).catch(() => null) : null;
+      if (!cancelled) setCurrentGeo(geo);
+    })();
+    return () => { cancelled = true; };
+  }, [current?.id]);
+
+  useEffect(() => {
+    if (!isTravelDay) { setPreviousGeo(null); return; }
+    let cancelled = false;
+    (async () => {
+      const q = previous.address || previous.name;
+      const geo = q ? await geocode(q).catch(() => null) : null;
+      if (!cancelled) setPreviousGeo(geo);
+    })();
+    return () => { cancelled = true; };
+  }, [isTravelDay, previous?.id]);
+
+  useEffect(() => {
+    if (!isTravelDay || !mapRef.current || !currentGeo || !previousGeo) return;
+    let cancelled = false;
+
+    (async () => {
+      const cfg = await mapConfig();
+      if (cancelled || !mapRef.current) return;
+      const L = window.L;
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const map = L.map(mapRef.current, {
+        scrollWheelZoom: false, dragging: false, zoomControl: false,
+        attributionControl: false, tap: false,
+      });
+      mapInstanceRef.current = map;
+      addBaseLayer(L, map, cfg);
+
+      L.polyline(arcLatLngs(previousGeo, currentGeo), { color: "#FF7A00", weight: 2.5, opacity: 0.75 }).addTo(map);
+
+      const dotIcon = () => L.divIcon({
+        className: "leaflet-reisplanner-icon",
+        html: `<div style="width:14px;height:14px;border-radius:50%;background:#FF7A00;border:2px solid #fff;box-shadow:0 1px 4px rgba(36,29,25,.4)"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+      L.marker([previousGeo.lat, previousGeo.lon], { icon: dotIcon() }).addTo(map);
+      L.marker([currentGeo.lat, currentGeo.lon], { icon: dotIcon() }).addTo(map);
+
+      map.fitBounds([[previousGeo.lat, previousGeo.lon], [currentGeo.lat, currentGeo.lon]], { padding: [36, 36] });
+    })();
+
+    return () => { cancelled = true; };
+  }, [isTravelDay, currentGeo, previousGeo]);
+
+  useEffect(() => () => {
+    if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+  }, []);
+
+  if (!current) return null;
+
+  const currentLabel = currentGeo?.city || current.address || current.name;
+  const previousLabel = previousGeo?.city || previous?.address || previous?.name;
+
+  return (
+    <div>
+      <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+        <Icon name="bed" size={12} className="text-gray-400 shrink-0" />
+        <span className="truncate">{isTravelDay ? `Van ${previousLabel} naar ${currentLabel}` : currentLabel}</span>
+      </span>
+      {isTravelDay && (
+        <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0 mt-2" style={{ height: 140 }}>
+          <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+        </div>
       )}
     </div>
   );
