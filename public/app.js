@@ -2528,7 +2528,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     <div className="text-xs font-semibold text-gray-500 mb-1.5">
                       De locaties van {isToday ? "vandaag" : "gisteren"}:
                     </div>
-                    <DayMiniMap places={dayPlaces} />
+                    <DayMiniMap places={dayPlaces} accommodation={nightAccommodation} />
                   </div>
                 )}
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Hoe was deze dag?"
@@ -3627,7 +3627,9 @@ function VisitedMap({ trip }) {
 // gisteren (de dagen die je nog vers bijhoudt), en alleen als er genoeg
 // plekken zijn om een kaartje ook echt iets te laten zien. Places komen al
 // geclusterd binnen (clusterPhotoPlaces) — hier alleen tonen en fitBounds.
-function DayMiniMap({ places }) {
+// Het verblijf van die nacht komt er als startpunt bij: dat heeft geen GPS,
+// dus wordt (eenmalig, met caching) geocodeerd op zijn adres.
+function DayMiniMap({ places, accommodation }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [viewing, setViewing] = useState(null);
@@ -3638,6 +3640,8 @@ function DayMiniMap({ places }) {
 
     (async () => {
       const cfg = await mapConfig();
+      const accQuery = accommodation?.address || accommodation?.name;
+      const accGeo = accQuery ? await geocode(accQuery).catch(() => null) : null;
       if (cancelled || !mapRef.current) return;
       const L = window.L;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
@@ -3668,15 +3672,33 @@ function DayMiniMap({ places }) {
         }
       });
 
+      // Een huisje in plaats van de oranje foto-stippen, zodat meteen duidelijk
+      // is dat dit het startpunt (verblijf) is en niet nog een bezochte plek.
+      // Geen naamlabel erbij — het icoon alleen zegt al genoeg.
+      if (accGeo) {
+        L.marker([accGeo.lat, accGeo.lon], {
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:18px;height:18px;border-radius:50%;background:#463D38;border:2px solid #fff;box-shadow:0 1px 4px rgba(36,29,25,.4);display:flex;align-items:center;justify-content:center">
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9"/>
+              </svg></div>`,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+        }).addTo(map);
+      }
+
       // Iets ruimer uitgezoomd dan strikt nodig — met de naam-labels erbij oogt
       // een kaartje dat precies om de stippen sluit al snel te vol.
       const bounds = places.map((p) => [p.lat, p.lon]);
+      if (accGeo) bounds.push([accGeo.lat, accGeo.lon]);
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
     })();
 
     return () => { cancelled = true; };
-  }, [places]);
+  }, [places, accommodation]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
