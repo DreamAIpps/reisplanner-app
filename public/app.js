@@ -2724,7 +2724,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           )}
         </div>
       </div>
-      <JournalOverviewMap days={days} photos={tripPhotos} />
+      <JournalOverviewMap trip={trip} days={days} photos={tripPhotos} accommodations={accommodations} />
       <div className="space-y-4">
         {(() => {
           // Claim each transport/accommodation on the first day it matches
@@ -3629,6 +3629,22 @@ async function deriveCityName(query, fallbackCity) {
   return fallbackCity || null;
 }
 
+// Combineert een geocode-lookup met een schone plaatsnaam. Een compleet
+// hoteladres (naam + straat + wijk) is vaak te specifiek voor Nominatim om
+// coördinaten voor te vinden — een schone plaatsnaam ("Kyoto") vindt hij wél
+// vrijwel altijd, dus die wordt als tweede poging gebruikt zodra de eerste
+// lookup niets oplevert. Zonder deze stap kreeg zo'n dag geen kaartje én geen
+// schone naam: beide vielen terug op het rauwe adres.
+async function geocodePlace(query) {
+  let geo = await geocode(query).catch(() => null);
+  const city = await deriveCityName(query, geo?.city);
+  if (city && geo?.lat == null) {
+    geo = await geocode(city).catch(() => null);
+  }
+  if (geo) return { ...geo, city: city || geo.city };
+  return city ? { city } : null;
+}
+
 function MapTab({ trip, accommodations, transports, days }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -4061,10 +4077,9 @@ function AccommodationTransition({ current, previous }) {
     let cancelled = false;
     (async () => {
       const q = current?.address || current?.name;
-      const geo = q ? await geocode(q).catch(() => null) : null;
-      if (cancelled || !geo) { if (!cancelled) setCurrentGeo(geo); return; }
-      const city = await deriveCityName(q, geo.city);
-      if (!cancelled) setCurrentGeo({ ...geo, city });
+      if (!q) { if (!cancelled) setCurrentGeo(null); return; }
+      const geo = await geocodePlace(q);
+      if (!cancelled) setCurrentGeo(geo);
     })();
     return () => { cancelled = true; };
   }, [current?.id]);
@@ -4074,16 +4089,20 @@ function AccommodationTransition({ current, previous }) {
     let cancelled = false;
     (async () => {
       const q = previous.address || previous.name;
-      const geo = q ? await geocode(q).catch(() => null) : null;
-      if (cancelled || !geo) { if (!cancelled) setPreviousGeo(geo); return; }
-      const city = await deriveCityName(q, geo.city);
-      if (!cancelled) setPreviousGeo({ ...geo, city });
+      if (!q) { if (!cancelled) setPreviousGeo(null); return; }
+      const geo = await geocodePlace(q);
+      if (!cancelled) setPreviousGeo(geo);
     })();
     return () => { cancelled = true; };
   }, [isTravelDay, previous?.id]);
 
+  // currentGeo/previousGeo kunnen alsnog city-only zijn (geen lat/lon) als
+  // zelfs de schone plaatsnaam niet te geocoden viel — dan is er wel een
+  // naam om te tonen, maar geen kaartje om te tekenen.
+  const hasCoords = currentGeo?.lat != null && previousGeo?.lat != null;
+
   useEffect(() => {
-    if (!isTravelDay || !mapRef.current || !currentGeo || !previousGeo) return;
+    if (!isTravelDay || !mapRef.current || !hasCoords) return;
     let cancelled = false;
 
     (async () => {
@@ -4113,7 +4132,7 @@ function AccommodationTransition({ current, previous }) {
     })();
 
     return () => { cancelled = true; };
-  }, [isTravelDay, currentGeo, previousGeo]);
+  }, [isTravelDay, hasCoords, currentGeo, previousGeo]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
@@ -4130,7 +4149,7 @@ function AccommodationTransition({ current, previous }) {
         <Icon name="bed" size={12} className="text-gray-400 shrink-0" />
         <span className="truncate">{isTravelDay ? `Van ${previousLabel} naar ${currentLabel}` : currentLabel}</span>
       </span>
-      {isTravelDay && (
+      {isTravelDay && hasCoords && (
         <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0 mt-2" style={{ height: 140 }}>
           <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
         </div>
@@ -4145,9 +4164,10 @@ function AccommodationTransition({ current, previous }) {
 // plaats van rechte lijnen. Een tik op een dagnummer springt direct naar dat
 // dagkaartje verderop in het dagboek, zodat de kaart een navigatiemiddel is,
 // niet alleen een plaatje.
-function JournalOverviewMap({ days, photos }) {
+function JournalOverviewMap({ trip, days, photos, accommodations }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const [upcomingGeo, setUpcomingGeo] = useState([]);
 
   const dayInfoByDate = React.useMemo(() => {
     const m = new Map();
@@ -4172,8 +4192,53 @@ function JournalOverviewMap({ days, photos }) {
     return markers;
   }, [photos, dayInfoByDate]);
 
+  const visitedDayNumbers = React.useMemo(() => new Set(dayMarkers.map((m) => m.dayNumber)), [dayMarkers]);
+
+  // Dagen die nog moeten komen (of vandaag, zolang daar nog geen foto van is):
+  // de eerste geplande activiteit met een locatie, anders het verblijf van die
+  // nacht. Zo toont de kaart in één oogopslag de hele route, niet alleen het
+  // deel dat al bezocht is.
+  const upcomingItems = React.useMemo(() => {
+    const todayStr = todayIso(trip?.timezone);
+    if (!todayStr) return [];
+    const isoDateLocal = (dt) => dt ? String(dt).slice(0, 10) : null;
+    const nightAccommodationOn = (ds) => ds ? (accommodations || []).find((a) => {
+      if (!a.check_in || !a.check_out) return false;
+      return isoDateLocal(a.check_in) <= ds && isoDateLocal(a.check_out) > ds;
+    }) : null;
+    const items = [];
+    (days || []).forEach((day, i) => {
+      const dayStr = isoDateLocal(day.date);
+      const dayNumber = i + 1;
+      if (!dayStr || dayStr < todayStr || visitedDayNumbers.has(dayNumber)) return;
+      const firstActivity = (day.activities || []).find((a) => a.location);
+      const acc = nightAccommodationOn(dayStr);
+      const query = firstActivity ? firstActivity.location : (acc ? (acc.address || acc.name) : null);
+      if (query) items.push({ dayNumber, dayId: day.id, query });
+    });
+    return items;
+  }, [days, accommodations, trip?.timezone, visitedDayNumbers]);
+
+  // Sequentieel i.p.v. Promise.all: dit kan een handvol nog niet eerder
+  // opgezochte plekken zijn, en geocode()'s ingebouwde Nominatim-pacing is
+  // per aanroep — parallel zou dat alsnog als een burst afvuren.
   useEffect(() => {
-    if (!mapRef.current || dayMarkers.length === 0) return;
+    if (!upcomingItems.length) { setUpcomingGeo([]); return; }
+    let cancelled = false;
+    (async () => {
+      const resolved = [];
+      for (const item of upcomingItems) {
+        const geo = await geocodePlace(item.query).catch(() => null);
+        if (cancelled) return;
+        if (geo?.lat != null) resolved.push({ ...item, lat: geo.lat, lon: geo.lon });
+      }
+      if (!cancelled) setUpcomingGeo(resolved);
+    })();
+    return () => { cancelled = true; };
+  }, [upcomingItems]);
+
+  useEffect(() => {
+    if (!mapRef.current || (dayMarkers.length === 0 && upcomingGeo.length === 0)) return;
     let cancelled = false;
 
     (async () => {
@@ -4192,6 +4257,12 @@ function JournalOverviewMap({ days, photos }) {
 
       for (let i = 1; i < dayMarkers.length; i++) {
         L.polyline(arcLatLngs(dayMarkers[i - 1], dayMarkers[i]), { color: "#FF7A00", weight: 2.5, opacity: 0.75 }).addTo(map);
+      }
+      // Route die nog moet komen: lichter en gestippeld — nog niet gelopen,
+      // in tegenstelling tot de dikke ononderbroken lijn hierboven.
+      const futureChain = [...(dayMarkers.length ? [dayMarkers[dayMarkers.length - 1]] : []), ...upcomingGeo];
+      for (let i = 1; i < futureChain.length; i++) {
+        L.polyline(arcLatLngs(futureChain[i - 1], futureChain[i]), { color: "#FF7A00", weight: 2, opacity: 0.45, dashArray: "2 8" }).addTo(map);
       }
 
       dayMarkers.forEach((pl) => {
@@ -4214,21 +4285,39 @@ function JournalOverviewMap({ days, photos }) {
         });
       });
 
-      const bounds = dayMarkers.map((p) => [p.lat, p.lon]);
+      // Nog te gaan: hol en gestippeld omlijnd i.p.v. gevuld, zodat in één
+      // oogopslag duidelijk is wat al gedaan is en wat nog moet komen.
+      upcomingGeo.forEach((pl) => {
+        const marker = L.marker([pl.lat, pl.lon], {
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:26px;height:26px;border-radius:50%;background:#fff;border:2.5px dashed #FF7A00;box-shadow:0 2px 6px rgba(36,29,25,.2);color:#FF7A00;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer">${pl.dayNumber}</div>`,
+            iconSize: [26, 26],
+            iconAnchor: [13, 13],
+          }),
+          zIndexOffset: 50000 - pl.dayNumber * 100,
+        }).addTo(map);
+        marker.bindTooltip(`Dag ${pl.dayNumber} · nog te gaan`, { direction: "top", offset: [0, -14] });
+        marker.on("click", () => {
+          document.getElementById(`journal-day-${pl.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+
+      const bounds = [...dayMarkers, ...upcomingGeo].map((p) => [p.lat, p.lon]);
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [36, 36] });
     })();
 
     return () => { cancelled = true; };
-  }, [dayMarkers]);
+  }, [dayMarkers, upcomingGeo]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
   }, []);
 
-  if (dayMarkers.length === 0) return (
+  if (dayMarkers.length === 0 && upcomingItems.length === 0) return (
     <div className="rounded-2xl border border-gray-100 bg-gray-50 text-center py-8 px-4 mb-6 text-sm text-gray-400">
-      Zodra je foto's met locatie uploadt, verschijnt hier de kaart van je reis.
+      Zodra je foto's uploadt, of een verblijf/activiteit met locatie plant, verschijnt hier de kaart van je reis.
     </div>
   );
 
