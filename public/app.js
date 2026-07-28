@@ -2471,7 +2471,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const isYesterday = dayStr === yesterdayIso(trip.timezone);
 
           // Kaartje alleen bij vandaag en gisteren — de dagen die je nog vers
-          // bijhoudt — en alleen als er genoeg plekken zijn om iets te tonen.
+          // bijhoudt — en zodra er minstens één bezochte plek is (het verblijf
+          // zelf telt hier niet in mee, dat komt er sowieso apart bij).
           // Telt alle foto's die ergens op déze dag horen: los op de dag zelf,
           // of aan een activiteit/vervoer/verblijf van die dag.
           let dayPlaces = [];
@@ -2483,7 +2484,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               || day.activities.some((act) => act.id === p.activity_id));
             dayPlaces = labelPlaces(clusterPhotoPlaces(dayPhotoSet), day.activities);
           }
-          const showDayMap = dayPlaces.length > 3;
+          const showDayMap = dayPlaces.length > 0;
 
           return (
             <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
