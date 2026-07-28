@@ -153,6 +153,20 @@ function _gw(d) {
 }
 function _gid() { return "g" + Date.now() + Math.random().toString(36).slice(2, 5); }
 
+// UTC-vast opgebouwd (net als de server se generate_series-migratie): een
+// stap via setDate() zou over een zomertijdovergang heen 23 uur vooruit
+// gaan, met een dubbele of ontbrekende dag tot gevolg.
+function dateRange(start, end) {
+  const days = [];
+  let d = new Date(start + "T00:00:00Z");
+  const endD = new Date(end + "T00:00:00Z");
+  while (d <= endD) {
+    days.push(d.toISOString().slice(0, 10));
+    d = new Date(d.getTime() + 86400000);
+  }
+  return days;
+}
+
 let _guestMode = false;
 function setGuestMode(v) { _guestMode = v; }
 
@@ -167,7 +181,15 @@ const guestApi = {
   },
   createTrip(data) {
     const d = _gr(); const t = { ...data, id: _gid(), created_at: new Date().toISOString() };
-    d.trips = [...(d.trips || []), t]; _gw(d); return Promise.resolve(t);
+    d.trips = [...(d.trips || []), t];
+    // Zonder dit blijft een gast-reis voorgoed leeg: er is geen "+ Dag
+    // toevoegen"-knop meer, dus dit is de enige plek waar een gast ooit een
+    // dagkaart krijgt — precies zoals de ingelogde API het bij aanmaken doet.
+    if (data.start_date && data.end_date) {
+      const newDays = dateRange(data.start_date, data.end_date).map((date) => ({ id: _gid(), trip_id: t.id, date }));
+      d.days = [...(d.days || []), ...newDays];
+    }
+    _gw(d); return Promise.resolve(t);
   },
   updateTrip(id, data) {
     const d = _gr(); let found;
@@ -428,6 +450,13 @@ function fmt(date) {
 function fmtDatetime(dt) {
   if (!dt) return "—";
   return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+}
+// Voor de handjevol plekken die Leaflet-popups/tooltips als kant-en-klare
+// HTML-string opbouwen (Leaflet accepteert daar geen JSX) — vrij ingevulde
+// tekst als een activiteitnaam mag daar niet ongefilterd in belanden.
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
 }
 function fmtMoney(n, currency = "EUR") {
   if (n == null || n === "") return "—";
@@ -1013,7 +1042,13 @@ function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onC
 
 // ---------- Accommodation form ----------
 function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
-  const [form, setForm] = useState(initial ? { ...initial, check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "" } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
+  // `initial` is the raw DB row, where empty columns are null. Feeding null
+  // into a controlled <Input> makes React flip it to uncontrolled on typing.
+  const [form, setForm] = useState(initial ? {
+    ...initial,
+    check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "",
+    address: initial.address ?? "", booking_ref: initial.booking_ref ?? "", cost: initial.cost ?? "", notes: initial.notes ?? "",
+  } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -1069,13 +1104,17 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 
 // ---------- Transport form ----------
 function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
+  // `initial` is the raw DB row, where empty columns are null. Feeding null
+  // into a controlled <Input> makes React flip it to uncontrolled on typing.
   const [form, setForm] = useState(initial ? {
     ...initial,
+    from_location: initial.from_location ?? "", to_location: initial.to_location ?? "",
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
     arrival_time: initial.arrival_time ? new Date(initial.arrival_time).toISOString().slice(0,16) : "",
     cost: initial.cost ?? "",
     booking_ref: initial.booking_ref ?? "",
     notes: initial.notes ?? "",
+    baggage_allowance: initial.baggage_allowance ?? "",
   } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -1142,7 +1181,13 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
 
 // ---------- Expense form ----------
 function ExpenseForm({ tripId, initial, onSaved, onClose }) {
-  const [form, setForm] = useState(initial ? { ...initial, date: initial.date?.slice(0,10)||"" } : { date: new Date().toISOString().slice(0,10), category: "Overig", description: "", amount: "", paid_by: "" });
+  // `initial` is the raw DB row, where empty columns are null. Feeding null
+  // into a controlled <Input>/<Select> makes React flip it to uncontrolled on
+  // typing.
+  const [form, setForm] = useState(initial ? {
+    ...initial, date: initial.date?.slice(0,10)||"",
+    category: initial.category ?? "Overig", paid_by: initial.paid_by ?? "",
+  } : { date: new Date().toISOString().slice(0,10), category: "Overig", description: "", amount: "", paid_by: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -1294,8 +1339,18 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
 
   useEffect(() => { if (!photos.length) onClose(); }, [photos.length, onClose]);
 
+  // Voorkomt dat een bijschrift dat je nog aan het typen bent op de verkeerde
+  // foto belandt als die intussen (via de pijltjestoetsen hieronder, of anders)
+  // is doorgeschoven naar de volgende/vorige foto.
+  useEffect(() => { setEditingCaption(false); setCaptionText(""); }, [viewing?.id]);
+
   useEffect(() => {
     function handleKey(e) {
+      // Cursor verplaatsen in het bijschrift-tekstveld mag niet als foto-navigatie
+      // gelden — anders springt een pijltje-tik tijdens het typen naar de
+      // volgende foto en belandt de tekst straks op de verkeerde.
+      const tag = document.activeElement?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
       if (e.key === "ArrowRight") showNext();
       else if (e.key === "ArrowLeft") showPrev();
       else if (e.key === "Escape") onClose();
@@ -1541,10 +1596,12 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     // before the tenth even starts.
     const failed = [];
     await mapWithConcurrency(files, 3, async (file) => {
-      if (file.size > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
       try {
         const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
         const base64 = image.dataUrl.split(",")[1];
+        // Pas ná het eventueel verkleinen checken: anders werd precies de grote
+        // telefoonfoto die downscaleImage moest redden alsnog geweigerd.
+        if ((base64.length * 3) / 4 > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
         await api.addPhoto(tripId, {
           day_id: dayId || null, activity_id: activityId || null, transport_id: transportId || null, accommodation_id: accommodationId || null,
           image: { data: base64, mediaType: image.mediaType },
@@ -1658,9 +1715,11 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
     setProcessing(true);
     const newItems = await mapWithConcurrency(files, 4, async (file) => {
       const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
-      if (file.size > MAX_PHOTO_BYTES) return { key, name: file.name, error: "Te groot (max 8 MB)" };
       try {
         const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        // Pas ná het eventueel verkleinen checken: anders werd precies de grote
+        // telefoonfoto die downscaleImage moest redden alsnog geweigerd.
+        if ((image.dataUrl.split(",")[1].length * 3) / 4 > MAX_PHOTO_BYTES) return { key, name: file.name, error: "Te groot (max 8 MB)" };
         return { key, name: file.name, dataUrl: image.dataUrl, mediaType: image.mediaType, exif, dayId: matchDay(exif.taken_at) };
       } catch {
         return { key, name: file.name, error: "Kon foto niet lezen" };
@@ -1683,6 +1742,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   async function handleUploadAll() {
     if (!uploadable.length) return;
     setUploading(true); setProgress(0);
+    const failed = [];
     await mapWithConcurrency(uploadable, 3, async (it) => {
       const base64 = it.dataUrl.split(",")[1];
       try {
@@ -1691,12 +1751,17 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
           image: { data: base64, mediaType: it.mediaType },
           taken_at: it.exif.taken_at || null, latitude: it.exif.latitude ?? null, longitude: it.exif.longitude ?? null,
         });
-      } catch {}
+      } catch (err) {
+        failed.push(`${it.name} (${err.message || "mislukt"})`);
+      }
       setProgress((p) => p + 1);
     });
     setUploading(false);
     onUploaded();
     onClose();
+    if (failed.length) {
+      alert(`${uploadable.length - failed.length} van ${uploadable.length} foto's geüpload.\n\nNiet gelukt:\n${failed.join("\n")}`);
+    }
   }
 
   return (
@@ -2592,16 +2657,26 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const latestNew = newestFirst[0];
   function scrollToFirstNew() {
     if (!latestNew) return;
+    // Een reactie op een foto draagt zelf geen dag/activiteit-koppeling — die
+    // zit op de foto waar hij op reageert. Zonder deze stap kan zo'n reactie
+    // nooit naar een dag herleid worden en doet de knop stilzwijgend niets.
+    const photo = latestNew.photo_id && tripPhotos.find((p) => p.id === latestNew.photo_id);
+    const effective = photo ? {
+      day_id: latestNew.day_id || photo.day_id,
+      activity_id: latestNew.activity_id || photo.activity_id,
+      transport_id: latestNew.transport_id || photo.transport_id,
+      accommodation_id: latestNew.accommodation_id || photo.accommodation_id,
+    } : latestNew;
     // Vervoer/verblijf hebben geen eigen kaart meer in het dagboek — val terug
     // op de dag waar het item bij hoort, zodat een "nieuw" op zo'n item nog
     // ergens naartoe kan scrollen.
-    const transport = latestNew.transport_id && transports.find((t) => t.id === latestNew.transport_id);
-    const accommodation = latestNew.accommodation_id && accommodations.find((a) => a.id === latestNew.accommodation_id);
+    const transport = effective.transport_id && transports.find((t) => t.id === effective.transport_id);
+    const accommodation = effective.accommodation_id && accommodations.find((a) => a.id === effective.accommodation_id);
     const fallbackDateStr = transport ? isoDate(transport.departure_time || transport.arrival_time)
       : accommodation ? isoDate(accommodation.check_in)
       : null;
-    const dayId = latestNew.day_id
-      || days.find((d) => (d.activities || []).some((a) => a.id === latestNew.activity_id))?.id
+    const dayId = effective.day_id
+      || days.find((d) => (d.activities || []).some((a) => a.id === effective.activity_id))?.id
       || days.find((d) => isoDate(d.date) === fallbackDateStr)?.id;
     document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -2670,7 +2745,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
             if (!a.check_in || !a.check_out) return false;
             return isoDate(a.check_in) <= ds && isoDate(a.check_out) > ds;
           }) : null;
-          return days.map((day, dayIndex) => {
+          return days.map((day) => {
           const dayStr = day.date ? day.date.slice(0, 10) : null;
           const dayTransports = transports.filter((t) => {
             if (claimedTransportIds.has(t.id)) return false;
@@ -2691,8 +2766,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const monthName = d ? MONTH_NAMES[d.getUTCMonth()] : "";
           const hasSubItems = day.activities.length > 0;
           const nightAccommodation = nightAccommodationOn(dayStr);
-          const prevDayStr = dayIndex > 0 ? (days[dayIndex - 1].date ? days[dayIndex - 1].date.slice(0, 10) : null) : null;
-          const prevNightAccommodation = dayIndex > 0 ? nightAccommodationOn(prevDayStr) : null;
+          // De kalenderdag ervoor, niet "de vorige rij in de lijst" — een
+          // verwijderde tussenliggende dag zou anders het verblijf van een dag
+          // eerder tonen dan de werkelijke vorige nacht.
+          const prevDayStr = dayStr ? new Date(new Date(dayStr + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10) : null;
+          const prevNightAccommodation = prevDayStr ? nightAccommodationOn(prevDayStr) : null;
           const isToday = dayStr === todayIso(trip.timezone);
           const isYesterday = dayStr === yesterdayIso(trip.timezone);
 
@@ -3497,21 +3575,58 @@ function addBaseLayer(L, map, cfg) {
 // zijn lokale schrift op (高山市) in plaats van een Latijnse naam. Eigen
 // cache-prefix, want oudere gecachte resultaten (van vóór deze fallback)
 // kunnen nog zo'n onvertaalde naam bevatten.
+//
+// Meerdere dagkaarten met hetzelfde verblijf mounten allemaal tegelijk, en
+// missen dan allemaal de (nog lege) cache — zonder deze in-flight-registratie
+// vuurt dat evenveel gelijktijdige Nominatim-verzoeken af, wat de bedoelde
+// snelheidslimiet van 1/sec juist doorbreekt.
+const _geocodeInFlight = new Map();
 async function geocode(query) {
   const key = `geocode3_${query}`;
   try {
     const c = localStorage.getItem(key);
     if (c) return JSON.parse(c);
   } catch {}
-  await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
-  const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
-  const data = await res.json();
-  const addr = data[0]?.address || {};
-  const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
-  const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city } : null;
-  if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
-  return result;
+  if (_geocodeInFlight.has(query)) return _geocodeInFlight.get(query);
+  const promise = (async () => {
+    await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
+    const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
+    const data = await res.json();
+    const addr = data[0]?.address || {};
+    const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
+    const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city } : null;
+    if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
+    return result;
+  })();
+  _geocodeInFlight.set(query, promise);
+  try {
+    return await promise;
+  } finally {
+    _geocodeInFlight.delete(query);
+  }
+}
+
+// Nominatim's addressdetails levert niet altijd het niveau dat je wilt (soms
+// een wijk, soms een regio) en soms geen bruikbare naam voor een klein
+// verblijfsadres. Laat Claude de plaatsnaam uit de ruwe naam/adrestekst
+// destilleren; valt terug op Nominatim's eigen city-veld als dat niet lukt
+// (geen API-key, netwerkfout, of een gast zonder server-sessie).
+async function deriveCityName(query, fallbackCity) {
+  if (_guestMode) return fallbackCity || null;
+  const key = `placename_${query}`;
+  try {
+    const c = localStorage.getItem(key);
+    if (c) return c;
+  } catch {}
+  try {
+    const data = await apiFetch("/api/geocode/place-name", { method: "POST", body: JSON.stringify({ query }) });
+    if (data?.city) {
+      try { localStorage.setItem(key, data.city); } catch {}
+      return data.city;
+    }
+  } catch {}
+  return fallbackCity || null;
 }
 
 function MapTab({ trip, accommodations, transports, days }) {
@@ -3544,12 +3659,12 @@ function MapTab({ trip, accommodations, transports, days }) {
       // Use airport codes or city names — append country context from trip destination if short
       const transportPairs = [];
       transports.forEach((t) => {
-        if (t.origin && t.destination) {
-          const fromQ = t.origin;
-          const toQ = t.destination;
-          transportPairs.push({ from: fromQ, to: toQ, type: t.transport_type });
-          if (!items.find((i) => i.query === fromQ)) items.push({ label: t.origin, sublabel: "", type: "transport", query: fromQ });
-          if (!items.find((i) => i.query === toQ)) items.push({ label: t.destination, sublabel: "", type: "transport", query: toQ });
+        if (t.from_location && t.to_location) {
+          const fromQ = t.from_location;
+          const toQ = t.to_location;
+          transportPairs.push({ from: fromQ, to: toQ, type: t.type });
+          if (!items.find((i) => i.query === fromQ)) items.push({ label: t.from_location, sublabel: "", type: "transport", query: fromQ });
+          if (!items.find((i) => i.query === toQ)) items.push({ label: t.to_location, sublabel: "", type: "transport", query: toQ });
         }
       });
 
@@ -3622,9 +3737,12 @@ function MapTab({ trip, accommodations, transports, days }) {
         const geo = coordMap[item.query];
         const cfg = typeConfig[item.type] || typeConfig.activity;
         const marker = L.marker([geo.lat, geo.lon], { icon: iconSvg(cfg.paths, cfg.color) }).addTo(map);
+        // item.label/sublabel komen uit vrij in te vullen tekst (activiteit-,
+        // verblijf- en vervoernamen) — ongefilterd in deze HTML-string plakken
+        // zou opgeslagen XSS zijn, dus escapen vóór het aan bindPopup te geven.
         const popup = `<div style="font-family:system-ui;min-width:140px">
-          <div style="font-weight:600;font-size:13px;color:#241D19">${item.label}</div>
-          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#7B6E67;margin-top:2px">${item.sublabel}</div>` : ""}
+          <div style="font-weight:600;font-size:13px;color:#241D19">${escapeHtml(item.label)}</div>
+          ${item.sublabel && item.sublabel !== item.label ? `<div style="font-size:11px;color:#7B6E67;margin-top:2px">${escapeHtml(item.sublabel)}</div>` : ""}
         </div>`;
         marker.bindPopup(popup);
         bounds.push([geo.lat, geo.lon]);
@@ -3643,7 +3761,7 @@ function MapTab({ trip, accommodations, transports, days }) {
   }, []);
 
   const hasLocations = accommodations.some((a) => a.address || a.name) ||
-    transports.some((t) => t.origin && t.destination) ||
+    transports.some((t) => t.from_location && t.to_location) ||
     days.some((d) => (d.activities || []).some((a) => a.location));
 
   if (!hasLocations) return (
@@ -3875,8 +3993,8 @@ function DayMiniMap({ places, accommodation }) {
         });
         if (pl.label) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
-          const timeSuffix = pl.time ? ` · ${pl.time}` : "";
-          marker.bindTooltip(`<span style="font-weight:600">${shortLabel}</span>${timeSuffix}`, {
+          const timeSuffix = pl.time ? ` · ${escapeHtml(pl.time)}` : "";
+          marker.bindTooltip(`<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}`, {
             permanent: true, direction: "top", offset: [0, -8], opacity: 0.95,
             className: "leaflet-reisplanner-tooltip",
           });
@@ -3944,7 +4062,9 @@ function AccommodationTransition({ current, previous }) {
     (async () => {
       const q = current?.address || current?.name;
       const geo = q ? await geocode(q).catch(() => null) : null;
-      if (!cancelled) setCurrentGeo(geo);
+      if (cancelled || !geo) { if (!cancelled) setCurrentGeo(geo); return; }
+      const city = await deriveCityName(q, geo.city);
+      if (!cancelled) setCurrentGeo({ ...geo, city });
     })();
     return () => { cancelled = true; };
   }, [current?.id]);
@@ -3955,7 +4075,9 @@ function AccommodationTransition({ current, previous }) {
     (async () => {
       const q = previous.address || previous.name;
       const geo = q ? await geocode(q).catch(() => null) : null;
-      if (!cancelled) setPreviousGeo(geo);
+      if (cancelled || !geo) { if (!cancelled) setPreviousGeo(geo); return; }
+      const city = await deriveCityName(q, geo.city);
+      if (!cancelled) setPreviousGeo({ ...geo, city });
     })();
     return () => { cancelled = true; };
   }, [isTravelDay, previous?.id]);
@@ -5089,8 +5211,10 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
   async function handleDelete() {
     if (!confirm(`"${trip.name}" definitief verwijderen?`)) return;
-    await api.deleteTrip(tripId);
-    onBack(); onChanged();
+    try {
+      await api.deleteTrip(tripId);
+      onBack(); onChanged();
+    } catch (err) { alert(err.message); }
   }
 
   if (loadError && !trip) {

@@ -960,7 +960,8 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
 }, { tripScope: "param" });
 
 route("DELETE", "/api/trips/:id", async (req, res, params) => {
-  await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  const { rowCount } = await query("DELETE FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!rowCount) return sendError(res, 404, "Reis niet gevonden");
   res.writeHead(204); res.end();
 }, { tripScope: "param" });
 
@@ -1858,21 +1859,23 @@ route("POST", "/api/trips/:id/journal", async (req, res, params, body) => {
   }
   const author = firstName(req.user);
 
-  const existing = await query(`SELECT id FROM journal_entries WHERE ${col} = $1 AND user_id = $2`, [val, req.user.id]);
-  if (existing.rows.length) {
-    const { rows } = await query(
-      "UPDATE journal_entries SET title=$1, body=$2, updated_at=NOW() WHERE id=$3 RETURNING *",
-      [title || null, text, existing.rows[0].id]
-    );
-    notifyTripViewers(params.id, req.user.id, "entry", `${author || "Iemand"} werkte een verhaal bij`, author);
-    return sendJson(res, 200, { ...rows[0], author });
-  }
+  // Atomic upsert: the previous check-then-branch (SELECT, then UPDATE or
+  // INSERT) left a window where two near-simultaneous requests for the same
+  // slot (a double-tap, or two open tabs) could both miss the SELECT and both
+  // try to INSERT — the second hit the unique index below and surfaced as an
+  // unhandled 500 instead of taking the update path. `col` is one of the four
+  // fixed column names checked above, never raw user input.
   const { rows } = await query(
-    "INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body, user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+    `INSERT INTO journal_entries (trip_id, day_id, activity_id, transport_id, accommodation_id, title, body, user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (${col}, user_id) WHERE ${col} IS NOT NULL DO UPDATE SET
+       title = EXCLUDED.title, body = EXCLUDED.body, updated_at = NOW()
+     RETURNING *, (xmax = 0) AS inserted`,
     [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, title || null, text, req.user.id]
   );
-  notifyTripViewers(params.id, req.user.id, "entry", `${author || "Iemand"} schreef een nieuw verhaal`, author);
-  sendJson(res, 201, { ...rows[0], author });
+  const { inserted, ...entry } = rows[0];
+  notifyTripViewers(params.id, req.user.id, "entry", `${author || "Iemand"} ${inserted ? "schreef een nieuw verhaal" : "werkte een verhaal bij"}`, author);
+  sendJson(res, inserted ? 201 : 200, { ...entry, author });
 }, { tripScope: "param" });
 
 route("DELETE", "/api/journal/:id", async (req, res, params) => {
@@ -2334,6 +2337,25 @@ Only include items actually present. Use null for missing values. Return empty a
     sendError(res, 500, "Kon gegevens niet verwerken uit de bevestiging");
   }
 }, { tripScope: "param" });
+
+// ---------- Plaatsnaam uit verblijfsinfo (Claude) ----------
+// Nominatim's addressdetails geeft niet altijd het juiste niveau terug (soms
+// een wijk, soms een regio) en niet elke plek heeft een vertaalde naam. Laat
+// Claude de plaatsnaam distilleren uit de ruwe naam/adrestekst van een
+// verblijf — geen tripScope nodig, dit hangt niet van een specifieke reis af.
+route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
+  const { query: q } = body || {};
+  if (!q?.trim()) return sendError(res, 400, "Geen zoekterm opgegeven");
+  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+
+  const msg = await anthropicClient.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 20,
+    messages: [{ role: "user", content: `Wat is de plaatsnaam (stad/dorp) waar dit verblijf zich bevindt: "${q}"? Antwoord met alleen de gangbare Nederlandse of internationaal gebruikelijke naam van die plaats, zonder aanhalingstekens, uitleg of extra tekst.` }],
+  });
+  const city = msg.content[0].text.trim().replace(/^["']|["']$/g, "");
+  sendJson(res, 200, { city: city || null });
+});
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {

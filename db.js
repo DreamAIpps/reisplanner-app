@@ -78,6 +78,17 @@ async function initDb() {
     -- bepaalt de 30-minuten-cooldown tussen twee pushes aan dezelfde persoon.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS last_push_at TIMESTAMPTZ;
 
+    -- trips.user_id had nooit een foreign key — het kon niet eerder, want deze
+    -- kolom bestaat al vanaf vóór de users-tabel verderop in dit bestand werd
+    -- aangemaakt. NOT VALID + een DO-block: bekrachtigt alleen nieuwe/gewijzigde
+    -- rijen (breekt de boot niet op eventuele bestaande data) en is veilig om
+    -- op elke herstart opnieuw te proberen.
+    DO $$ BEGIN
+      ALTER TABLE trips ADD CONSTRAINT trips_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL NOT VALID;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$;
+
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
