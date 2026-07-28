@@ -2537,11 +2537,27 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   // Anything written by someone else since this user's previous visit. The
   // server decides what counts as "previous visit" — see advanceJournalRead.
   const newCount = entries.filter((e) => e.is_new).length + comments.filter((c) => c.is_new).length;
-  const firstNew = entries.find((e) => e.is_new) || comments.find((c) => c.is_new);
+  // Entries/comments come in chronological (created_at ASC) order, so a plain
+  // .find() lands on the OLDEST new item — the opposite of what "nieuw" should
+  // jump to. Sort the combined new items newest-first instead.
+  const newestFirst = [
+    ...entries.filter((e) => e.is_new).map((e) => ({ ...e, _ts: e.updated_at || e.created_at })),
+    ...comments.filter((c) => c.is_new).map((c) => ({ ...c, _ts: c.created_at })),
+  ].sort((a, b) => new Date(b._ts) - new Date(a._ts));
+  const latestNew = newestFirst[0];
   function scrollToFirstNew() {
-    if (!firstNew) return;
-    const dayId = firstNew.day_id
-      || days.find((d) => (d.activities || []).some((a) => a.id === firstNew.activity_id))?.id;
+    if (!latestNew) return;
+    // Vervoer/verblijf hebben geen eigen kaart meer in het dagboek — val terug
+    // op de dag waar het item bij hoort, zodat een "nieuw" op zo'n item nog
+    // ergens naartoe kan scrollen.
+    const transport = latestNew.transport_id && transports.find((t) => t.id === latestNew.transport_id);
+    const accommodation = latestNew.accommodation_id && accommodations.find((a) => a.id === latestNew.accommodation_id);
+    const fallbackDateStr = transport ? isoDate(transport.departure_time || transport.arrival_time)
+      : accommodation ? isoDate(accommodation.check_in)
+      : null;
+    const dayId = latestNew.day_id
+      || days.find((d) => (d.activities || []).some((a) => a.id === latestNew.activity_id))?.id
+      || days.find((d) => isoDate(d.date) === fallbackDateStr)?.id;
     document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
