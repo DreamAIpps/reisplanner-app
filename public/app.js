@@ -5299,6 +5299,63 @@ function AdminView({ onBack }) {
   );
 }
 
+// Kan de app niet vanaf de server op iemands beginscherm zetten — dat is en
+// blijft een handeling die de gebruiker zelf moet doen. Wat wél kan: op
+// Android/Chrome het native installatiedialoogje met één tik aanbieden
+// (beforeinstallprompt), en op iPhone (waar die browser-API niet bestaat)
+// gewoon duidelijk uitleggen hoe het moet. Voor wie de app al heeft
+// toegevoegd — of het bannertje al wegtikte — blijft dit onzichtbaar.
+function InstallPrompt() {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem("rp_install_dismissed") === "1"; } catch { return false; }
+  });
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [installed] = useState(() =>
+    window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true
+  );
+
+  useEffect(() => {
+    function onBeforeInstall(e) { e.preventDefault(); setDeferredPrompt(e); }
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", () => setDeferredPrompt(null));
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+
+  function dismiss() {
+    try { localStorage.setItem("rp_install_dismissed", "1"); } catch {}
+    setDismissed(true);
+  }
+
+  async function install() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+  }
+
+  if (installed || dismissed || !(deferredPrompt || IS_IOS)) return null;
+
+  return (
+    <div className="max-w-5xl mx-auto px-3 sm:px-8 pt-3">
+      <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-3 shadow-sm">
+        <Icon name="plane" size={19} className="text-sky-700 shrink-0" />
+        <div className="flex-1 min-w-0 text-sm">
+          <div className="font-semibold text-gray-800">Zet Reisplanner op je beginscherm</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {deferredPrompt
+              ? "Snel erbij, net als een echte app."
+              : 'Tik op het deel-icoon onderin Safari, en kies "Zet op beginscherm".'}
+          </div>
+        </div>
+        {deferredPrompt && <Button onClick={install} className="!text-xs !px-3 !py-1.5 shrink-0">Installeren</Button>}
+        <button onClick={dismiss} className="text-gray-300 hover:text-gray-500 shrink-0" aria-label="Sluiten">
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- App ----------
 function App() {
   const [user, setUser] = useState(null);
@@ -5383,6 +5440,8 @@ function App() {
           </div>
         </div>
       </header>
+
+      <InstallPrompt />
 
       <main className="max-w-5xl mx-auto px-3 sm:px-8 pb-28 pt-4">
         {view.name === "list" ? (
