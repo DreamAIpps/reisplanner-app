@@ -3492,19 +3492,20 @@ function addBaseLayer(L, map, cfg) {
   }).addTo(map);
 }
 
-// v2: neemt addressdetails mee zodat er een schone plaatsnaam uit te halen is
-// (city/town/village/municipality — een adres heeft niet altijd hetzelfde
-// niveau). Eigen cache-prefix, want oudere gecachte resultaten (vóór dit
-// veld bestond) mogen niet zonder city teruggegeven worden.
+// v3: valt terug op Engels wanneer Nominatim geen Nederlandse naam heeft —
+// zonder die fallback levert een plaats zonder nl-vertaling (bijv. Takayama)
+// zijn lokale schrift op (高山市) in plaats van een Latijnse naam. Eigen
+// cache-prefix, want oudere gecachte resultaten (van vóór deze fallback)
+// kunnen nog zo'n onvertaalde naam bevatten.
 async function geocode(query) {
-  const key = `geocode2_${query}`;
+  const key = `geocode3_${query}`;
   try {
     const c = localStorage.getItem(key);
     if (c) return JSON.parse(c);
   } catch {}
   await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
-  const res = await fetch(url, { headers: { "Accept-Language": "nl", "User-Agent": "ReisplannerApp/1.0" } });
+  const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
   const data = await res.json();
   const addr = data[0]?.address || {};
   const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
