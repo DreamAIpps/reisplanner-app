@@ -319,20 +319,41 @@ async function notifyTripMembers(tripId, actorId, audience, kind, summary, actor
           AND (u.notify_email OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id))`,
       [recipients.map((r) => r.id)]
     );
+    // Reacties zijn het moment zelf waard — een eigenaar/editor wil meteen
+    // weten wie er net iets zei, niet pas via de eerstvolgende gebundelde
+    // push. Alleen-lezen kijkers houden de bestaande cooldown (ze krijgen nu
+    // sowieso al geen reactie-meldingen, maar de rolcheck maakt dat expliciet
+    // in plaats van toevallig).
+    const bundleIds = [];
     for (const { id } of notifyable) {
-      await query(
-        "INSERT INTO notifications (user_id, trip_id, kind, actor_name, summary) VALUES ($1,$2,$3,$4,$5)",
+      const { rows: inserted } = await query(
+        "INSERT INTO notifications (user_id, trip_id, kind, actor_name, summary) VALUES ($1,$2,$3,$4,$5) RETURNING id",
         [id, tripId, kind, actorName || null, summary]
       );
+      const role = kind === "comment" && pushEnabled() ? await getTripRole(tripId, id) : null;
+      if (role && role !== "viewer") {
+        await sendImmediateCommentPush(id, tripId, summary, inserted[0].id);
+      } else {
+        bundleIds.push(id);
+      }
     }
 
-    if (pushEnabled()) {
-      await Promise.all(recipients.map(({ id }) => maybeSendPush(id)));
+    if (pushEnabled() && bundleIds.length) {
+      await Promise.all(bundleIds.map((id) => maybeSendPush(id)));
     }
   } catch (err) {
     // A notification must never take down the action that triggered it.
     console.error("Queueing notification failed:", err.message);
   }
+}
+
+async function sendImmediateCommentPush(userId, tripId, summary, notificationId) {
+  const { rows: subRows } = await query("SELECT 1 FROM push_subscriptions WHERE user_id = $1 LIMIT 1", [userId]);
+  if (!subRows.length) return;
+  const { rows: tripRows } = await query("SELECT name FROM trips WHERE id = $1", [tripId]);
+  await sendPushToUser(userId, { title: tripRows[0]?.name || "Reisplanner", body: summary, tripId });
+  await query("UPDATE notifications SET push_sent_at = NOW() WHERE id = $1", [notificationId]);
+  await query("UPDATE users SET last_push_at = NOW() WHERE id = $1", [userId]);
 }
 
 const notifyTripManagers = (tripId, actorId, kind, summary, actorName) =>
@@ -686,11 +707,16 @@ route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
   );
   const byUser = new Map(sessions.map((r) => [r.user_id, r]));
 
-  // What they actually did, newest first.
+  // What they actually did, newest first — including which slot it hangs off,
+  // so the client can jump straight to that day in het dagboek.
   const { rows: activity } = await query(
-    `SELECT user_id, 'comment' AS kind, created_at AS at, body AS detail FROM journal_comments WHERE trip_id = $1
+    `SELECT user_id, 'comment' AS kind, created_at AS at, body AS detail,
+            day_id, activity_id, transport_id, accommodation_id
+       FROM journal_comments WHERE trip_id = $1
      UNION ALL
-     SELECT user_id, 'like', created_at, NULL FROM journal_likes WHERE trip_id = $1
+     SELECT user_id, 'like', created_at, NULL,
+            day_id, activity_id, transport_id, accommodation_id
+       FROM journal_likes WHERE trip_id = $1
      ORDER BY at DESC LIMIT 200`,
     [params.id]
   );
@@ -698,7 +724,12 @@ route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
   for (const a of activity) {
     if (!actionsByUser.has(a.user_id)) actionsByUser.set(a.user_id, []);
     const list = actionsByUser.get(a.user_id);
-    if (list.length < 10) list.push({ kind: a.kind, at: a.at, detail: a.detail });
+    if (list.length < 10) {
+      list.push({
+        kind: a.kind, at: a.at, detail: a.detail,
+        day_id: a.day_id, activity_id: a.activity_id, transport_id: a.transport_id, accommodation_id: a.accommodation_id,
+      });
+    }
   }
 
   const { rows: countRows } = await query(

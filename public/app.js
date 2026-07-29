@@ -5025,7 +5025,39 @@ function fmtDuration(minutes) {
   return rest ? `${h} u ${rest} min` : `${h} uur`;
 }
 
-function ShareModal({ tripId, onClose, role = "viewer" }) {
+// Herleidt een reactie/duimpje naar de dag waar die bij hoort — dezelfde
+// dag/activiteit/vervoer/verblijf-koppeling als photoAssignmentInfo hierboven,
+// maar dan met de dag-id als navigatiedoel in plaats van een label alleen.
+function recentActivityTarget(item, days, transports, accommodations) {
+  if (item.day_id) {
+    const day = days.find((d) => d.id === item.day_id);
+    return day ? { dayId: day.id, label: dayOptionLabel(day) } : null;
+  }
+  if (item.activity_id) {
+    for (const day of days) {
+      const act = (day.activities || []).find((a) => a.id === item.activity_id);
+      if (act) return { dayId: day.id, label: act.title };
+    }
+    return null;
+  }
+  if (item.transport_id) {
+    const t = (transports || []).find((t) => t.id === item.transport_id);
+    if (!t) return null;
+    const dayStr = t.departure_time ? String(t.departure_time).slice(0, 10) : t.arrival_time ? String(t.arrival_time).slice(0, 10) : null;
+    const day = days.find((d) => d.date && String(d.date).slice(0, 10) === dayStr);
+    return day ? { dayId: day.id, label: `${t.from_location} → ${t.to_location}` } : null;
+  }
+  if (item.accommodation_id) {
+    const a = (accommodations || []).find((a) => a.id === item.accommodation_id);
+    if (!a) return null;
+    const dayStr = a.check_in ? String(a.check_in).slice(0, 10) : null;
+    const day = days.find((d) => d.date && String(d.date).slice(0, 10) === dayStr);
+    return day ? { dayId: day.id, label: a.name } : null;
+  }
+  return null;
+}
+
+function ShareModal({ tripId, onClose, role = "viewer", days, transports, accommodations, onJumpToDay }) {
   const [link, setLink] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -5148,15 +5180,20 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
                         </div>
                         {m.recent.length > 0 && (
                           <div className="space-y-1">
-                            {m.recent.map((a, i) => (
-                              <div key={i} className="text-xs text-gray-500 flex gap-2">
-                                <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400" />
-                                <span className="flex-1 min-w-0 truncate">
-                                  {a.kind === "comment" ? a.detail : "gaf een duimpje"}
-                                </span>
-                                <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
-                              </div>
-                            ))}
+                            {m.recent.map((a, i) => {
+                              const target = onJumpToDay ? recentActivityTarget(a, days || [], transports, accommodations) : null;
+                              return (
+                                <div key={i} onClick={() => target && onJumpToDay(target.dayId)}
+                                  className={`text-xs text-gray-500 flex gap-2 rounded-md -mx-1 px-1 py-0.5 ${target ? "cursor-pointer hover:bg-white hover:text-sky-700 transition-colors" : ""}`}>
+                                  <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400 shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
+                                    {target && <div className="text-[10px] text-gray-400 truncate">bij {target.label}</div>}
+                                  </div>
+                                  <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -5618,6 +5655,17 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     } catch (err) { alert(err.message); }
   }
 
+  // Vanuit "Wie heeft de reis bekeken" naar de betreffende dag in het
+  // dagboek — de tab moet eerst wisselen en monteren voordat het element er
+  // is, vandaar de korte vertraging.
+  function jumpToDay(dayId) {
+    setSharing(null);
+    setTab("journal");
+    setTimeout(() => {
+      document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
   if (loadError && !trip) {
     return (
       <div className="text-center py-16">
@@ -5893,7 +5941,10 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
-      {sharing && <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)} />}
+      {sharing && (
+        <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)}
+          days={days} transports={transports} accommodations={accommodations} onJumpToDay={jumpToDay} />
+      )}
     </div>
   );
 }
