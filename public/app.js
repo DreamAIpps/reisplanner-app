@@ -1829,6 +1829,74 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
 // ---------- Day planning tab ----------
 const CATEGORY_ICONS = { Bezienswaardigheid: "landmark", Restaurant: "fork", Museum: "frame", Natuur: "leaf", Sport: "ball", Shopping: "bagShop", Anders: "flag" };
 function categoryIcon(cat) { return CATEGORY_ICONS[cat] || "flag"; }
+
+// Combineert activiteiten, vervoer en verblijf tot één chronologische lijst
+// van wat er nog aan zit te komen — handig tijdens de reis zelf om in één
+// oogopslag te zien wat er hierna op de planning staat. Tijdsprecisie stopt
+// bij "vandaag": voor toekomstige dagen telt alleen de datum mee, voor vandaag
+// wordt ook de klok van het toestel gebruikt om al gepasseerde items over te
+// slaan. Vervoer heeft een echte timestamp (en wordt, net als elders in de
+// app, als "wandkloktijd in UTC" gelezen — geen tijdzone-omrekening); verblijf
+// heeft geen tijd, dus check-in/check-out tellen zodra hun datum is aangebroken.
+function buildUpcomingItems(days, transports, accommodations, timezone) {
+  const todayStr = todayIso(timezone);
+  const now = new Date();
+  const nowHM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const isPastToday = (dayStr, hm) => dayStr === todayStr && !!hm && hm < nowHM;
+
+  const items = [];
+
+  (days || []).forEach((day) => {
+    const dayStr = day.date ? String(day.date).slice(0, 10) : null;
+    if (!dayStr || dayStr < todayStr) return;
+    (day.activities || []).forEach((act) => {
+      if (isPastToday(dayStr, act.time)) return;
+      items.push({
+        key: `act-${act.id}`, dayStr, sortKey: `${dayStr}T${act.time || "23:59"}`,
+        kind: "activity", icon: categoryIcon(act.category), title: act.title,
+        subtitle: act.location || act.category || "Activiteit", time: act.time || null, ref: act,
+      });
+    });
+  });
+
+  (transports || []).forEach((t) => {
+    if (!t.departure_time) return;
+    const dep = new Date(t.departure_time);
+    const dayStr = dep.toISOString().slice(0, 10);
+    const hm = dep.toISOString().slice(11, 16);
+    if (dayStr < todayStr || isPastToday(dayStr, hm)) return;
+    items.push({
+      key: `t-${t.id}`, dayStr, sortKey: `${dayStr}T${hm}`,
+      kind: "transport", icon: transportIcon(t.type), title: `${t.from_location} → ${t.to_location}`,
+      subtitle: t.type, time: hm, ref: t,
+    });
+  });
+
+  (accommodations || []).forEach((a) => {
+    if (a.check_in) {
+      const dayStr = String(a.check_in).slice(0, 10);
+      if (dayStr >= todayStr) {
+        items.push({
+          key: `a-in-${a.id}`, dayStr, sortKey: `${dayStr}T15:00`,
+          kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-in", time: null, ref: a,
+        });
+      }
+    }
+    if (a.check_out) {
+      const dayStr = String(a.check_out).slice(0, 10);
+      if (dayStr >= todayStr) {
+        items.push({
+          key: `a-out-${a.id}`, dayStr, sortKey: `${dayStr}T11:00`,
+          kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-out", time: null, ref: a,
+        });
+      }
+    }
+  });
+
+  items.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  return items;
+}
+
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
@@ -1892,6 +1960,18 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Alleen zinvol terwijl de reis loopt — vóór vertrek of ná thuiskomst is er
+  // geen "hierna" om te tonen.
+  const upcoming = React.useMemo(
+    () => todayDay ? buildUpcomingItems(days, transports, accommodations, trip.timezone).slice(0, 5) : [],
+    [todayDay, days, transports, accommodations, trip.timezone]
+  );
+  function openUpcomingItem(item) {
+    if (item.kind === "activity") setEditingActivity(item.ref);
+    else if (item.kind === "transport") setEditingTransport(item.ref);
+    else setEditingAccommodation(item.ref);
+  }
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
@@ -1909,6 +1989,28 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           )}
         </div>
       </div>
+
+      {upcoming.length > 0 && (
+        <div className="rounded-2xl border border-gray-100 bg-white shadow-sm mb-6 overflow-hidden">
+          <div className="px-4 pt-3 pb-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-400">Binnenkort</div>
+          <div className="divide-y divide-gray-50">
+            {upcoming.map((item) => (
+              <div key={item.key} onClick={() => openUpcomingItem(item)}
+                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
+                <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">{item.time || "—"}</span>
+                <Icon name={item.icon} size={14} className="text-gray-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-gray-800 truncate">{item.title}</div>
+                  <div className="text-xs text-gray-500 truncate">{item.subtitle}</div>
+                </div>
+                <span className="text-[10px] uppercase tracking-wide text-gray-300 shrink-0">
+                  {item.dayStr === todayIso(trip.timezone) ? "vandaag" : fmtShortDate(item.dayStr)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {days.length === 0 && (
         <div className="text-center py-16 text-gray-400">
