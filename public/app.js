@@ -91,6 +91,7 @@ const ICONS = {
   family: <><circle cx="7.5" cy="7.5" r="2.8" /><circle cx="16.5" cy="7.5" r="2.8" /><path d="M3 19.5a4.6 4.6 0 0 1 9 0" /><path d="M12.6 19.5a4.6 4.6 0 0 1 8.4-2.6" /><circle cx="12" cy="14.5" r="2" /><path d="M8.8 21a3.4 3.4 0 0 1 6.4 0" /></>,
   key: <><circle cx="8" cy="14" r="4" /><path d="m11 11.5 8.5-8.5" /><path d="m16 6.5 2.4 2.4" /></>,
   unlock: <><rect x="4.5" y="10.5" width="15" height="10" rx="2.5" /><path d="M8.5 10.5V7.2a3.5 3.5 0 0 1 6.8-1.2" /></>,
+  lock: <><rect x="4.5" y="10.5" width="15" height="10" rx="2.5" /><path d="M7.5 10.5V7.5a4.5 4.5 0 0 1 9 0v3" /></>,
 
   // paklijst
   doc: <><path d="M6 3.5h7L18.5 9v11.5H6z" /><path d="M13 3.5V9h5.5" /><path d="M9 13h6" /><path d="M9 16.5h4" /></>,
@@ -946,6 +947,21 @@ function TripCard({ trip, onClick }) {
   );
 }
 
+// Standaard openbaar: wie de reis deelt (viewer-rol) ziet dit gewoon mee. Aan
+// zetten verbergt het item voor die kijkers — dezelfde rol die nu al geen
+// kosten te zien krijgt — terwijl editors het zelf gewoon blijven zien.
+function PrivacyToggle({ value, onChange }) {
+  return (
+    <button type="button" onClick={() => onChange(!value)}
+      className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all active:scale-95 ${
+        value ? "bg-gray-50 text-gray-600 border-gray-200" : "bg-sky-50 text-sky-700 border-sky-200"
+      }`}>
+      <Icon name={value ? "lock" : "globe"} size={14} />
+      {value ? "Privé — alleen zichtbaar voor jou" : "Zichtbaar voor iedereen"}
+    </button>
+  );
+}
+
 // ---------- Activity form ----------
 function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated }) {
   // Once created, the activity behaves like an existing one for the rest of this
@@ -961,13 +977,14 @@ function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onC
         time: initial.time ?? "", location: initial.location ?? "",
         notes: initial.notes ?? "", cost: initial.cost ?? "",
         category: initial.category ?? "Bezienswaardigheid",
+        is_private: initial.is_private ?? false,
       };
     }
     // The day whose "+ Activiteit" button was pressed is an explicit choice and
     // always wins. Today is only the default when no day was specified at all
     // (and only if today actually falls inside the trip).
     const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso(tripTimezone));
-    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", day_id: dayId ?? todayDay?.id ?? "" };
+    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", is_private: false, day_id: dayId ?? todayDay?.id ?? "" };
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1023,6 +1040,11 @@ function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onC
         <Field label="Locatie"><Input value={form.location} onChange={set("location")} placeholder="bijv. Via Sacra, Rome" disabled={readOnly} /></Field>
         {!readOnly && <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
+        {!readOnly && (
+          <Field label="Zichtbaarheid">
+            <PrivacyToggle value={form.is_private} onChange={(v) => setForm((f) => ({ ...f, is_private: v }))} />
+          </Field>
+        )}
         {activity?.id && (
           <Field label="Dagboek">
             {created && (
@@ -1062,7 +1084,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
     ...initial,
     check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "",
     address: initial.address ?? "", booking_ref: initial.booking_ref ?? "", cost: initial.cost ?? "", notes: initial.notes ?? "",
-  } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "" });
+  } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "", is_private: false });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -1098,6 +1120,11 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
           {!readOnly && <Field label="Kosten totaal (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
         </div>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
+        {!readOnly && (
+          <Field label="Zichtbaarheid">
+            <PrivacyToggle value={form.is_private} onChange={(v) => setForm((f) => ({ ...f, is_private: v }))} />
+          </Field>
+        )}
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder={`Vertel over ${form.name || "dit verblijf"}...`}
@@ -1129,7 +1156,7 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
     booking_ref: initial.booking_ref ?? "",
     notes: initial.notes ?? "",
     baggage_allowance: initial.baggage_allowance ?? "",
-  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "" });
+  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "", is_private: false });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -1173,6 +1200,11 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
         </div>
         <Field label="Bagageregels"><Input value={form.baggage_allowance ?? ""} onChange={set("baggage_allowance")} placeholder="bijv. 1x 23kg ruimbagage + 10kg handbagage" disabled={readOnly} /></Field>
         <Field label="Notities"><Textarea rows={2} value={form.notes} onChange={set("notes")} disabled={readOnly} /></Field>
+        {!readOnly && (
+          <Field label="Zichtbaarheid">
+            <PrivacyToggle value={form.is_private} onChange={(v) => setForm((f) => ({ ...f, is_private: v }))} />
+          </Field>
+        )}
         {initial?.id && (
           <Field label="Dagboek">
             <JournalEntryBox entries={journalEntries || []} currentUserId={currentUserId} placeholder="Vertel over deze reis..."
@@ -2129,7 +2161,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                           </span>
                           <div className="flex-1 min-w-0">
                             {/* Een route mag over twee regels; "Parijs CDG → Sha…" zegt niets. */}
-                            <div className="text-sm font-semibold text-gray-800 leading-snug">{t.from_location} → {t.to_location}</div>
+                            <div className="text-sm font-semibold text-gray-800 leading-snug">
+                              {t.from_location} → {t.to_location}
+                              {t.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
+                            </div>
                             <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
                               <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />
                               <span>{isArrival ? "Aankomst" : "Vertrek"}</span>
@@ -2161,7 +2196,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                           <div className="flex items-center gap-3 px-3 py-2.5">
                             <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">—</span>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-semibold text-gray-800 truncate">{a.name}</div>
+                              <div className="text-sm font-semibold text-gray-800 truncate">
+                                {a.name}
+                                {a.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
+                              </div>
                               <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
                                 <Icon name="bed" size={13} className="text-gray-400" />
                                 <span>{isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}</span>
@@ -2199,7 +2237,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                           <div className="flex items-start gap-3 px-3 py-2.5">
                             <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right pt-0.5">{act.time || "—"}</span>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-semibold text-gray-800">{act.title}</div>
+                              <div className="text-sm font-semibold text-gray-800">
+                                {act.title}
+                                {act.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
+                              </div>
                               <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
                                 <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />
                                 <span className="truncate">{act.category || "Activiteit"}</span>
@@ -3799,9 +3840,12 @@ function weatherFromCode(code) {
 // verleden t/m 16 dagen vooruit; voor oudere reisdagen valt dit terug op het
 // archief. Buiten beide bereiken (of bij een netwerkfout) blijft het weer
 // gewoon leeg — dit is een leuk detail, geen essentieel onderdeel van de app.
+// v2: neemt ook de gevoelstemperatuur mee, voor het detailkaartje achter een
+// klik op het weer-icoon. Eigen cache-prefix, want oudere gecachte resultaten
+// (van vóór dit veld bestond) missen die waarde.
 async function fetchDayWeather(lat, lon, dateStr) {
   if (lat == null || lon == null || !dateStr) return null;
-  const key = `weather_${lat.toFixed(2)}_${lon.toFixed(2)}_${dateStr}`;
+  const key = `weather2_${lat.toFixed(2)}_${lon.toFixed(2)}_${dateStr}`;
   try {
     const c = localStorage.getItem(key);
     if (c) return JSON.parse(c);
@@ -3812,9 +3856,13 @@ async function fetchDayWeather(lat, lon, dateStr) {
     const data = await res.json();
     const d = data?.daily;
     if (!d?.weathercode?.length) return null;
-    return { tempMax: d.temperature_2m_max[0], tempMin: d.temperature_2m_min[0], code: d.weathercode[0] };
+    return {
+      tempMax: d.temperature_2m_max[0], tempMin: d.temperature_2m_min[0], code: d.weathercode[0],
+      feelsMax: d.apparent_temperature_max?.[0] ?? null, feelsMin: d.apparent_temperature_min?.[0] ?? null,
+      precip: d.precipitation_sum?.[0] ?? null,
+    };
   };
-  const params = `daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
+  const params = `daily=weathercode,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
   let result = null;
   try { result = await parse(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&${params}`); } catch {}
   if (!result) {
@@ -3828,6 +3876,50 @@ async function fetchDayWeather(lat, lon, dateStr) {
 // het weer bij, zodat elke plek in de app (dagplanning, het "Binnenkort"-
 // lijstje) dit met één regel kan tonen zonder de geocode/weer-logica zelf te
 // herhalen.
+// Het icoontje zelf blijft bewust minimaal (icoon + max-temperatuur) — een
+// klik erop laat het detail zien: gevoelstemperatuur, min/max en neerslag.
+// Zo blijft het rustig in de dagkaart, maar is er meer te vinden voor wie het
+// wil weten.
+function WeatherBadge({ weather, size = 13, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  if (!weather) return null;
+  const info = weatherFromCode(weather.code);
+
+  return (
+    <span className={"relative inline-flex shrink-0 " + className} ref={wrapRef}>
+      <button type="button" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        className="flex items-center gap-1 text-gray-400 hover:text-gray-600 active:scale-95 transition-all">
+        <Icon name={info.icon} size={size} />
+        <span className="tnum text-gray-600 font-medium">{Math.round(weather.tempMax)}°</span>
+      </button>
+      {open && (
+        <div onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 top-full mt-1.5 z-50 bg-white rounded-xl shadow-xl border border-gray-100 px-3.5 py-3 text-xs whitespace-nowrap">
+          <div className="flex items-center gap-1.5 font-semibold text-gray-800 mb-1.5">
+            <Icon name={info.icon} size={15} className="text-gray-400" />{info.label}
+          </div>
+          <div className="tnum text-gray-600">{Math.round(weather.tempMax)}° / {Math.round(weather.tempMin)}°</div>
+          {weather.feelsMax != null && (
+            <div className="tnum text-gray-400 mt-0.5">Voelt als {Math.round(weather.feelsMax)}°</div>
+          )}
+          {weather.precip != null && weather.precip > 0 && (
+            <div className="tnum text-gray-400 mt-0.5">{weather.precip.toFixed(1).replace(".", ",")} mm neerslag</div>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function DayWeatherBadge({ query, date, size = 13 }) {
   const [weather, setWeather] = useState(null);
   useEffect(() => {
@@ -3843,14 +3935,7 @@ function DayWeatherBadge({ query, date, size = 13 }) {
     return () => { cancelled = true; };
   }, [query, date]);
 
-  if (!weather) return null;
-  const info = weatherFromCode(weather.code);
-  return (
-    <span className="shrink-0 flex items-center gap-1 text-gray-400" title={info.label}>
-      <Icon name={info.icon} size={size} />
-      <span className="tnum text-gray-600 font-medium">{Math.round(weather.tempMax)}°</span>
-    </span>
-  );
+  return <WeatherBadge weather={weather} size={size} />;
 }
 
 function MapTab({ trip, accommodations, transports, days }) {
@@ -4361,19 +4446,13 @@ function AccommodationTransition({ current, previous, date }) {
 
   const currentLabel = currentGeo?.city || current.address || current.name;
   const previousLabel = previousGeo?.city || previous?.address || previous?.name;
-  const weatherInfo = weather ? weatherFromCode(weather.code) : null;
 
   return (
     <div>
       <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
         <Icon name="bed" size={12} className="text-gray-400 shrink-0" />
         <span className="truncate">{isTravelDay ? `Van ${previousLabel} naar ${currentLabel}` : currentLabel}</span>
-        {weatherInfo && (
-          <span className="ml-auto shrink-0 flex items-center gap-1 text-gray-400" title={weatherInfo.label}>
-            <Icon name={weatherInfo.icon} size={13} />
-            <span className="tnum text-gray-600 font-medium">{Math.round(weather.tempMax)}°</span>
-          </span>
-        )}
+        <WeatherBadge weather={weather} className="ml-auto" />
       </span>
       {isTravelDay && hasCoords && (
         <>
@@ -5559,13 +5638,14 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   const isOwnerActions = trip.is_owner && !previewViewer;
 
   // What a shared viewer actually receives: no budget, no per-item costs, no
-  // expense list. Mirrors stripCosts() on the server.
+  // expense list, and no items marked private. Mirrors stripCosts() and the
+  // is_private filter on the server.
   const viewTrip = previewViewer ? { ...trip, budget: null, role: "viewer" } : trip;
   const viewDays = previewViewer
-    ? days.map((d) => ({ ...d, activities: (d.activities || []).map((a) => ({ ...a, cost: null })) }))
+    ? days.map((d) => ({ ...d, activities: (d.activities || []).filter((a) => !a.is_private).map((a) => ({ ...a, cost: null })) }))
     : days;
-  const viewTransports = previewViewer ? transports.map((t) => ({ ...t, cost: null })) : transports;
-  const viewAccommodations = previewViewer ? accommodations.map((a) => ({ ...a, cost: null })) : accommodations;
+  const viewTransports = previewViewer ? transports.filter((t) => !t.is_private).map((t) => ({ ...t, cost: null })) : transports;
+  const viewAccommodations = previewViewer ? accommodations.filter((a) => !a.is_private).map((a) => ({ ...a, cost: null })) : accommodations;
   const viewExpenses = previewViewer ? [] : expenses;
 
   const tabs = [
@@ -5621,27 +5701,27 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       <div className="rounded-2xl shadow-md overflow-hidden mb-6" style={{ border: `1px solid ${accent}22` }}>
         {trip.cover_image ? (
           <>
-            <div className="relative h-48 sm:h-64 w-full overflow-hidden">
+            <div className="relative h-32 sm:h-40 w-full overflow-hidden">
               <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
-                <div className="flex items-start gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/30 text-white backdrop-blur-sm">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
+              <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
+                <div className="flex items-start gap-2 mb-0.5">
+                  {trip.is_owner === false && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-black/30 text-white backdrop-blur-sm">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">
+                <h2 className="text-lg sm:text-xl font-bold text-white drop-shadow-md">
                   {trip.name}
                   {!readOnly && tab !== "journal" && (
-                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-sm font-medium text-white/70 hover:text-white transition-colors">
+                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-xs font-medium text-white/70 hover:text-white transition-colors">
                       · Dagplanning
                     </button>
                   )}
                 </h2>
-                {trip.destination && <div className="text-white/85 mt-0.5 text-sm flex items-center gap-1"><Icon name="pin" size={13} />{trip.destination}</div>}
-                <div className="flex gap-4 mt-1.5 text-sm text-white/70 flex-wrap">
-                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
+                {trip.destination && <div className="text-white/85 mt-0.5 text-xs flex items-center gap-1"><Icon name="pin" size={11} />{trip.destination}</div>}
+                <div className="flex gap-3 mt-1 text-xs text-white/70 flex-wrap">
+                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={11} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={11} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
                 </div>
-                {trip.notes && <div className="text-white/60 text-xs mt-1.5">{trip.notes}</div>}
+                {trip.notes && <div className="text-white/60 text-[11px] mt-1">{trip.notes}</div>}
               </div>
             </div>
             {isOwnerActions && tab !== "journal" && tab !== "photos" && (
@@ -5652,32 +5732,32 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           </>
         ) : (
           <>
-            <div className="relative h-28 w-full flex items-end px-6 pb-4" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
+            <div className="relative h-20 w-full flex items-end px-5 pb-3" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
               <div className="relative flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  {trip.is_owner === false && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
+                <div className="flex items-center gap-2 mb-0.5">
+                  {trip.is_owner === false && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
                 </div>
-                <h2 className="text-2xl font-bold drop-shadow text-white">
+                <h2 className="text-lg font-bold drop-shadow text-white">
                   {trip.name}
                   {!readOnly && tab !== "journal" && (
-                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-sm font-medium text-white/70 hover:text-white transition-colors">
+                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-xs font-medium text-white/70 hover:text-white transition-colors">
                       · Dagplanning
                     </button>
                   )}
                 </h2>
-                {trip.destination && <div className="text-sm mt-0.5 flex items-center gap-1 text-white/80"><Icon name="pin" size={13} />{trip.destination}</div>}
+                {trip.destination && <div className="text-xs mt-0.5 flex items-center gap-1 text-white/80"><Icon name="pin" size={11} />{trip.destination}</div>}
               </div>
             </div>
-            <div className="bg-white px-4 py-3">
-              <div className="text-sm text-gray-500 flex gap-4 flex-wrap items-center justify-between">
-                <div className="flex gap-4 flex-wrap">
-                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
+            <div className="bg-white px-4 py-2.5">
+              <div className="text-xs text-gray-500 flex gap-4 flex-wrap items-center justify-between">
+                <div className="flex gap-3 flex-wrap">
+                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={11} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
+                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={11} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
                 </div>
                 {isOwnerActions && tab !== "journal" && tab !== "photos" && <TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} />}
               </div>
-              {trip.notes && <div className="text-sm text-gray-500 mt-2">{trip.notes}</div>}
+              {trip.notes && <div className="text-xs text-gray-500 mt-1.5">{trip.notes}</div>}
             </div>
           </>
         )}

@@ -151,6 +151,10 @@ async function initDb() {
       category TEXT DEFAULT 'activity',
       cost NUMERIC(10,2)
     );
+    -- Standaard openbaar (zichtbaar voor gedeelde kijkers); aangevinkt verbergt
+    -- het item voor iedereen met alleen-lezen (viewer) toegang tot de reis —
+    -- dezelfde rol die nu al geen kosten/uitgaven te zien krijgt.
+    ALTER TABLE activities ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS accommodations (
       id SERIAL PRIMARY KEY,
@@ -163,6 +167,7 @@ async function initDb() {
       cost NUMERIC(10,2),
       notes TEXT
     );
+    ALTER TABLE accommodations ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS transports (
       id SERIAL PRIMARY KEY,
@@ -178,6 +183,7 @@ async function initDb() {
       baggage_allowance TEXT
     );
     ALTER TABLE transports ADD COLUMN IF NOT EXISTS baggage_allowance TEXT;
+    ALTER TABLE transports ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS expenses (
       id SERIAL PRIMARY KEY,

@@ -970,7 +970,10 @@ route("GET", "/api/trips/:id/days", async (req, res, params) => {
   const role = req.tripRole;
   const { rows: days } = await query("SELECT * FROM days WHERE trip_id = $1 ORDER BY date ASC", [params.id]);
   const { rows: acts } = await query("SELECT * FROM activities WHERE trip_id = $1 ORDER BY time ASC NULLS LAST, id ASC", [params.id]);
-  const result = days.map((d) => ({ ...d, activities: acts.filter((a) => a.day_id === d.id).map((a) => stripCosts(role, a, ["cost"])) }));
+  // Privé items zijn er voor de eigenaar/editors nog gewoon, maar bestaan voor
+  // een alleen-lezen kijker niet — dezelfde rol die ook geen kosten ziet.
+  const visibleActs = role === "viewer" ? acts.filter((a) => !a.is_private) : acts;
+  const result = days.map((d) => ({ ...d, activities: visibleActs.filter((a) => a.day_id === d.id).map((a) => stripCosts(role, a, ["cost"])) }));
   sendJson(res, 200, result);
 }, { tripScope: "param" });
 
@@ -995,22 +998,22 @@ route("DELETE", "/api/days/:id", async (req, res, params) => {
 }, { tripScope: "days" });
 
 route("POST", "/api/days/:id/activities", async (req, res, params, body) => {
-  const { time, title, location, notes, category, cost } = body;
+  const { time, title, location, notes, category, cost, is_private } = body;
   if (!title || !String(title).trim()) return sendError(res, 400, "Titel is verplicht");
   // trip_id is derived from the day, never taken from the body — trusting the
   // client there let an editor drop rows into a trip they have no access to.
   const { rows } = await query(
-    `INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost)
-     SELECT $1, d.trip_id, $2, $3, $4, $5, $6, $7 FROM days d WHERE d.id = $1
+    `INSERT INTO activities (day_id, trip_id, time, title, location, notes, category, cost, is_private)
+     SELECT $1, d.trip_id, $2, $3, $4, $5, $6, $7, $8 FROM days d WHERE d.id = $1
      RETURNING *`,
-    [params.id, time||null, title, location||null, notes||null, category||"activity", cost||null]
+    [params.id, time||null, title, location||null, notes||null, category||"activity", cost||null, !!is_private]
   );
   if (!rows.length) return sendError(res, 404, "Dag niet gevonden");
   sendJson(res, 201, rows[0]);
 }, { tripScope: "days" });
 
 route("PUT", "/api/activities/:id", async (req, res, params, body) => {
-  const { day_id, time, title, location, notes, category, cost } = body;
+  const { day_id, time, title, location, notes, category, cost, is_private } = body;
   if (day_id) {
     const { rows: valid } = await query(
       "SELECT 1 FROM activities a JOIN days d ON d.id = $2 WHERE a.id = $1 AND d.trip_id = a.trip_id",
@@ -1019,8 +1022,8 @@ route("PUT", "/api/activities/:id", async (req, res, params, body) => {
     if (!valid.length) return sendError(res, 400, "Ongeldige dag voor deze reis");
   }
   const { rows } = await query(
-    "UPDATE activities SET day_id=COALESCE($1, day_id), time=$2, title=$3, location=$4, notes=$5, category=$6, cost=$7 WHERE id=$8 RETURNING *",
-    [day_id || null, time||null, title, location||null, notes||null, category||"activity", cost||null, params.id]
+    "UPDATE activities SET day_id=COALESCE($1, day_id), time=$2, title=$3, location=$4, notes=$5, category=$6, cost=$7, is_private=$8 WHERE id=$9 RETURNING *",
+    [day_id || null, time||null, title, location||null, notes||null, category||"activity", cost||null, !!is_private, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "activities" });
@@ -1054,11 +1057,12 @@ function checkDateInRange(dateStr, tripStart, tripEnd) {
 // ---------- Accommodation ----------
 route("GET", "/api/trips/:id/accommodations", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM accommodations WHERE trip_id = $1 ORDER BY check_in ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows.map((r) => stripCosts(req.tripRole, r, ["cost"])));
+  const visible = req.tripRole === "viewer" ? rows.filter((r) => !r.is_private) : rows;
+  sendJson(res, 200, visible.map((r) => stripCosts(req.tripRole, r, ["cost"])));
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) => {
-  const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
+  const { name, check_in, check_out, address, booking_ref, cost, notes, is_private } = body;
   const dateErr = invalidDates({ check_in, check_out });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
@@ -1066,19 +1070,19 @@ route("POST", "/api/trips/:id/accommodations", async (req, res, params, body) =>
   const err = checkDateInRange(check_in, trip?.start_date, trip?.end_date) || checkDateInRange(check_out, trip?.start_date, trip?.end_date);
   if (err) return sendError(res, 400, err);
   const { rows } = await query(
-    "INSERT INTO accommodations (trip_id, name, check_in, check_out, address, booking_ref, cost, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-    [params.id, name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null]
+    "INSERT INTO accommodations (trip_id, name, check_in, check_out, address, booking_ref, cost, notes, is_private) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+    [params.id, name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, !!is_private]
   );
   sendJson(res, 201, rows[0]);
 }, { tripScope: "param" });
 
 route("PUT", "/api/accommodations/:id", async (req, res, params, body) => {
-  const { name, check_in, check_out, address, booking_ref, cost, notes } = body;
+  const { name, check_in, check_out, address, booking_ref, cost, notes, is_private } = body;
   const dateErr = invalidDates({ check_in, check_out });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
-    "UPDATE accommodations SET name=$1, check_in=$2, check_out=$3, address=$4, booking_ref=$5, cost=$6, notes=$7 WHERE id=$8 RETURNING *",
-    [name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, params.id]
+    "UPDATE accommodations SET name=$1, check_in=$2, check_out=$3, address=$4, booking_ref=$5, cost=$6, notes=$7, is_private=$8 WHERE id=$9 RETURNING *",
+    [name, check_in||null, check_out||null, address||null, booking_ref||null, cost||null, notes||null, !!is_private, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "accommodations" });
@@ -1091,11 +1095,12 @@ route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
 // ---------- Transport ----------
 route("GET", "/api/trips/:id/transports", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);
-  sendJson(res, 200, rows.map((r) => stripCosts(req.tripRole, r, ["cost"])));
+  const visible = req.tripRole === "viewer" ? rows.filter((r) => !r.is_private) : rows;
+  sendJson(res, 200, visible.map((r) => stripCosts(req.tripRole, r, ["cost"])));
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private } = body;
   const dateErr = invalidDates({ departure_time, arrival_time });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
@@ -1103,19 +1108,19 @@ route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
   const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
   if (err) return sendError(res, 400, err);
   const { rows } = await query(
-    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
-    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null]
+    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private]
   );
   sendJson(res, 201, rows[0]);
 }, { tripScope: "param" });
 
 route("PUT", "/api/transports/:id", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private } = body;
   const dateErr = invalidDates({ departure_time, arrival_time });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
-    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9 WHERE id=$10 RETURNING *",
-    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, params.id]
+    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9, is_private=$10 WHERE id=$11 RETURNING *",
+    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "transports" });
