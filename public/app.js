@@ -1366,7 +1366,7 @@ async function mapWithConcurrency(items, limit, fn) {
 // Fullscreen photo viewer, shared by the dagboek strips and the Foto's grid.
 // The image fills the screen; everything else floats over it, so tapping a
 // photo gives you the photo rather than a boxed preview with panels under it.
-function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete, onRotate, onCaption }) {
+function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete, onRotate, onCaption, comments, slotLikes, tripId, currentUserId, isOwner, onCommentsChange }) {
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
@@ -1375,7 +1375,16 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
   const [editingCaption, setEditingCaption] = useState(false);
   const [captionText, setCaptionText] = useState("");
   const [savingCaption, setSavingCaption] = useState(false);
+  // De foto is nu het hele scherm: verhaal en reacties liggen er als een laag
+  // overheen die je met een tik weg kan tikken, zodat de foto zelf de
+  // hoofdrol houdt in plaats van een kaartje ernaast.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [replyText, setReplyText] = useState("");
+  const [postingReply, setPostingReply] = useState(false);
+  const [heartBurst, setHeartBurst] = useState(0);
   const touchStart = useRef(null);
+  const tapTimer = useRef(null);
+  const lastSwipeAt = useRef(0);
 
   const safeIndex = photos.length ? Math.min(index, photos.length - 1) : null;
   const viewing = safeIndex == null ? null : photos[safeIndex];
@@ -1385,10 +1394,10 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
 
   useEffect(() => { if (!photos.length) onClose(); }, [photos.length, onClose]);
 
-  // Voorkomt dat een bijschrift dat je nog aan het typen bent op de verkeerde
-  // foto belandt als die intussen (via de pijltjestoetsen hieronder, of anders)
-  // is doorgeschoven naar de volgende/vorige foto.
-  useEffect(() => { setEditingCaption(false); setCaptionText(""); }, [viewing?.id]);
+  // Voorkomt dat een bijschrift of reactie die je nog aan het typen bent op de
+  // verkeerde foto belandt als die intussen (via de pijltjestoetsen hieronder,
+  // of anders) is doorgeschoven naar de volgende/vorige foto.
+  useEffect(() => { setEditingCaption(false); setCaptionText(""); setReplyText(""); }, [viewing?.id]);
 
   useEffect(() => {
     function handleKey(e) {
@@ -1439,25 +1448,78 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
     touchStart.current = null;
     if (wasHorizontal && Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
       if (dx < 0) showNext(); else showPrev();
+      lastSwipeAt.current = Date.now();
       setDragX(0);
     } else {
       setDragging(false); setDragX(0);
     }
   }
 
+  // Eén tik verbergt/toont verhaal en reacties, zodat de foto zelf even het
+  // hele scherm krijgt; twee snel na elkaar waarderen de foto — net als
+  // overal elders in de app is dat een duimpje, geen hartje. Kort na een
+  // swipe telt een tik niet mee, anders wisselt de chrome per ongeluk mee
+  // met de synthetische click die op touch-apparaten na een swipe volgt.
+  function handleTap() {
+    if (Date.now() - lastSwipeAt.current < 300) return;
+    if (tapTimer.current) {
+      clearTimeout(tapTimer.current);
+      tapTimer.current = null;
+      handleDoubleTap();
+    } else {
+      tapTimer.current = setTimeout(() => {
+        tapTimer.current = null;
+        setChromeVisible((v) => !v);
+      }, 220);
+    }
+  }
+
+  async function handleDoubleTap() {
+    setHeartBurst((n) => n + 1);
+    if (!chromeVisible) setChromeVisible(true);
+    if (canReact && currentUserId && !photoLike.liked_by_me) {
+      try {
+        await api.toggleJournalLike(tripId, { photo_id: viewing.id });
+        await onCommentsChange();
+      } catch {}
+    }
+  }
+
+  async function handlePostReply(e) {
+    e.preventDefault();
+    if (!replyText.trim() || postingReply) return;
+    setPostingReply(true);
+    try {
+      await api.addJournalComment(tripId, { photo_id: viewing.id, body: replyText.trim() });
+      setReplyText("");
+      await onCommentsChange();
+    } catch (err) { alert(err.message || "Reactie plaatsen mislukt"); }
+    finally { setPostingReply(false); }
+  }
+
   if (!viewing) return null;
+
+  const photoComments = comments ? comments.filter((c) => c.photo_id === viewing.id) : [];
+  const photoLike = (slotLikes && slotLikes[`photo_id:${viewing.id}`]) || { like_count: 0, liked_by_me: false };
+  const canReact = !!(comments && tripId && onCommentsChange);
 
   return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[200] bg-black select-none" style={{ height: "100dvh" }}
-      onClick={onClose} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
+      onClick={handleTap} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
 
       <img src={`${viewing.url}${rotated ? (viewing.url.includes("?") ? "&" : "?") + "r=" + rotated : ""}`} alt="" draggable={false}
         className="absolute inset-0 w-full h-full object-contain"
         style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
 
+      {heartBurst > 0 && (
+        <div key={heartBurst} className="rp-heartpop absolute left-1/2 top-1/2 pointer-events-none z-[60] text-white">
+          <Icon name="thumb" size={84} strokeWidth={1.3} style={{ filter: "drop-shadow(0 6px 18px rgba(0,0,0,.4))" }} />
+        </div>
+      )}
+
       {/* Top chrome */}
-      <div className="absolute top-0 left-0 right-0 flex items-center gap-2 px-3 pb-3 bg-gradient-to-b from-black/70 to-transparent"
+      <div className={`absolute top-0 left-0 right-0 flex items-center gap-2 px-3 pb-3 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 ${chromeVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
         onClick={(e) => e.stopPropagation()}>
         <button type="button" onClick={onClose}
@@ -1491,38 +1553,80 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
         ) : <span className="w-9" />}
       </div>
 
-      {(viewing.caption || onCaption) && !showAssign && (
-        <div className="absolute left-0 right-0 bottom-0 px-4 bg-gradient-to-t from-black/70 to-transparent"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)", paddingTop: "2rem" }}
+      {(viewing.caption || onCaption || canReact) && !showAssign && (
+        <div className={`absolute left-0 right-0 bottom-0 px-4 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-all duration-300 ${chromeVisible ? "opacity-100" : "opacity-0 pointer-events-none translate-y-2"}`}
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)", paddingTop: "3rem" }}
           onClick={(e) => e.stopPropagation()}>
-          {editingCaption ? (
-            <div className="space-y-2 max-w-lg mx-auto">
-              <Textarea rows={2} autoFocus value={captionText} maxLength={500}
-                onChange={(e) => setCaptionText(e.target.value)} placeholder="Waar gaat deze foto over?" />
-              <div className="flex gap-2">
-                <Button disabled={savingCaption}
-                  onClick={async () => {
-                    setSavingCaption(true);
-                    try { await onCaption(viewing, captionText); setEditingCaption(false); }
-                    finally { setSavingCaption(false); }
-                  }}>{savingCaption ? "Opslaan..." : "Opslaan"}</Button>
-                <Button variant="secondary" onClick={() => setEditingCaption(false)}>Annuleren</Button>
+
+          {(viewing.caption || onCaption) && (
+            editingCaption ? (
+              <div className="space-y-2 max-w-lg mx-auto mb-3.5">
+                <Textarea rows={2} autoFocus value={captionText} maxLength={500}
+                  onChange={(e) => setCaptionText(e.target.value)} placeholder="Waar gaat deze foto over?" />
+                <div className="flex gap-2">
+                  <Button disabled={savingCaption}
+                    onClick={async () => {
+                      setSavingCaption(true);
+                      try { await onCaption(viewing, captionText); setEditingCaption(false); }
+                      finally { setSavingCaption(false); }
+                    }}>{savingCaption ? "Opslaan..." : "Opslaan"}</Button>
+                  <Button variant="secondary" onClick={() => setEditingCaption(false)}>Annuleren</Button>
+                </div>
               </div>
-            </div>
-          ) : viewing.caption ? (
-            <p className="text-white text-sm text-center max-w-lg mx-auto leading-relaxed whitespace-pre-wrap">
-              {viewing.caption}
-              {onCaption && (
-                <button type="button" onClick={() => { setCaptionText(viewing.caption || ""); setEditingCaption(true); }}
-                  className="ml-2 text-white/60 hover:text-white" aria-label="Bewerken"><Icon name="pen" size={14} /></button>
-              )}
-            </p>
-          ) : onCaption ? (
-            <div className="text-center">
+            ) : viewing.caption ? (
+              <p className="font-display text-white text-[17px] leading-relaxed whitespace-pre-wrap mb-3.5" style={{ textWrap: "balance", textShadow: "0 1px 8px rgba(0,0,0,.35)" }}>
+                {viewing.caption}
+                {onCaption && (
+                  <button type="button" onClick={() => { setCaptionText(viewing.caption || ""); setEditingCaption(true); }}
+                    className="ml-2 align-middle text-white/60 hover:text-white" aria-label="Bewerken"><Icon name="pen" size={14} /></button>
+                )}
+              </p>
+            ) : onCaption ? (
               <button type="button" onClick={() => { setCaptionText(""); setEditingCaption(true); }}
-                className="text-white/70 hover:text-white text-xs">+ Tekst toevoegen</button>
-            </div>
-          ) : null}
+                className="block text-white/70 hover:text-white text-xs mb-3.5">+ Verhaal toevoegen</button>
+            ) : null
+          )}
+
+          {canReact && (
+            <>
+              {photoComments.length > 0 && (
+                <div className="space-y-1.5 mb-3">
+                  {photoComments.map((c) => (
+                    <div key={c.id} className="flex items-start gap-2 rounded-2xl bg-white/15 px-3 py-1.5 max-w-[88%]" style={{ backdropFilter: "blur(6px)" }}>
+                      <span className="text-[13px] text-white leading-snug break-words">
+                        <b className="font-semibold">{c.author || "Iemand"}</b> {c.body}
+                      </span>
+                      {(c.user_id === currentUserId || isOwner) && (
+                        <button type="button" onClick={async () => { if (confirm("Reactie verwijderen?")) { try { await api.deleteJournalComment(c.id); await onCommentsChange(); } catch (err) { alert(err.message || "Verwijderen mislukt"); } } }}
+                          className="shrink-0 text-white/50 hover:text-white ml-auto" aria-label="Verwijderen">
+                          <Icon name="trash" size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2.5">
+                <button type="button" onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!currentUserId) return;
+                    try { await api.toggleJournalLike(tripId, { photo_id: viewing.id }); await onCommentsChange(); } catch (err) { alert(err.message || "Liken mislukt"); }
+                  }}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${photoLike.liked_by_me ? "bg-sky-700 text-white" : "bg-white/15 text-white hover:bg-white/25"}`}
+                  title={photoLike.liked_by_me ? "Like weghalen" : "Vind ik leuk"}>
+                  <Icon name="thumb" size={16} />
+                </button>
+                {photoLike.like_count > 0 && <span className="text-xs text-white/70 tnum shrink-0">{photoLike.like_count}</span>}
+                {currentUserId && (
+                  <form onSubmit={handlePostReply} className="flex-1 min-w-0">
+                    <input value={replyText} onChange={(e) => setReplyText(e.target.value)} maxLength={2000}
+                      placeholder="Reageer..." disabled={postingReply}
+                      className="w-full h-9 rounded-full border border-white/25 bg-white/10 text-white placeholder-white/55 text-[13px] px-4 outline-none focus:border-white/50 disabled:opacity-60" />
+                  </form>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1728,7 +1832,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           assign={canAssign ? { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign } : null}
           onDelete={readOnly ? null : (p) => handleDelete(p.id)}
           onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await onChange(); }}
-          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await onChange(); }} />
+          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await onChange(); }}
+          comments={comments} slotLikes={slotLikes} tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onCommentsChange={onCommentsChange} />
       )}
     </div>
   );
@@ -5282,16 +5387,29 @@ function assignPhotoPayload(days, value) {
   return payload;
 }
 
-function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
+function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly, currentUserId }) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewingIndex, setViewingIndex] = useState(null);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [slotLikes, setSlotLikes] = useState({});
 
   const loadPhotos = useCallback(async () => {
     try { setPhotos(await api.getPhotos(trip.id)); } catch {} finally { setLoading(false); }
   }, [trip.id]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
+
+  // Alleen nodig voor de reacties-laag in de fotoviewer — dezelfde bron als
+  // het dagboek, hier gebruikt om los van dat tabblad te kunnen reageren.
+  const loadComments = useCallback(async () => {
+    try {
+      const d = await api.getJournal(trip.id);
+      setComments(asList(d.comments));
+      setSlotLikes(d.slot_likes || {});
+    } catch {}
+  }, [trip.id]);
+  useEffect(() => { loadComments(); }, [loadComments]);
 
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
   const { dayGroups, otherTransports, otherAccommodations } = computeDayGroups(days, transports, accommodations);
@@ -5378,7 +5496,8 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly }) {
           assign={readOnly ? null : { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign }}
           onDelete={readOnly ? null : handleDelete}
           onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await loadPhotos(); }}
-          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await loadPhotos(); }} />
+          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await loadPhotos(); }}
+          comments={comments} slotLikes={slotLikes} tripId={trip.id} currentUserId={currentUserId} isOwner={trip.is_owner} onCommentsChange={loadComments} />
       )}
     </div>
   );
@@ -5883,7 +6002,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
         <>
           {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} />}
           {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
-          {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} />}
+          {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
