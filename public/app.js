@@ -1504,13 +1504,13 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
   const canReact = !!(comments && tripId && onCommentsChange);
 
   return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[200] bg-black select-none" style={{ height: "100dvh" }}
+    <div className="fixed inset-0 z-[200] bg-black select-none" style={{ height: "100dvh", touchAction: "manipulation" }}
       onClick={handleTap} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
 
       <img src={`${viewing.url}${rotated ? (viewing.url.includes("?") ? "&" : "?") + "r=" + rotated : ""}`} alt="" draggable={false}
         className="absolute inset-0 w-full h-full object-contain"
-        style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "pan-y" }} />
+        style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "manipulation" }} />
 
       {heartBurst > 0 && (
         <div key={heartBurst} className="rp-heartpop absolute left-1/2 top-1/2 pointer-events-none z-[60] text-white">
