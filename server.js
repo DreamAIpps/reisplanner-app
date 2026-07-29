@@ -2442,14 +2442,19 @@ route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
 // gepolld hoeft te worden op de server naast wat de deelnemers toch al doen.
 // Meedoen kan alleen via het session-specifieke join-token (de QR-code), nooit
 // via het gewone alleen-lezen-uitnodigingslink van de reis.
-const QUIZ_QUESTION_SECONDS = 15;
+const QUIZ_QUESTION_SECONDS_DEFAULT = 15;
+const QUIZ_QUESTION_SECONDS_MIN = 5;
+const QUIZ_QUESTION_SECONDS_MAX = 60;
 const QUIZ_INTERVAL_SECONDS = 6;
+const QUIZ_QUESTION_COUNT_DEFAULT = 5;
+const QUIZ_QUESTION_COUNT_MIN = 2;
+const QUIZ_QUESTION_COUNT_MAX = 15;
 
 // Alleen foto's die aan een activiteit, vervoer of verblijf hangen leveren een
 // zinnig "juist antwoord" op — een foto die alleen aan de dag zelf hangt heeft
 // geen naam om te raden. Claude bedenkt per juist antwoord drie verzonnen maar
 // geloofwaardige foute opties, in dezelfde stijl als de bestemming.
-async function generateQuizQuestions(tripId) {
+async function generateQuizQuestions(tripId, count) {
   const [{ rows: photos }, { rows: activities }, { rows: transportsRows }, { rows: accommodationsRows }, { rows: tripRows }] = await Promise.all([
     query("SELECT id, activity_id, transport_id, accommodation_id FROM photos WHERE trip_id = $1 AND (activity_id IS NOT NULL OR transport_id IS NOT NULL OR accommodation_id IS NOT NULL)", [tripId]),
     query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
@@ -2474,18 +2479,18 @@ async function generateQuizQuestions(tripId) {
 
   // Eerst zoveel mogelijk unieke antwoorden (anders is de quiz al opgelost
   // zodra je 'm de tweede keer ziet), pas daarna dubbele antwoorden toestaan
-  // om alsnog aan 5 vragen te komen.
+  // om alsnog aan het gevraagde aantal vragen te komen.
   const shuffled = [...candidates].sort(() => Math.random() - 0.5);
   const picked = [];
   const seenAnswers = new Set();
   for (const c of shuffled) {
-    if (picked.length >= 5) break;
+    if (picked.length >= count) break;
     if (seenAnswers.has(c.answer)) continue;
     seenAnswers.add(c.answer);
     picked.push(c);
   }
   for (const c of shuffled) {
-    if (picked.length >= 5) break;
+    if (picked.length >= count) break;
     if (!picked.includes(c)) picked.push(c);
   }
 
@@ -2561,7 +2566,7 @@ function quizSessionSummary(loaded, req) {
   };
 }
 
-route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params) => {
+route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => {
   const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan een quiz starten");
 
@@ -2575,8 +2580,11 @@ route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params) => {
     return sendJson(res, 200, { session: quizSessionSummary(loaded, req) });
   }
 
+  const questionSeconds = Math.min(QUIZ_QUESTION_SECONDS_MAX, Math.max(QUIZ_QUESTION_SECONDS_MIN, Number(body?.questionSeconds) || QUIZ_QUESTION_SECONDS_DEFAULT));
+  const questionCount = Math.min(QUIZ_QUESTION_COUNT_MAX, Math.max(QUIZ_QUESTION_COUNT_MIN, Number(body?.questionCount) || QUIZ_QUESTION_COUNT_DEFAULT));
+
   let questions;
-  try { questions = await generateQuizQuestions(params.id); }
+  try { questions = await generateQuizQuestions(params.id, questionCount); }
   catch (err) { return sendError(res, 500, err.message); }
   if (!questions.length) return sendError(res, 400, "Nog niet genoeg foto's gekoppeld aan een activiteit, vervoer of verblijf om een quiz van te maken.");
 
@@ -2584,7 +2592,7 @@ route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params) => {
   const { rows } = await query(
     `INSERT INTO quiz_sessions (trip_id, host_user_id, token, questions, question_seconds, interval_seconds)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [params.id, req.user.id, token, JSON.stringify(questions), QUIZ_QUESTION_SECONDS, QUIZ_INTERVAL_SECONDS]
+    [params.id, req.user.id, token, JSON.stringify(questions), questionSeconds, QUIZ_INTERVAL_SECONDS]
   );
   await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
     [rows[0].id, req.user.id, req.user.given_name || req.user.name || "Gastheer"]);

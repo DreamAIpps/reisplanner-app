@@ -438,7 +438,7 @@ const api = {
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
   getQuizSession: (tripId) => _guestMode ? Promise.resolve({ session: null }) : apiFetch(`/api/trips/${tripId}/quiz/session`),
-  createQuizSession: (tripId) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: "{}" }),
+  createQuizSession: (tripId, opts) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: JSON.stringify(opts || {}) }),
   startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),
   getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
   answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
@@ -5749,6 +5749,8 @@ function PhotoQuizTab({ trip, isHost }) {
   const [starting, setStarting] = useState(false);
   const [live, setLive] = useState(null);
   const [myPick, setMyPick] = useState(null);
+  const [questionSeconds, setQuestionSeconds] = useState(15);
+  const [questionCount, setQuestionCount] = useState(5);
 
   const refreshSession = useCallback(async () => {
     try { const data = await api.getQuizSession(trip.id); setSession(data.session || null); }
@@ -5776,7 +5778,7 @@ function PhotoQuizTab({ trip, isHost }) {
   async function createSession() {
     setCreating(true); setError(null);
     try {
-      const data = await api.createQuizSession(trip.id);
+      const data = await api.createQuizSession(trip.id, { questionSeconds, questionCount });
       setSession(data.session);
       setLive(null);
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
@@ -5813,11 +5815,29 @@ function PhotoQuizTab({ trip, isHost }) {
         <h3 className="font-display text-[21px] text-gray-800 mb-2">Fotoquiz</h3>
         <p className="text-sm text-gray-500 leading-relaxed mb-5">
           {isHost
-            ? "Vijf foto's uit deze reis, elk met vier antwoorden. Start een sessie en laat anderen meespelen via een QR-code — met tussenstand en een winnaar aan het eind."
+            ? "Foto's uit deze reis, elk met vier antwoorden. Start een sessie en laat anderen meespelen via een QR-code — met tussenstand en een winnaar aan het eind."
             : "Er is nu geen actieve fotoquiz voor deze reis."}
         </p>
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
-        {isHost && <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : "Start een fotoquiz"}</Button>}
+        {isHost && (
+          <>
+            <div className="flex items-center justify-center gap-4 mb-5 text-sm">
+              <label className="flex items-center gap-2 text-gray-500">
+                Aantal vragen
+                <Input type="number" min={2} max={15} value={questionCount}
+                  onChange={(e) => setQuestionCount(Math.min(15, Math.max(2, Number(e.target.value) || 2)))}
+                  className="!w-16 !py-1 text-center tnum" />
+              </label>
+              <label className="flex items-center gap-2 text-gray-500">
+                Seconden per vraag
+                <Input type="number" min={5} max={60} value={questionSeconds}
+                  onChange={(e) => setQuestionSeconds(Math.min(60, Math.max(5, Number(e.target.value) || 5)))}
+                  className="!w-16 !py-1 text-center tnum" />
+              </label>
+            </div>
+            <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : "Start een fotoquiz"}</Button>
+          </>
+        )}
       </div>
     );
   }
