@@ -4150,9 +4150,16 @@ function AccommodationTransition({ current, previous }) {
         <span className="truncate">{isTravelDay ? `Van ${previousLabel} naar ${currentLabel}` : currentLabel}</span>
       </span>
       {isTravelDay && hasCoords && (
-        <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0 mt-2" style={{ height: 140 }}>
-          <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
-        </div>
+        <>
+          <div className="text-xs text-gray-400 flex items-center gap-1.5 mt-1">
+            <Icon name="route" size={11} />
+            <span className="tnum font-medium text-gray-600">{fmtDistance(haversineMeters(previousGeo, currentGeo))}</span>
+            <span>in vogelvlucht</span>
+          </div>
+          <div className="rounded-xl overflow-hidden border border-gray-100 relative z-0 mt-1.5" style={{ height: 140 }}>
+            <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+          </div>
+        </>
       )}
     </div>
   );
