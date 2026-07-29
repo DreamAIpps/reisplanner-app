@@ -386,6 +386,50 @@ async function initDb() {
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (trip_id, user_id)
     );
+
+    -- Een Kahoot-achtige fotoquiz: één sessie deelt dezelfde vragen tussen alle
+    -- deelnemers, en de voortgang loopt puur op verstreken tijd sinds
+    -- started_at (zie computeQuizPhase in server.js) — geen host die per vraag
+    -- op "volgende" hoeft te klikken. Meedoen kan alleen via het join-token in
+    -- de QR-link, bewust gescheiden van het gewone trip_invites-token: een
+    -- gewone alleen-lezen uitnodiging mag geen toegang tot de quiz geven, en
+    -- omgekeerd geeft meedoen aan een quiz geen permanente kijktoegang tot de
+    -- rest van de reis buiten wat nodig is voor de quizfoto's.
+    CREATE TABLE IF NOT EXISTS quiz_sessions (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      host_user_id INTEGER NOT NULL REFERENCES users(id),
+      token TEXT UNIQUE NOT NULL,
+      questions JSONB NOT NULL,
+      question_seconds INTEGER NOT NULL DEFAULT 15,
+      interval_seconds INTEGER NOT NULL DEFAULT 6,
+      status TEXT NOT NULL DEFAULT 'lobby',
+      started_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS quiz_sessions_trip_idx ON quiz_sessions(trip_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS quiz_participants (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT,
+      score INTEGER NOT NULL DEFAULT 0,
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (session_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS quiz_answers (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+      participant_id INTEGER NOT NULL REFERENCES quiz_participants(id) ON DELETE CASCADE,
+      question_index INTEGER NOT NULL,
+      choice TEXT,
+      correct BOOLEAN NOT NULL,
+      points INTEGER NOT NULL DEFAULT 0,
+      answered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (participant_id, question_index)
+    );
   `);
 
   // Trips created before the "fris oranje" redesign still carry a cover_color

@@ -437,6 +437,11 @@ const api = {
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
+  getQuizSession: (tripId) => _guestMode ? Promise.resolve({ session: null }) : apiFetch(`/api/trips/${tripId}/quiz/session`),
+  createQuizSession: (tripId) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: "{}" }),
+  startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),
+  getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
+  answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -5712,14 +5717,255 @@ function TripActionsMenu({ onEdit, onDelete }) {
   );
 }
 
+// ---------- Fotoquiz ----------
+// Tekent de QR puur client-side (qrcode-generator via CDN, net als Leaflet/
+// exif-js) — er hoeft niets naar een externe QR-dienst verstuurd te worden
+// voor iets dat toch al gewoon een link is.
+function QrCode({ value, size = 180 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (!value || typeof window.qrcode !== "function") { ref.current.innerHTML = ""; return; }
+    try {
+      const qr = window.qrcode(0, "M");
+      qr.addData(value);
+      qr.make();
+      ref.current.innerHTML = qr.createSvgTag({ scalable: true });
+      const svg = ref.current.querySelector("svg");
+      if (svg) { svg.style.width = "100%"; svg.style.height = "100%"; }
+    } catch { ref.current.innerHTML = ""; }
+  }, [value]);
+  return <div ref={ref} style={{ width: size, height: size }} className="mx-auto" />;
+}
+
+// Een Kahoot-achtige fotoquiz: één sessie, gedeeld via QR-code, met tussenstand
+// na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
+// GET .../state (zie computeQuizPhase in server.js) — deze component pollt
+// alleen, er wordt hier niets aan lokale timers of host-besturing gedaan.
+function PhotoQuizTab({ trip, isHost }) {
+  const [session, setSession] = useState(undefined); // undefined = laden, null = geen sessie
+  const [error, setError] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [live, setLive] = useState(null);
+  const [myPick, setMyPick] = useState(null);
+
+  const refreshSession = useCallback(async () => {
+    try { const data = await api.getQuizSession(trip.id); setSession(data.session || null); }
+    catch { setSession(null); }
+  }, [trip.id]);
+
+  useEffect(() => { refreshSession(); }, [refreshSession]);
+
+  useEffect(() => {
+    if (!session || !session.isParticipant) { setLive(null); return; }
+    let cancelled = false;
+    async function poll() {
+      try {
+        const data = await api.getQuizState(session.id);
+        if (!cancelled) setLive(data);
+      } catch { /* volgende poll probeert het opnieuw */ }
+    }
+    poll();
+    const timer = setInterval(poll, 1500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [session]);
+
+  useEffect(() => { setMyPick(null); }, [live?.currentIndex]);
+
+  async function createSession() {
+    setCreating(true); setError(null);
+    try {
+      const data = await api.createQuizSession(trip.id);
+      setSession(data.session);
+      setLive(null);
+    } catch (err) { setError(err.message || "Kon geen quiz starten"); }
+    finally { setCreating(false); }
+  }
+
+  async function startSession() {
+    setStarting(true);
+    try { await api.startQuizSession(trip.id, session.id); await refreshSession(); }
+    catch (err) { alert(err.message || "Kon quiz niet starten"); }
+    finally { setStarting(false); }
+  }
+
+  async function pick(choice) {
+    if (myPick || !live || live.phase !== "question") return;
+    setMyPick({ index: live.currentIndex, choice, pending: true });
+    try {
+      const res = await api.answerQuizQuestion(session.id, live.currentIndex, choice);
+      setMyPick({ index: live.currentIndex, choice, correct: res.correct, points: res.points });
+    } catch (err) {
+      setMyPick(null);
+      alert(err.message || "Kon antwoord niet versturen");
+    }
+  }
+
+  if (session === undefined) {
+    return <div className="text-center py-16 text-gray-400">Laden...</div>;
+  }
+
+  if (!session) {
+    return (
+      <div className="text-center py-14 max-w-sm mx-auto">
+        <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
+        <h3 className="font-display text-[21px] text-gray-800 mb-2">Fotoquiz</h3>
+        <p className="text-sm text-gray-500 leading-relaxed mb-5">
+          {isHost
+            ? "Vijf foto's uit deze reis, elk met vier antwoorden. Start een sessie en laat anderen meespelen via een QR-code — met tussenstand en een winnaar aan het eind."
+            : "Er is nu geen actieve fotoquiz voor deze reis."}
+        </p>
+        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
+        {isHost && <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : "Start een fotoquiz"}</Button>}
+      </div>
+    );
+  }
+
+  const phase = live?.phase || (session.status === "lobby" ? "lobby" : session.status === "done" ? "done" : null);
+  const participants = live?.participants || [];
+  const totalQuestions = live?.totalQuestions || session.totalQuestions;
+
+  if (phase === "lobby") {
+    const count = participants.length || session.participantCount || 0;
+    return (
+      <div className="text-center py-10 max-w-sm mx-auto">
+        <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
+        <h3 className="font-display text-[21px] text-gray-800 mb-1">Wachten op spelers</h3>
+        <p className="text-sm text-gray-500 mb-5">{count} deelnemer{count === 1 ? "" : "s"} klaar om te spelen</p>
+        {session.isHost ? (
+          <>
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm mb-4">
+              <QrCode value={session.joinLink} />
+              <p className="text-xs text-gray-400 mt-3 leading-relaxed">Scan om mee te doen op je eigen scherm.</p>
+              <div className="flex gap-2 mt-2">
+                <input readOnly value={session.joinLink} onClick={(e) => e.target.select()}
+                  className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 bg-gray-50 focus:outline-none" />
+                <Button variant="secondary" onClick={() => navigator.clipboard.writeText(session.joinLink)} className="!text-xs !px-3 !py-1.5 shrink-0">
+                  Kopiëren
+                </Button>
+              </div>
+            </div>
+            {participants.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 justify-center mb-5">
+                {participants.map((p, i) => (
+                  <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 font-medium">{p.name}</span>
+                ))}
+              </div>
+            )}
+            <Button onClick={startSession} disabled={starting}>{starting ? "Starten..." : "Start de quiz"}</Button>
+          </>
+        ) : (
+          <div className="text-sm text-gray-400">Wacht tot de gastheer de quiz start...</div>
+        )}
+      </div>
+    );
+  }
+
+  if (phase === "question" && live?.question) {
+    const q = live.question;
+    const answered = myPick || live.myAnswer;
+    const resolved = answered && !answered.pending;
+    return (
+      <div className="max-w-md mx-auto">
+        <div className="flex items-center justify-between mb-3 text-sm text-gray-500">
+          <span>Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</span>
+          <span className="tnum font-semibold text-sky-600">{live.remainingSeconds}s</span>
+        </div>
+        <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
+          <img src={q.thumb_url || q.url} alt="" className="w-full aspect-square object-cover" />
+          <div className="p-4">
+            <div className="text-sm font-semibold text-gray-800 mb-3">Waar hoort deze foto bij?</div>
+            <div className="space-y-2">
+              {q.options.map((opt) => {
+                const isPicked = answered && answered.choice === opt;
+                const cls = !answered
+                  ? "border-gray-200 hover:border-sky-300 hover:bg-sky-50 text-gray-700"
+                  : isPicked
+                    ? resolved
+                      ? answered.correct ? "border-green-300 bg-green-50 text-green-700" : "border-red-300 bg-red-50 text-red-700"
+                      : "border-sky-300 bg-sky-50 text-sky-700"
+                    : "border-gray-100 text-gray-400";
+                return (
+                  <button key={opt} type="button" onClick={() => pick(opt)} disabled={!!answered}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors ${cls}`}>
+                    {opt}
+                    {resolved && isPicked && answered.correct && <Icon name="check" size={14} className="ml-1.5 inline text-green-600" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs text-gray-400 mt-3 text-center">
+              {!answered
+                ? "Kies snel — hoe sneller, hoe meer punten"
+                : resolved
+                  ? answered.correct ? `Goed! +${answered.points} punten` : "Helaas, geen punten"
+                  : "Antwoord verstuurd..."}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "standings" || phase === "done") {
+    const sorted = [...participants].sort((a, b) => b.score - a.score);
+    const top = sorted.length ? sorted[0].score : 0;
+    const winners = sorted.filter((p) => p.score === top && top > 0);
+    const isFinal = phase === "done";
+    return (
+      <div className="max-w-md mx-auto text-center">
+        {isFinal ? (
+          <>
+            <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
+            <h3 className="font-display text-[21px] text-gray-800 mb-1">
+              {winners.length > 1 ? "Gedeelde winst!" : winners.length === 1 ? `${winners[0].name} wint!` : "Quiz afgelopen"}
+            </h3>
+            <p className="text-sm text-gray-500 mb-5">Eindstand van de fotoquiz</p>
+          </>
+        ) : (
+          <>
+            <div className="text-sm text-gray-500 mb-1">Tussenstand</div>
+            {live?.question?.correct && (
+              <p className="text-xs text-gray-400 mb-4">
+                Juiste antwoord: <span className="font-semibold text-gray-600">{live.question.correct}</span>
+                {live.remainingSeconds != null && <> · volgende vraag over {live.remainingSeconds}s</>}
+              </p>
+            )}
+          </>
+        )}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-50 overflow-hidden">
+          {sorted.map((p, i) => (
+            <div key={i} className={`flex items-center justify-between px-4 py-2.5 text-sm ${p.isMe ? "bg-sky-50" : ""}`}>
+              <span className="flex items-center gap-2 font-medium text-gray-700">
+                <span className="tnum text-gray-400 w-4">{i + 1}</span>
+                {isFinal && i === 0 && p.score > 0 && <Icon name="sparkle" size={13} className="text-sky-500" />}
+                {p.name}{p.isMe && <span className="text-xs text-gray-400"> (jij)</span>}
+              </span>
+              <span className="tnum font-semibold text-gray-700">{p.score}</span>
+            </div>
+          ))}
+        </div>
+        {isFinal && session.isHost && (
+          <Button onClick={createSession} disabled={creating} className="mt-5">
+            {creating ? "Bezig..." : "Nieuwe quiz starten"}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return <div className="text-center py-16 text-gray-400">Laden...</div>;
+}
+
 // ---------- Trip detail ----------
-function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
+function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [accommodations, setAccommodations] = useState([]);
   const [transports, setTransports] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [tab, setTab] = useState("days");
+  const [tab, setTab] = useState(initialTab || "days");
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [sharing, setSharing] = useState(null);
@@ -5755,6 +6001,18 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
   useEffect(() => { load(); }, [load]);
   // Don't carry the guest preview over into another trip.
   useEffect(() => { setPreviewViewer(false); }, [tripId]);
+
+  // Alleen-lezen bezoekers krijgen de fotoquiz alléén als ze er via de
+  // sessie-specifieke QR-code bij zijn gekomen (isParticipant) — niet elke
+  // willekeurige gedeelde-reis-viewer mag meespelen, dus dit bepaalt of de
+  // tab in de alleen-lezen tabbalk hieronder überhaupt verschijnt.
+  const [quizAccess, setQuizAccess] = useState(false);
+  useEffect(() => {
+    if (!trip || trip.role !== "viewer") return;
+    let cancelled = false;
+    api.getQuizSession(tripId).then((d) => { if (!cancelled) setQuizAccess(!!d.session?.isParticipant); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [trip, tripId]);
 
   // Records how long this trip is actually open, which the share stats report.
   // Skipped while the tab is hidden so a forgotten background tab does not read
@@ -5827,6 +6085,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     { key: "transport", label: "Vervoer", icon: "plane" },
     { key: "packing", label: "Paklijst", icon: "suitcase" },
     { key: "map", label: "Kaart", icon: "map" },
+    { key: "quiz", label: "Fotoquiz", icon: "sparkle" },
   ];
 
   // Bottom nav tabs for mobile
@@ -5842,6 +6101,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
     { key: "packing", icon: "suitcase", label: "Paklijst" },
     { key: "map", icon: "map", label: "Kaart" },
     ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
+    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
@@ -5983,13 +6243,13 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
       {readOnly ? (
         <>
           {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel
-              deze twee: het dagboek dat ze kwamen lezen, en de kaart erbij —
-              die stond hiervoor voor hen onbereikbaar achter een tabblad dat
-              ze nooit te zien kregen. */}
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit">
+              dagboek en kaart. De fotoquiz komt er alleen bij als ze via de
+              sessie-specifieke QR-code zijn binnengekomen (quizAccess) — niet
+              elke gedeelde-reis-viewer mag zomaar meespelen. */}
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
             <button onClick={() => setTab("journal")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "map" ? "text-gray-500 hover:text-gray-700" : "bg-white shadow"}`}
-              style={tab === "map" ? {} : { color: legibleOn(accent) }}>
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "journal" || tab === "days" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+              style={tab === "journal" || tab === "days" ? { color: legibleOn(accent) } : {}}>
               <Icon name="book" size={15} />Dagboek
             </button>
             <button onClick={() => setTab("map")}
@@ -5997,10 +6257,19 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
               style={tab === "map" ? { color: legibleOn(accent) } : {}}>
               <Icon name="map" size={15} />Kaart
             </button>
+            {quizAccess && (
+              <button onClick={() => setTab("quiz")}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+                style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
+                <Icon name="sparkle" size={15} />Fotoquiz
+              </button>
+            )}
           </div>
           {tab === "map"
             ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
-            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
+            : tab === "quiz" && quizAccess
+              ? <PhotoQuizTab trip={viewTrip} isHost={false} />
+              : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
         </>
       ) : (
         <>
@@ -6012,6 +6281,7 @@ function TripDetail({ tripId, onBack, onChanged, currentUserId }) {
           {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
           {tab === "map" && <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
           {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
+          {tab === "quiz" && <PhotoQuizTab trip={viewTrip} isHost={isOwnerActions} />}
         </>
       )}
 
@@ -6416,7 +6686,7 @@ function App() {
     const params = new URLSearchParams(location.search);
     const tripId = params.get("trip");
     if (tripId) {
-      setView({ name: "detail", id: tripId });
+      setView({ name: "detail", id: tripId, tab: params.get("tab") || null });
       window.history.replaceState({}, "", "/");
     }
   }, [user, authLoading, loadTrips]);
@@ -6519,7 +6789,7 @@ function App() {
         ) : view.name === "admin" ? (
           <AdminView onBack={() => setView({ name: "list" })} />
         ) : (
-          <TripDetail tripId={view.id} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
+          <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
         )}
       </main>
 

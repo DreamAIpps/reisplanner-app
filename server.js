@@ -159,7 +159,7 @@ async function handlePostLogin(req, res, user) {
   const cookies = [`session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`];
   let redirect = "/";
 
-  const { invite } = parseCookies(req);
+  const { invite, quizjoin } = parseCookies(req);
   if (invite) {
     const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [invite]);
     if (rows.length) {
@@ -167,6 +167,17 @@ async function handlePostLogin(req, res, user) {
       redirect = `/?trip=${rows[0].trip_id}`;
     }
     cookies.push("invite=; HttpOnly; Path=/; Max-Age=0");
+  }
+  if (quizjoin) {
+    const { rows } = await query("SELECT * FROM quiz_sessions WHERE token = $1", [quizjoin]);
+    if (rows.length) {
+      const session = rows[0];
+      await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [session.trip_id, user.id]);
+      await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+        [session.id, user.id, user.given_name || user.name || "Speler"]);
+      redirect = `/?trip=${session.trip_id}&tab=quiz`;
+    }
+    cookies.push("quizjoin=; HttpOnly; Path=/; Max-Age=0");
   }
 
   res.setHeader("Set-Cookie", cookies);
@@ -652,6 +663,32 @@ route("POST", "/api/trips/:id/invite", async (req, res, params, body) => {
   const token = crypto.randomBytes(16).toString("hex");
   await query("INSERT INTO trip_invites (token, trip_id, created_by, role) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", [token, params.id, req.user.id, role]);
   sendJson(res, 200, { link: `${appUrl(req)}/invite/${token}`, role });
+});
+
+// Bewust een apart join-token van trip_invites: meedoen aan een quiz mag geen
+// permanente "gedeelde reis"-uitnodiging betekenen los van de quiz om, en een
+// gewone alleen-lezen uitnodiging mag omgekeerd geen toegang tot de quiz geven.
+// De trip_members-rij hieronder is puur nodig zodat de quizfoto's (die achter
+// dezelfde tripScope-check als de rest van de foto's zitten) opgehaald kunnen
+// worden — de quiztab zelf blijft in de client verborgen tenzij isParticipant.
+route("GET", "/quiz/:token", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE token = $1", [params.token]);
+  if (!rows.length) { res.writeHead(302, { Location: "/?error=invalid-quiz" }); res.end(); return; }
+  const session = rows[0];
+
+  const user = await getSession(req);
+  if (!user) {
+    res.setHeader("Set-Cookie", `quizjoin=${params.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`);
+    res.writeHead(302, { Location: "/login" });
+    res.end();
+    return;
+  }
+
+  await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [session.trip_id, user.id]);
+  await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    [session.id, user.id, user.given_name || user.name || "Speler"]);
+  res.writeHead(302, { Location: `/?trip=${session.trip_id}&tab=quiz` });
+  res.end();
 });
 
 // Heartbeat from an open trip. Rounded to the minute and keyed on it, so the
@@ -2398,6 +2435,243 @@ route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
   sendJson(res, 200, { city: city || null });
 });
 
+// ---------- Fotoquiz ----------
+// Een Kahoot-achtige quizsessie: één set vragen, gedeeld door alle deelnemers,
+// waarbij de voortgang puur op verstreken tijd loopt (zie computeQuizPhase) —
+// er is geen host die per vraag op "volgende" moet klikken en niets dat continu
+// gepolld hoeft te worden op de server naast wat de deelnemers toch al doen.
+// Meedoen kan alleen via het session-specifieke join-token (de QR-code), nooit
+// via het gewone alleen-lezen-uitnodigingslink van de reis.
+const QUIZ_QUESTION_SECONDS = 15;
+const QUIZ_INTERVAL_SECONDS = 6;
+
+// Alleen foto's die aan een activiteit, vervoer of verblijf hangen leveren een
+// zinnig "juist antwoord" op — een foto die alleen aan de dag zelf hangt heeft
+// geen naam om te raden. Claude bedenkt per juist antwoord drie verzonnen maar
+// geloofwaardige foute opties, in dezelfde stijl als de bestemming.
+async function generateQuizQuestions(tripId) {
+  const [{ rows: photos }, { rows: activities }, { rows: transportsRows }, { rows: accommodationsRows }, { rows: tripRows }] = await Promise.all([
+    query("SELECT id, activity_id, transport_id, accommodation_id FROM photos WHERE trip_id = $1 AND (activity_id IS NOT NULL OR transport_id IS NOT NULL OR accommodation_id IS NOT NULL)", [tripId]),
+    query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
+    query("SELECT id, from_location, to_location FROM transports WHERE trip_id = $1", [tripId]),
+    query("SELECT id, name FROM accommodations WHERE trip_id = $1", [tripId]),
+    query("SELECT name, destination FROM trips WHERE id = $1", [tripId]),
+  ]);
+
+  const actMap = new Map(activities.map((a) => [a.id, a.title]));
+  const transMap = new Map(transportsRows.filter((t) => t.from_location && t.to_location).map((t) => [t.id, `${t.from_location} → ${t.to_location}`]));
+  const accMap = new Map(accommodationsRows.map((a) => [a.id, a.name]));
+
+  const candidates = photos
+    .map((p) => {
+      const answer = p.activity_id ? actMap.get(p.activity_id) : p.accommodation_id ? accMap.get(p.accommodation_id) : p.transport_id ? transMap.get(p.transport_id) : null;
+      return answer ? { photoId: p.id, answer } : null;
+    })
+    .filter(Boolean);
+
+  if (!candidates.length) return [];
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
+
+  // Eerst zoveel mogelijk unieke antwoorden (anders is de quiz al opgelost
+  // zodra je 'm de tweede keer ziet), pas daarna dubbele antwoorden toestaan
+  // om alsnog aan 5 vragen te komen.
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+  const picked = [];
+  const seenAnswers = new Set();
+  for (const c of shuffled) {
+    if (picked.length >= 5) break;
+    if (seenAnswers.has(c.answer)) continue;
+    seenAnswers.add(c.answer);
+    picked.push(c);
+  }
+  for (const c of shuffled) {
+    if (picked.length >= 5) break;
+    if (!picked.includes(c)) picked.push(c);
+  }
+
+  const destination = tripRows[0]?.destination || tripRows[0]?.name || "deze reis";
+  const prompt = `Voor een fotoquiz over een reis naar "${destination}" heb ik per juist antwoord 3 verzonnen maar geloofwaardige foute meerkeuze-opties nodig, in het Nederlands en in dezelfde stijl (plaatsnamen/bezienswaardigheden/verblijven passend bij deze bestemming). Ze mogen niet gelijk zijn aan een van de juiste antwoorden hieronder.
+Juiste antwoorden, in deze volgorde:
+${picked.map((p, i) => `${i + 1}. ${p.answer}`).join("\n")}
+Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."]}, ...]} — exact ${picked.length} items, in dezelfde volgorde.`;
+
+  const msg = await anthropicClient.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 800,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
+
+  return picked.map((p, i) => {
+    const distractors = (parsed.items?.[i]?.distractors || []).filter((d) => d && d !== p.answer).slice(0, 3);
+    while (distractors.length < 3) distractors.push(`Optie ${distractors.length + 1}`);
+    const options = [p.answer, ...distractors].sort(() => Math.random() - 0.5);
+    return {
+      photo_id: p.photoId,
+      url: `/api/photos/${p.photoId}/raw`,
+      thumb_url: `/api/photos/${p.photoId}/thumb`,
+      options,
+      correct: p.answer,
+    };
+  });
+}
+
+// Vertaalt started_at + de vaste vraag-/tussenstand-duur naar "waar is
+// iedereen nu" — puur een functie van de klok, dus elke deelnemer die op
+// hetzelfde moment pollt krijgt exact dezelfde vraag te zien zonder dat de
+// server een lopende timer hoeft bij te houden.
+function computeQuizPhase(session) {
+  const total = session.questions.length;
+  if (session.status === "lobby" || !session.started_at) {
+    return { phase: "lobby", index: 0, remainingSeconds: null };
+  }
+  const slot = session.question_seconds + session.interval_seconds;
+  const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
+  const index = Math.floor(elapsed / slot);
+  if (index >= total) return { phase: "done", index: total - 1, remainingSeconds: null };
+  const intoSlot = elapsed - index * slot;
+  if (intoSlot < session.question_seconds) {
+    return { phase: "question", index, remainingSeconds: Math.ceil(session.question_seconds - intoSlot) };
+  }
+  return { phase: "standings", index, remainingSeconds: Math.ceil(slot - intoSlot) };
+}
+
+async function loadQuizSessionForUser(tripId, userId) {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE trip_id = $1 ORDER BY created_at DESC LIMIT 1", [tripId]);
+  if (!rows.length) return null;
+  const session = rows[0];
+  const { rows: participants } = await query("SELECT user_id, name, score FROM quiz_participants WHERE session_id = $1 ORDER BY score DESC, joined_at ASC", [session.id]);
+  const isHost = session.host_user_id === userId;
+  const isParticipant = isHost || participants.some((p) => p.user_id === userId);
+  return { session, participants, isHost, isParticipant };
+}
+
+function quizSessionSummary(loaded, req) {
+  const { session, participants, isHost, isParticipant } = loaded;
+  return {
+    id: session.id,
+    status: session.status,
+    isHost,
+    isParticipant,
+    participantCount: participants.length,
+    totalQuestions: session.questions.length,
+    joinLink: isHost ? `${appUrl(req)}/quiz/${session.token}` : null,
+  };
+}
+
+route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params) => {
+  const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan een quiz starten");
+
+  // "done" bestaat niet als kolomwaarde (status blijft 'active'), dus of de
+  // bestaande sessie nog leeft wordt met dezelfde tijd-afgeleide logica bepaald
+  // als /state gebruikt — anders zou "nieuwe quiz starten" na afloop de allang
+  // afgelopen sessie blijven hergebruiken in plaats van een nieuwe te maken.
+  const { rows: existing } = await query("SELECT * FROM quiz_sessions WHERE trip_id = $1 ORDER BY created_at DESC LIMIT 1", [params.id]);
+  if (existing.length && computeQuizPhase(existing[0]).phase !== "done") {
+    const loaded = await loadQuizSessionForUser(params.id, req.user.id);
+    return sendJson(res, 200, { session: quizSessionSummary(loaded, req) });
+  }
+
+  let questions;
+  try { questions = await generateQuizQuestions(params.id); }
+  catch (err) { return sendError(res, 500, err.message); }
+  if (!questions.length) return sendError(res, 400, "Nog niet genoeg foto's gekoppeld aan een activiteit, vervoer of verblijf om een quiz van te maken.");
+
+  const token = crypto.randomBytes(16).toString("hex");
+  const { rows } = await query(
+    `INSERT INTO quiz_sessions (trip_id, host_user_id, token, questions, question_seconds, interval_seconds)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [params.id, req.user.id, token, JSON.stringify(questions), QUIZ_QUESTION_SECONDS, QUIZ_INTERVAL_SECONDS]
+  );
+  await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    [rows[0].id, req.user.id, req.user.given_name || req.user.name || "Gastheer"]);
+
+  const loaded = await loadQuizSessionForUser(params.id, req.user.id);
+  sendJson(res, 200, { session: quizSessionSummary(loaded, req) });
+}, { tripScope: "param" });
+
+route("GET", "/api/trips/:id/quiz/session", async (req, res, params) => {
+  const loaded = await loadQuizSessionForUser(params.id, req.user.id);
+  sendJson(res, 200, { session: loaded ? quizSessionSummary(loaded, req) : null });
+}, { tripScope: "param", allowViewer: true });
+
+route("POST", "/api/trips/:id/quiz/sessions/:sessionId/start", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1 AND trip_id = $2", [params.sessionId, params.id]);
+  if (!rows.length || rows[0].host_user_id !== req.user.id) return sendError(res, 403, "Alleen de gastheer kan de quiz starten");
+  if (rows[0].status !== "lobby") return sendJson(res, 200, { ok: true });
+  await query("UPDATE quiz_sessions SET status = 'active', started_at = NOW() WHERE id = $1", [params.sessionId]);
+  sendJson(res, 200, { ok: true });
+}, { tripScope: "param" });
+
+route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1", [params.sessionId]);
+  if (!rows.length) return sendError(res, 404, "Quiz niet gevonden");
+  const session = rows[0];
+  const { rows: participants } = await query("SELECT id, user_id, name, score FROM quiz_participants WHERE session_id = $1 ORDER BY score DESC, joined_at ASC", [session.id]);
+  const me = participants.find((p) => p.user_id === req.user.id);
+  if (!me) return sendError(res, 403, "Je doet niet mee aan deze quiz");
+
+  const { phase, index, remainingSeconds } = computeQuizPhase(session);
+  const payload = {
+    phase, currentIndex: index, remainingSeconds,
+    totalQuestions: session.questions.length,
+    isHost: session.host_user_id === req.user.id,
+    participants: participants.map((p) => ({ name: p.name, score: p.score, isMe: p.user_id === req.user.id })),
+  };
+
+  if (phase === "question") {
+    const q = session.questions[index];
+    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options };
+    const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
+    payload.myAnswer = mine[0] || null;
+  } else if (phase === "standings" || phase === "done") {
+    const q = session.questions[index];
+    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct };
+    const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
+    payload.myAnswer = mine[0] || null;
+  }
+
+  sendJson(res, 200, payload);
+});
+
+route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, body) => {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1", [params.sessionId]);
+  if (!rows.length) return sendError(res, 404, "Quiz niet gevonden");
+  const session = rows[0];
+  const { rows: meRows } = await query("SELECT id FROM quiz_participants WHERE session_id = $1 AND user_id = $2", [session.id, req.user.id]);
+  if (!meRows.length) return sendError(res, 403, "Je doet niet mee aan deze quiz");
+  const participantId = meRows[0].id;
+
+  const { phase, index, remainingSeconds } = computeQuizPhase(session);
+  if (phase !== "question") return sendError(res, 400, "Deze vraag is al gesloten");
+  const questionIndex = Number(body?.questionIndex);
+  if (questionIndex !== index) return sendError(res, 400, "Deze vraag is niet meer actief");
+
+  const q = session.questions[index];
+  const choice = typeof body?.choice === "string" ? body.choice : null;
+  const correct = choice === q.correct;
+  // Snelheidsbonus zoals Kahoot: hoe eerder in het antwoordvenster, hoe meer
+  // punten, met een bodem van 500 zodat een goed antwoord op het laatste
+  // moment nog steeds ruim meer oplevert dan een fout antwoord (0 punten).
+  const points = correct ? Math.round(500 + 500 * (remainingSeconds / session.question_seconds)) : 0;
+
+  try {
+    await query(
+      "INSERT INTO quiz_answers (session_id, participant_id, question_index, choice, correct, points) VALUES ($1,$2,$3,$4,$5,$6)",
+      [session.id, participantId, index, choice, correct, points]
+    );
+  } catch (err) {
+    if (err.code === "23505") return sendError(res, 400, "Je hebt deze vraag al beantwoord");
+    throw err;
+  }
+  await query("UPDATE quiz_participants SET score = score + $1 WHERE id = $2", [points, participantId]);
+
+  sendJson(res, 200, { correct, points, correctOption: q.correct });
+});
+
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
   if (req.tripRole === "viewer") return sendJson(res, 200, []);
@@ -2466,7 +2740,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")) {
+  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/") || pathname.startsWith("/quiz/")) {
     try {
       // matchRoute percent-decodes path params and throws URIError on malformed
       // input (e.g. "/invite/%"), so it must stay inside the try — an escaped
