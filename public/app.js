@@ -1780,19 +1780,23 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     onChange();
   }
 
-  const thumbClass = large ? "w-[70vw] h-[70vw] max-w-80 max-h-80 sm:w-72 sm:h-72" : "w-24 h-24";
+  // "Veel groter" is bewust ook hier doorgevoerd, niet alleen in de
+  // volledig-scherm-viewer erachter: bijna schermbreed in plaats van de oude
+  // 70vw, met een ruimere bovengrens op grotere schermen.
+  const thumbClass = large ? "w-[88vw] h-[88vw] max-w-[420px] max-h-[420px] sm:w-96 sm:h-96" : "w-24 h-24";
+  const largeMaxWidth = "88vw";
 
   return (
-    <div className={`flex ${large ? "gap-4" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
+    <div className={`flex ${large ? "gap-4 snap-x snap-mandatory" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
       {photos.map((p, i) => (
-        <div key={p.id} className="relative shrink-0 group">
+        <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center" : ""}`}>
           <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
             className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
           {large && (
-            <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth="70vw" />
+            <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
           )}
           {large && comments && (
-            <div className="mt-1.5" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
+            <div className="mt-1.5" style={{ maxWidth: largeMaxWidth }} onClick={(e) => e.stopPropagation()}>
               <JournalComments slot={{ photo_id: p.id }}
                 comments={comments.filter((c) => c.photo_id === p.id)}
                 like={(slotLikes && slotLikes[`photo_id:${p.id}`]) || { like_count: 0, liked_by_me: false }}
