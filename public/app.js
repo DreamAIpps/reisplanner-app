@@ -99,6 +99,15 @@ const ICONS = {
   bottle: <><path d="M9.6 3.5h4.8v2.8H9.6z" /><path d="M9.9 6.3 8.4 9a3.2 3.2 0 0 0-.4 1.5v8a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-8a3.2 3.2 0 0 0-.4-1.5l-1.5-2.7" /><path d="M8 13.2h8" /></>,
   pill: <><rect x="2.8" y="8.5" width="18.4" height="7" rx="3.5" transform="rotate(-45 12 12)" /><path d="m9.2 9.2 5.6 5.6" /></>,
 
+  // weer
+  sun: <><circle cx="12" cy="12" r="4.2" /><path d="M12 3.5v2.2" /><path d="M12 18.3v2.2" /><path d="M3.5 12h2.2" /><path d="M18.3 12h2.2" /><path d="m5.8 5.8 1.6 1.6" /><path d="m16.6 16.6 1.6 1.6" /><path d="m18.2 5.8-1.6 1.6" /><path d="m7.4 16.6-1.6 1.6" /></>,
+  cloudSun: <><circle cx="8" cy="7.3" r="2.6" /><path d="M8 3.2v1.3" /><path d="m4.6 4.7 1 1" /><path d="M3 8.6h1.3" /><path d="M10 17.8a3.9 3.9 0 0 1-.5-7.7 5 5 0 0 1 9.6-1.6A3.7 3.7 0 0 1 18.7 17.8z" /></>,
+  cloud: <><path d="M7 18.5a4.2 4.2 0 0 1-.6-8.4 5.4 5.4 0 0 1 10.4-1.8A4 4 0 0 1 17 18.5z" /></>,
+  cloudRain: <><path d="M7 15a4 4 0 0 1-.6-7.9 5.1 5.1 0 0 1 9.8-1.7A3.8 3.8 0 0 1 17 15z" /><path d="M9 18.5 8 21" /><path d="M13 18.5 12 21" /></>,
+  cloudSnow: <><path d="M7 15a4 4 0 0 1-.6-7.9 5.1 5.1 0 0 1 9.8-1.7A3.8 3.8 0 0 1 17 15z" /><path d="M9 18.5v.01" /><path d="M13 18.5v.01" /><path d="M9 21v.01" /><path d="M13 21v.01" /></>,
+  cloudLightning: <><path d="M7 14a4 4 0 0 1-.6-7.9 5.1 5.1 0 0 1 9.8-1.7A3.8 3.8 0 0 1 17 14z" /><path d="m12.5 14-2.5 4h3l-2 4" /></>,
+  fog: <><path d="M4 9.5h12" /><path d="M4 13h16" /><path d="M4 16.5h10" /></>,
+
   // merken
   google: <>
     <path d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.35z" fill="#4285F4" stroke="none" />
@@ -539,6 +548,11 @@ function yesterdayIso(timezone) {
 
 function todayIso(timezone) {
   return dateIsoInTimezone(new Date(), timezone);
+}
+function tomorrowIso(timezone) {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return dateIsoInTimezone(d, timezone);
 }
 function greeting(name) {
   const h = new Date().getHours();
@@ -1855,6 +1869,7 @@ function buildUpcomingItems(days, transports, accommodations, timezone) {
         key: `act-${act.id}`, dayStr, sortKey: `${dayStr}T${act.time || "23:59"}`,
         kind: "activity", icon: categoryIcon(act.category), title: act.title,
         subtitle: act.location || act.category || "Activiteit", time: act.time || null, ref: act,
+        weatherQuery: act.location || null,
       });
     });
   });
@@ -1869,6 +1884,7 @@ function buildUpcomingItems(days, transports, accommodations, timezone) {
       key: `t-${t.id}`, dayStr, sortKey: `${dayStr}T${hm}`,
       kind: "transport", icon: transportIcon(t.type), title: `${t.from_location} → ${t.to_location}`,
       subtitle: t.type, time: hm, ref: t,
+      weatherQuery: t.to_location || t.from_location || null,
     });
   });
 
@@ -1879,6 +1895,7 @@ function buildUpcomingItems(days, transports, accommodations, timezone) {
         items.push({
           key: `a-in-${a.id}`, dayStr, sortKey: `${dayStr}T15:00`,
           kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-in", time: null, ref: a,
+          weatherQuery: a.address || a.name,
         });
       }
     }
@@ -1888,6 +1905,7 @@ function buildUpcomingItems(days, transports, accommodations, timezone) {
         items.push({
           key: `a-out-${a.id}`, dayStr, sortKey: `${dayStr}T11:00`,
           kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-out", time: null, ref: a,
+          weatherQuery: a.address || a.name,
         });
       }
     }
@@ -1974,8 +1992,38 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6 gap-2 flex-wrap">
-        <h3 className="font-display text-[21px] text-gray-800">Dagplanning</h3>
+      <h3 className="font-display text-[21px] text-gray-800 mb-4">Dagplanning</h3>
+
+      {/* Direct onder de titel, vóór de actieknoppen — dit is waarom je tijdens
+          de reis zelf op dit tabblad kijkt, en moet zonder scrollen te zien
+          zijn, ook als de knoppenrij eronder op mobiel over meerdere regels
+          uitvalt. */}
+      {upcoming.length > 0 && (
+        <div className="rounded-2xl border border-gray-100 bg-white shadow-sm mb-4 overflow-hidden">
+          <div className="px-4 pt-3 pb-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-400">Binnenkort</div>
+          <div className="divide-y divide-gray-50">
+            {upcoming.map((item) => (
+              <div key={item.key} onClick={() => openUpcomingItem(item)}
+                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
+                <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">{item.time || "—"}</span>
+                <Icon name={item.icon} size={14} className="text-gray-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-gray-800 truncate">{item.title}</div>
+                  <div className="text-xs text-gray-500 truncate">{item.subtitle}</div>
+                </div>
+                <DayWeatherBadge query={item.weatherQuery} date={item.dayStr} size={12} />
+                <span className="text-[10px] uppercase tracking-wide text-gray-300 shrink-0">
+                  {item.dayStr === todayIso(trip.timezone) ? "vandaag"
+                    : item.dayStr === tomorrowIso(trip.timezone) ? "morgen"
+                    : fmtShortDate(item.dayStr)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end items-center mb-6 gap-2 flex-wrap">
         <div className="flex gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
           {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
           {/* Quick-add while on the trip: opens the form pre-set to today.
@@ -1989,28 +2037,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           )}
         </div>
       </div>
-
-      {upcoming.length > 0 && (
-        <div className="rounded-2xl border border-gray-100 bg-white shadow-sm mb-6 overflow-hidden">
-          <div className="px-4 pt-3 pb-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-400">Binnenkort</div>
-          <div className="divide-y divide-gray-50">
-            {upcoming.map((item) => (
-              <div key={item.key} onClick={() => openUpcomingItem(item)}
-                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
-                <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">{item.time || "—"}</span>
-                <Icon name={item.icon} size={14} className="text-gray-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-gray-800 truncate">{item.title}</div>
-                  <div className="text-xs text-gray-500 truncate">{item.subtitle}</div>
-                </div>
-                <span className="text-[10px] uppercase tracking-wide text-gray-300 shrink-0">
-                  {item.dayStr === todayIso(trip.timezone) ? "vandaag" : fmtShortDate(item.dayStr)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {days.length === 0 && (
         <div className="text-center py-16 text-gray-400">
@@ -2037,6 +2063,12 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
               if (!a.check_in || !a.check_out) return false;
               return isoDate(a.check_in) <= dayStr && isoDate(a.check_out) > dayStr;
             }) : null;
+            // Verblijf van die nacht is de betrouwbaarste locatie voor het weer;
+            // zonder verblijf valt dit terug op de eerste activiteit met een
+            // locatie, zodat een dag zonder overnachting niet zomaar leeg blijft.
+            const weatherQuery = nightAccommodation
+              ? (nightAccommodation.address || nightAccommodation.name)
+              : (day.activities.find((a) => a.location)?.location || null);
 
             const isToday = dayStr === todayIso(trip.timezone);
 
@@ -2072,14 +2104,15 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         </span>
                       )}
                     </div>
-                    {!readOnly && (
-                      <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <DayWeatherBadge query={weatherQuery} date={dayStr} />
+                      {!readOnly && (
                         <button onClick={() => setShowActivityForm({ dayId: day.id })}
                           className="text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:border-sky-300 hover:text-sky-700 transition-colors inline-flex items-center gap-1">
                           <Icon name="plus" size={13} />Activiteit
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -2925,7 +2958,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
               <div className="p-4 space-y-4">
                 {nightAccommodation && (
-                  <AccommodationTransition current={nightAccommodation} previous={prevNightAccommodation} />
+                  <AccommodationTransition current={nightAccommodation} previous={prevNightAccommodation} date={dayStr} />
                 )}
                 {showDayMap && (
                   <div>
@@ -3747,6 +3780,79 @@ async function geocodePlace(query) {
   return city ? { city } : null;
 }
 
+// WMO-weercodes (zoals Open-Meteo ze levert) teruggebracht tot de drie dingen
+// die er in een dagboek toe doen: zon, bewolking, neerslag — niet de volledige
+// lijst met precieze varianten.
+function weatherFromCode(code) {
+  if (code === 0) return { icon: "sun", label: "Zonnig" };
+  if (code === 1) return { icon: "sun", label: "Overwegend zonnig" };
+  if (code === 2) return { icon: "cloudSun", label: "Half bewolkt" };
+  if (code === 3) return { icon: "cloud", label: "Bewolkt" };
+  if ([45, 48].includes(code)) return { icon: "fog", label: "Mist" };
+  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { icon: "cloudRain", label: "Regen" };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { icon: "cloudSnow", label: "Sneeuw" };
+  if ([95, 96, 99].includes(code)) return { icon: "cloudLightning", label: "Onweer" };
+  return { icon: "cloud", label: "Bewolkt" };
+}
+
+// Open-Meteo: gratis, geen key nodig. De forecast-endpoint dekt recent
+// verleden t/m 16 dagen vooruit; voor oudere reisdagen valt dit terug op het
+// archief. Buiten beide bereiken (of bij een netwerkfout) blijft het weer
+// gewoon leeg — dit is een leuk detail, geen essentieel onderdeel van de app.
+async function fetchDayWeather(lat, lon, dateStr) {
+  if (lat == null || lon == null || !dateStr) return null;
+  const key = `weather_${lat.toFixed(2)}_${lon.toFixed(2)}_${dateStr}`;
+  try {
+    const c = localStorage.getItem(key);
+    if (c) return JSON.parse(c);
+  } catch {}
+  const parse = async (url) => {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const d = data?.daily;
+    if (!d?.weathercode?.length) return null;
+    return { tempMax: d.temperature_2m_max[0], tempMin: d.temperature_2m_min[0], code: d.weathercode[0] };
+  };
+  const params = `daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
+  let result = null;
+  try { result = await parse(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&${params}`); } catch {}
+  if (!result) {
+    try { result = await parse(`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&${params}`); } catch {}
+  }
+  if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
+  return result;
+}
+
+// Zelfstandig badge-je: geocodeert de meegegeven locatietekst zelf en haalt er
+// het weer bij, zodat elke plek in de app (dagplanning, het "Binnenkort"-
+// lijstje) dit met één regel kan tonen zonder de geocode/weer-logica zelf te
+// herhalen.
+function DayWeatherBadge({ query, date, size = 13 }) {
+  const [weather, setWeather] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!query || !date) { if (!cancelled) setWeather(null); return; }
+      const geo = await geocodePlace(query).catch(() => null);
+      if (cancelled) return;
+      if (geo?.lat == null) { setWeather(null); return; }
+      const w = await fetchDayWeather(geo.lat, geo.lon, date).catch(() => null);
+      if (!cancelled) setWeather(w);
+    })();
+    return () => { cancelled = true; };
+  }, [query, date]);
+
+  if (!weather) return null;
+  const info = weatherFromCode(weather.code);
+  return (
+    <span className="shrink-0 flex items-center gap-1 text-gray-400" title={info.label}>
+      <Icon name={info.icon} size={size} />
+      <span className="tnum text-gray-600 font-medium">{Math.round(weather.tempMax)}°</span>
+    </span>
+  );
+}
+
 function MapTab({ trip, accommodations, transports, days }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -4168,9 +4274,10 @@ function DayMiniMap({ places, accommodation }) {
 // verblijf ten opzichte van de vorige dag — een reisdag — dan komt er ook een
 // klein kaartje bij met beide plekken, verbonden met hetzelfde boogje als de
 // andere kaarten in de app.
-function AccommodationTransition({ current, previous }) {
+function AccommodationTransition({ current, previous, date }) {
   const [currentGeo, setCurrentGeo] = useState(null);
   const [previousGeo, setPreviousGeo] = useState(null);
+  const [weather, setWeather] = useState(null);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const isTravelDay = !!(current && previous && current.id !== previous.id);
@@ -4197,6 +4304,16 @@ function AccommodationTransition({ current, previous }) {
     })();
     return () => { cancelled = true; };
   }, [isTravelDay, previous?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (currentGeo?.lat == null || !date) { if (!cancelled) setWeather(null); return; }
+      const w = await fetchDayWeather(currentGeo.lat, currentGeo.lon, date).catch(() => null);
+      if (!cancelled) setWeather(w);
+    })();
+    return () => { cancelled = true; };
+  }, [currentGeo?.lat, currentGeo?.lon, date]);
 
   // currentGeo/previousGeo kunnen alsnog city-only zijn (geen lat/lon) als
   // zelfs de schone plaatsnaam niet te geocoden viel — dan is er wel een
@@ -4244,12 +4361,19 @@ function AccommodationTransition({ current, previous }) {
 
   const currentLabel = currentGeo?.city || current.address || current.name;
   const previousLabel = previousGeo?.city || previous?.address || previous?.name;
+  const weatherInfo = weather ? weatherFromCode(weather.code) : null;
 
   return (
     <div>
       <span className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
         <Icon name="bed" size={12} className="text-gray-400 shrink-0" />
         <span className="truncate">{isTravelDay ? `Van ${previousLabel} naar ${currentLabel}` : currentLabel}</span>
+        {weatherInfo && (
+          <span className="ml-auto shrink-0 flex items-center gap-1 text-gray-400" title={weatherInfo.label}>
+            <Icon name={weatherInfo.icon} size={13} />
+            <span className="tnum text-gray-600 font-medium">{Math.round(weather.tempMax)}°</span>
+          </span>
+        )}
       </span>
       {isTravelDay && hasCoords && (
         <>
