@@ -708,15 +708,20 @@ route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
   const byUser = new Map(sessions.map((r) => [r.user_id, r]));
 
   // What they actually did, newest first — including which slot it hangs off,
-  // so the client can jump straight to that day in het dagboek.
+  // so the client can jump straight to that day in het dagboek. Een like op
+  // een reactie (journal_likes.comment_id) heeft zelf geen dag/activiteit/etc.
+  // gezet — die zitten op de reactie waar 'm bij hoort, vandaar de join.
   const { rows: activity } = await query(
     `SELECT user_id, 'comment' AS kind, created_at AS at, body AS detail,
             day_id, activity_id, transport_id, accommodation_id
        FROM journal_comments WHERE trip_id = $1
      UNION ALL
-     SELECT user_id, 'like', created_at, NULL,
-            day_id, activity_id, transport_id, accommodation_id
-       FROM journal_likes WHERE trip_id = $1
+     SELECT l.user_id, 'like', l.created_at, NULL,
+            COALESCE(l.day_id, c.day_id), COALESCE(l.activity_id, c.activity_id),
+            COALESCE(l.transport_id, c.transport_id), COALESCE(l.accommodation_id, c.accommodation_id)
+       FROM journal_likes l
+       LEFT JOIN journal_comments c ON c.id = l.comment_id
+      WHERE l.trip_id = $1
      ORDER BY at DESC LIMIT 200`,
     [params.id]
   );
