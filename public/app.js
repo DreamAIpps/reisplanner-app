@@ -440,6 +440,7 @@ const api = {
   getQuizSession: (tripId) => _guestMode ? Promise.resolve({ session: null }) : apiFetch(`/api/trips/${tripId}/quiz/session`),
   createQuizSession: (tripId, opts) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: JSON.stringify(opts || {}) }),
   startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),
+  stopQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/stop`, { method: "POST", body: "{}" }),
   getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
   answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
@@ -5738,6 +5739,23 @@ function QrCode({ value, size = 180 }) {
   return <div ref={ref} style={{ width: size, height: size }} className="mx-auto" />;
 }
 
+// Neemt het hele scherm over — koptekst, tabbalk en onderbalk verdwijnen
+// achter deze laag — zodat de quiz als een echt spelmoment voelt in plaats
+// van nog een tabblad tussen de rest van de reisplanning.
+function QuizFullscreen({ onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-gray-50 overflow-y-auto">
+      <div className="sticky top-0 z-10 flex justify-end p-3" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
+        <button onClick={onClose} aria-label="Fotoquiz sluiten"
+          className="w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center text-gray-500 hover:text-gray-700">
+          <Icon name="close" size={18} />
+        </button>
+      </div>
+      <div className="px-4 pb-10" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>{children}</div>
+    </div>
+  );
+}
+
 // Een Kahoot-achtige fotoquiz: één sessie, gedeeld via QR-code, met tussenstand
 // na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
 // GET .../state (zie computeQuizPhase in server.js) — deze component pollt
@@ -5747,6 +5765,7 @@ function PhotoQuizTab({ trip, isHost }) {
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [live, setLive] = useState(null);
   const [myPick, setMyPick] = useState(null);
   const [questionSeconds, setQuestionSeconds] = useState(15);
@@ -5790,6 +5809,14 @@ function PhotoQuizTab({ trip, isHost }) {
     try { await api.startQuizSession(trip.id, session.id); await refreshSession(); }
     catch (err) { alert(err.message || "Kon quiz niet starten"); }
     finally { setStarting(false); }
+  }
+
+  async function stopSession() {
+    if (!confirm("Quiz stoppen voor iedereen?")) return;
+    setStopping(true);
+    try { await api.stopQuizSession(trip.id, session.id); await refreshSession(); }
+    catch (err) { alert(err.message || "Kon quiz niet stoppen"); }
+    finally { setStopping(false); }
   }
 
   async function pick(choice) {
@@ -5846,9 +5873,22 @@ function PhotoQuizTab({ trip, isHost }) {
   const participants = live?.participants || [];
   const totalQuestions = live?.totalQuestions || session.totalQuestions;
 
+  // Alleen de gastheer kan de quiz voor iedereen beëindigen, en alleen zolang
+  // hij nog loopt — eenmaal "done" is er niets meer te stoppen.
+  const stopControl = session.isHost && phase !== "done" && (
+    <div className="max-w-md mx-auto mb-3 text-right">
+      <button type="button" onClick={stopSession} disabled={stopping}
+        className="text-xs text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50">
+        {stopping ? "Bezig..." : "Quiz stoppen"}
+      </button>
+    </div>
+  );
+
   if (phase === "lobby") {
     const count = participants.length || session.participantCount || 0;
     return (
+      <>
+      {stopControl}
       <div className="text-center py-10 max-w-sm mx-auto">
         <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
         <h3 className="font-display text-[21px] text-gray-800 mb-1">Wachten op spelers</h3>
@@ -5879,6 +5919,7 @@ function PhotoQuizTab({ trip, isHost }) {
           <div className="text-sm text-gray-400">Wacht tot de gastheer de quiz start...</div>
         )}
       </div>
+      </>
     );
   }
 
@@ -5887,6 +5928,8 @@ function PhotoQuizTab({ trip, isHost }) {
     const answered = myPick || live.myAnswer;
     const resolved = answered && !answered.pending;
     return (
+      <>
+      {stopControl}
       <div className="max-w-md mx-auto">
         <div className="flex items-center justify-between mb-3 text-sm text-gray-500">
           <span>Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</span>
@@ -5925,6 +5968,7 @@ function PhotoQuizTab({ trip, isHost }) {
           </div>
         </div>
       </div>
+      </>
     );
   }
 
@@ -5934,6 +5978,8 @@ function PhotoQuizTab({ trip, isHost }) {
     const winners = sorted.filter((p) => p.score === top && top > 0);
     const isFinal = phase === "done";
     return (
+      <>
+      {stopControl}
       <div className="max-w-md mx-auto text-center">
         {isFinal ? (
           <>
@@ -5972,6 +6018,7 @@ function PhotoQuizTab({ trip, isHost }) {
           </Button>
         )}
       </div>
+      </>
     );
   }
 
@@ -6287,9 +6334,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           </div>
           {tab === "map"
             ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
-            : tab === "quiz" && quizAccess
-              ? <PhotoQuizTab trip={viewTrip} isHost={false} />
-              : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
+            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
         </>
       ) : (
         <>
@@ -6301,8 +6346,17 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
           {tab === "map" && <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
           {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
-          {tab === "quiz" && <PhotoQuizTab trip={viewTrip} isHost={isOwnerActions} />}
         </>
+      )}
+
+      {/* De fotoquiz rendert los van de rest, full screen — een alleen-lezen
+          bezoeker krijgt hem alleen te zien als die er via de sessie-QR bij
+          hoort (quizAccess), voor eigenaar/editor blijft de tab gewoon altijd
+          bereikbaar zoals hierboven. */}
+      {tab === "quiz" && (readOnly ? quizAccess : true) && (
+        <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")}>
+          <PhotoQuizTab trip={viewTrip} isHost={readOnly ? false : isOwnerActions} />
+        </QuizFullscreen>
       )}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}

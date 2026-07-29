@@ -2450,37 +2450,49 @@ const QUIZ_QUESTION_COUNT_DEFAULT = 5;
 const QUIZ_QUESTION_COUNT_MIN = 2;
 const QUIZ_QUESTION_COUNT_MAX = 15;
 
-// Alleen foto's die aan een activiteit, vervoer of verblijf hangen leveren een
-// zinnig "juist antwoord" op — een foto die alleen aan de dag zelf hangt heeft
-// geen naam om te raden. Claude bedenkt per juist antwoord drie verzonnen maar
-// geloofwaardige foute opties, in dezelfde stijl als de bestemming.
+// `.sort(() => Math.random() - 0.5)` is een bekende valse vriend: geen echte
+// shuffle, en met kleine arrays (zoals 4 meerkeuze-opties) systematisch
+// bevooroordeeld richting de oorspronkelijke volgorde — precies waarom het
+// juiste antwoord hier te vaak vooraan bleef staan. Fisher-Yates is wel echt
+// uniform verdeeld.
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Alleen foto's die aan een activiteit hangen leveren een zinnige vraag op —
+// verblijf en vervoer zijn logistiek, geen locatie/activiteit om te raden, en
+// een foto die alleen aan de dag zelf hangt heeft al helemaal geen naam.
+// Foute antwoorden komen zoveel mogelijk uit de reis zelf (andere echte
+// activiteiten) — pas als een reis daar te weinig van heeft, verzint Claude
+// het ontbrekende aantal erbij, in dezelfde stijl als de bestemming.
 async function generateQuizQuestions(tripId, count) {
-  const [{ rows: photos }, { rows: activities }, { rows: transportsRows }, { rows: accommodationsRows }, { rows: tripRows }] = await Promise.all([
-    query("SELECT id, activity_id, transport_id, accommodation_id FROM photos WHERE trip_id = $1 AND (activity_id IS NOT NULL OR transport_id IS NOT NULL OR accommodation_id IS NOT NULL)", [tripId]),
+  const [{ rows: photos }, { rows: activities }, { rows: tripRows }] = await Promise.all([
+    query("SELECT id, activity_id FROM photos WHERE trip_id = $1 AND activity_id IS NOT NULL", [tripId]),
     query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
-    query("SELECT id, from_location, to_location FROM transports WHERE trip_id = $1", [tripId]),
-    query("SELECT id, name FROM accommodations WHERE trip_id = $1", [tripId]),
     query("SELECT name, destination FROM trips WHERE id = $1", [tripId]),
   ]);
 
   const actMap = new Map(activities.map((a) => [a.id, a.title]));
-  const transMap = new Map(transportsRows.filter((t) => t.from_location && t.to_location).map((t) => [t.id, `${t.from_location} → ${t.to_location}`]));
-  const accMap = new Map(accommodationsRows.map((a) => [a.id, a.name]));
+  const allTitles = [...new Set(activities.map((a) => a.title).filter(Boolean))];
 
   const candidates = photos
     .map((p) => {
-      const answer = p.activity_id ? actMap.get(p.activity_id) : p.accommodation_id ? accMap.get(p.accommodation_id) : p.transport_id ? transMap.get(p.transport_id) : null;
+      const answer = actMap.get(p.activity_id);
       return answer ? { photoId: p.id, answer } : null;
     })
     .filter(Boolean);
 
   if (!candidates.length) return [];
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
 
   // Eerst zoveel mogelijk unieke antwoorden (anders is de quiz al opgelost
   // zodra je 'm de tweede keer ziet), pas daarna dubbele antwoorden toestaan
   // om alsnog aan het gevraagde aantal vragen te komen.
-  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+  const shuffled = shuffle(candidates);
   const picked = [];
   const seenAnswers = new Set();
   for (const c of shuffled) {
@@ -2494,25 +2506,41 @@ async function generateQuizQuestions(tripId, count) {
     if (!picked.includes(c)) picked.push(c);
   }
 
-  const destination = tripRows[0]?.destination || tripRows[0]?.name || "deze reis";
-  const prompt = `Voor een fotoquiz over een reis naar "${destination}" heb ik per juist antwoord 3 verzonnen maar geloofwaardige foute meerkeuze-opties nodig, in het Nederlands en in dezelfde stijl (plaatsnamen/bezienswaardigheden/verblijven passend bij deze bestemming). Ze mogen niet gelijk zijn aan een van de juiste antwoorden hieronder.
-Juiste antwoorden, in deze volgorde:
-${picked.map((p, i) => `${i + 1}. ${p.answer}`).join("\n")}
-Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."]}, ...]} — exact ${picked.length} items, in dezelfde volgorde.`;
-
-  const msg = await anthropicClient.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 800,
-    messages: [{ role: "user", content: prompt }],
+  const withRealDistractors = picked.map((p) => {
+    const pool = shuffle(allTitles.filter((t) => t !== p.answer));
+    return { ...p, real: pool.slice(0, 3) };
   });
-  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
 
-  return picked.map((p, i) => {
-    const distractors = (parsed.items?.[i]?.distractors || []).filter((d) => d && d !== p.answer).slice(0, 3);
+  const needsFiller = withRealDistractors.filter((p) => p.real.length < 3);
+  const fillerByPhoto = new Map();
+  if (needsFiller.length) {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
+    const destination = tripRows[0]?.destination || tripRows[0]?.name || "deze reis";
+    const prompt = `Voor een fotoquiz over een reis naar "${destination}" heb ik per juist antwoord 3 verzonnen maar geloofwaardige foute meerkeuze-opties nodig — andere activiteiten/locaties, in het Nederlands en in dezelfde stijl (bezienswaardigheden/plaatsnamen passend bij deze bestemming). Ze mogen niet gelijk zijn aan het juiste antwoord.
+Juiste antwoorden, in deze volgorde:
+${needsFiller.map((p, i) => `${i + 1}. ${p.answer}`).join("\n")}
+Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."]}, ...]} — exact ${needsFiller.length} items, in dezelfde volgorde.`;
+
+    const msg = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 800,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
+    needsFiller.forEach((p, i) => {
+      const invented = (parsed.items?.[i]?.distractors || []).filter((d) => d && d !== p.answer && !p.real.includes(d));
+      fillerByPhoto.set(p.photoId, invented);
+    });
+  }
+
+  return withRealDistractors.map((p) => {
+    const missing = 3 - p.real.length;
+    const invented = missing > 0 ? (fillerByPhoto.get(p.photoId) || []).slice(0, missing) : [];
+    const distractors = [...p.real, ...invented];
     while (distractors.length < 3) distractors.push(`Optie ${distractors.length + 1}`);
-    const options = [p.answer, ...distractors].sort(() => Math.random() - 0.5);
+    const options = shuffle([p.answer, ...distractors]);
     return {
       photo_id: p.photoId,
       url: `/api/photos/${p.photoId}/raw`,
@@ -2529,6 +2557,10 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
 // server een lopende timer hoeft bij te houden.
 function computeQuizPhase(session) {
   const total = session.questions.length;
+  // De gastheer kan de quiz voortijdig stoppen (zie de /stop-route) — dat zet
+  // status expliciet op 'done', wat hier voorrang krijgt op de tijd-afgeleide
+  // berekening hieronder.
+  if (session.status === "done") return { phase: "done", index: total - 1, remainingSeconds: null };
   if (session.status === "lobby" || !session.started_at) {
     return { phase: "lobby", index: 0, remainingSeconds: null };
   }
@@ -2611,6 +2643,13 @@ route("POST", "/api/trips/:id/quiz/sessions/:sessionId/start", async (req, res, 
   if (!rows.length || rows[0].host_user_id !== req.user.id) return sendError(res, 403, "Alleen de gastheer kan de quiz starten");
   if (rows[0].status !== "lobby") return sendJson(res, 200, { ok: true });
   await query("UPDATE quiz_sessions SET status = 'active', started_at = NOW() WHERE id = $1", [params.sessionId]);
+  sendJson(res, 200, { ok: true });
+}, { tripScope: "param" });
+
+route("POST", "/api/trips/:id/quiz/sessions/:sessionId/stop", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1 AND trip_id = $2", [params.sessionId, params.id]);
+  if (!rows.length || rows[0].host_user_id !== req.user.id) return sendError(res, 403, "Alleen de gastheer kan de quiz stoppen");
+  await query("UPDATE quiz_sessions SET status = 'done' WHERE id = $1", [params.sessionId]);
   sendJson(res, 200, { ok: true });
 }, { tripScope: "param" });
 
