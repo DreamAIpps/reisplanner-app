@@ -1793,47 +1793,51 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const largeMaxWidth = "88vw";
 
   return (
-    <div className={`flex ${large ? "gap-4 snap-x snap-mandatory" : "gap-2"} overflow-x-auto pb-1`} onClick={(e) => e.stopPropagation()}>
-      {photos.map((p, i) => (
-        <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center" : ""}`}>
-          <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
-            className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
-          {large && (
-            <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
-          )}
-          {large && comments && (
-            <div className="mt-1.5" style={{ maxWidth: largeMaxWidth }} onClick={(e) => e.stopPropagation()}>
-              <JournalComments slot={{ photo_id: p.id }}
-                comments={comments.filter((c) => c.photo_id === p.id)}
-                like={(slotLikes && slotLikes[`photo_id:${p.id}`]) || { like_count: 0, liked_by_me: false }}
-                tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
-            </div>
-          )}
-          {!readOnly && (
-            <button type="button" onClick={() => handleDelete(p.id)}
-              className={`absolute -top-1.5 -right-1.5 rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "w-8 h-8 text-base" : "w-6 h-6 text-sm"}`}>
-              ×
-            </button>
-          )}
-        </div>
-      ))}
-      {!readOnly && (
-        // In the dagboek this is a small labelled button, not a tile: photos
-        // there are ~70vw, and a matching dashed square dominated the entry —
-        // especially before any photo had been added. The compact grid keeps
-        // its square tile, where it lines up with the thumbnails.
-        large ? (
-          <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-            className="shrink-0 self-center inline-flex items-center gap-1.5 h-9 px-3 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors disabled:opacity-50">
-            <span className="text-base leading-none">＋</span>
-            {uploading ? "Uploaden..." : "Foto"}
-          </button>
-        ) : (
+    <div onClick={(e) => e.stopPropagation()}>
+      <div className={`flex ${large ? "gap-4 snap-x snap-mandatory" : "gap-2"} overflow-x-auto pb-1`}>
+        {photos.map((p, i) => (
+          <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center" : ""}`}>
+            <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
+              className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
+            {large && (
+              <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
+            )}
+            {large && comments && (
+              <div className="mt-1.5" style={{ maxWidth: largeMaxWidth }} onClick={(e) => e.stopPropagation()}>
+                <JournalComments slot={{ photo_id: p.id }}
+                  comments={comments.filter((c) => c.photo_id === p.id)}
+                  like={(slotLikes && slotLikes[`photo_id:${p.id}`]) || { like_count: 0, liked_by_me: false }}
+                  tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
+              </div>
+            )}
+            {!readOnly && (
+              <button type="button" onClick={() => handleDelete(p.id)}
+                className={`absolute -top-1.5 -right-1.5 rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "w-8 h-8 text-base" : "w-6 h-6 text-sm"}`}>
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        {/* In de compacte grid (foto's-tab) blijft de "+"-tegel gewoon in de
+            scrollende rij staan — de tegels zijn klein genoeg om zichtbaar te
+            blijven. In het dagboek (large) duwden de nu veel bredere foto's
+            'm daar helemaal buiten beeld: bij één foto van bijna schermbreed
+            stond de knop achter de rand, onbereikbaar zonder te weten dat je
+            opzij moest vegen. Die staat daarom hieronder, los van de
+            scrollende rij, altijd zichtbaar. */}
+        {!readOnly && !large && (
           <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
             className="shrink-0 w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-500 text-2xl transition-colors">
             {uploading ? "…" : "＋"}
           </button>
-        )
+        )}
+      </div>
+      {!readOnly && large && (
+        <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
+          className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors disabled:opacity-50">
+          <span className="text-base leading-none">＋</span>
+          {uploading ? "Uploaden..." : "Foto toevoegen"}
+        </button>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {viewingIndex != null && (
