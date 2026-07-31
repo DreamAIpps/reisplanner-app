@@ -442,7 +442,7 @@ const api = {
   startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),
   stopQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/stop`, { method: "POST", body: "{}" }),
   getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
-  answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
+  answerQuizQuestion: (sessionId, questionIndex, answer) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, ...answer }) }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -5990,6 +5990,65 @@ function QuizDoublerScreen() {
   );
 }
 
+// Kaart-gok vraag: in plaats van meerkeuze-opties tikt de speler op een
+// kaart om te raden waar de foto is genomen. Zolang er nog niet is
+// geantwoord verspringt de marker met elke tik; na het bevestigen ligt hij
+// vast op het verstuurde punt (myGuess, van de server of lokaal onthouden).
+function QuizMapGuess({ mapCenter, answered, myGuess, onConfirm }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+  const [pending, setPending] = useState(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const cfg = await mapConfig();
+      if (cancelled || !mapRef.current) return;
+      const L = window.L;
+      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      const center = mapCenter ? [mapCenter.lat, mapCenter.lng] : [20, 0];
+      const map = L.map(mapRef.current).setView(center, mapCenter ? 6 : 2);
+      mapInstanceRef.current = map;
+      addBaseLayer(L, map, cfg);
+      map.on("click", (e) => setPending({ lat: e.latlng.lat, lng: e.latlng.lng }));
+    })();
+    return () => { cancelled = true; };
+  }, [mapCenter]);
+
+  useEffect(() => () => {
+    if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+  }, []);
+
+  const guess = answered ? myGuess : pending;
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
+    if (!map || !guess) return;
+    const L = window.L;
+    markerRef.current = L.marker([guess.lat, guess.lng], {
+      icon: L.divIcon({
+        className: "leaflet-reisplanner-icon",
+        html: '<div style="width:22px;height:22px;border-radius:50%;background:#FF7A00;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(36,29,25,.35)"></div>',
+        iconSize: [22, 22], iconAnchor: [11, 11],
+      }),
+    }).addTo(map);
+  }, [guess?.lat, guess?.lng]);
+
+  return (
+    <div>
+      <div ref={mapRef} className="w-full h-56 rounded-xl overflow-hidden border border-gray-200" />
+      {!answered && (
+        <Button className="w-full mt-3" onClick={() => pending && onConfirm(pending.lat, pending.lng)} disabled={!pending}>
+          {pending ? "Bevestig gok" : "Tik op de kaart"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 const SCORE_SPIN_MS = 3000;
 
 // Telt op van de vorige naar de nieuwe stand in plaats van 'm meteen te
@@ -6249,12 +6308,26 @@ function PhotoQuizTab({ trip }) {
     quizAudio(); // ontgrendel de AudioContext binnen dit klik-gebaar (iOS staat geluid niet toe zonder)
     setMyPick({ index: live.currentIndex, choice, pending: true });
     try {
-      const res = await api.answerQuizQuestion(session.id, live.currentIndex, choice);
+      const res = await api.answerQuizQuestion(session.id, live.currentIndex, { choice });
       setMyPick({ index: live.currentIndex, choice, correct: res.correct, points: res.points });
       if (res.correct) playCorrect(); else playWrong();
     } catch (err) {
       setMyPick(null);
       alert(err.message || "Kon antwoord niet versturen");
+    }
+  }
+
+  async function submitGuess(lat, lng) {
+    if (myPick || !live || live.phase !== "question") return;
+    quizAudio();
+    setMyPick({ index: live.currentIndex, choice: { lat, lng }, pending: true });
+    try {
+      const res = await api.answerQuizQuestion(session.id, live.currentIndex, { lat, lng });
+      setMyPick({ index: live.currentIndex, choice: { lat, lng }, correct: res.correct, points: res.points, distanceKm: res.distanceKm });
+      if (res.correct) playCorrect(); else playWrong();
+    } catch (err) {
+      setMyPick(null);
+      alert(err.message || "Kon locatie niet versturen");
     }
   }
 
@@ -6378,6 +6451,7 @@ function PhotoQuizTab({ trip }) {
     const q = live.question;
     const isTextMode = q.type === "text";
     const isBlurMode = q.mode === "blur";
+    const isMapMode = q.mode === "map";
 
     if (doublerScreenActive) {
       return (
@@ -6394,7 +6468,7 @@ function PhotoQuizTab({ trip }) {
     // opnieuw beginnen te draaien). De blur-variant en de tekstvraag (die
     // geen foto heeft) slaan het rad helemaal over: daar mag je vanaf het
     // begin al antwoorden.
-    if (!isTextMode && !isBlurMode && revealedIndex !== live.currentIndex) {
+    if (!isTextMode && !isBlurMode && !isMapMode && revealedIndex !== live.currentIndex) {
       return (
         <>
         {stopControl}
@@ -6410,6 +6484,42 @@ function PhotoQuizTab({ trip }) {
 
     const answered = myPick || live.myAnswer;
     const resolved = answered && !answered.pending;
+
+    if (isMapMode) {
+      const distanceKm = myPick && myPick.distanceKm != null ? myPick.distanceKm : null;
+      let myGuess = null;
+      if (myPick && myPick.choice) myGuess = myPick.choice;
+      else if (answered && answered.choice) {
+        try { myGuess = JSON.parse(answered.choice); } catch { myGuess = null; }
+      }
+      return (
+        <>
+        {stopControl}
+        <div className="max-w-md mx-auto">
+          <div className="flex items-center justify-between mb-1 text-sm text-gray-500">
+            <span>Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</span>
+            <span className="tnum font-bold text-2xl text-sky-600 leading-none">{live.remainingSeconds}s</span>
+          </div>
+          {q.doubler && <div className="mb-3"><span className="inline-block px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">⚡ Dubbele punten!</span></div>}
+          <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
+            <img src={q.thumb_url || q.url} alt="" className="w-full aspect-square object-cover" />
+            <div className="p-4">
+              <div className="text-sm font-semibold text-gray-800 mb-3">Waar is deze foto genomen? Tik op de kaart</div>
+              <QuizMapGuess mapCenter={q.mapCenter} answered={!!answered} myGuess={myGuess} onConfirm={submitGuess} />
+              <div className="text-xs text-gray-400 mt-3 text-center">
+                {!answered
+                  ? (q.doubler ? "Kies snel — dubbele punten deze ronde!" : "Plaats je gok — hoe dichterbij, hoe meer punten")
+                  : resolved
+                    ? (distanceKm != null ? `Je zat er ${distanceKm} km naast · +${answered.points} punten` : `+${answered.points} punten`)
+                    : "Gok versturen..."}
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
+      );
+    }
+
     // Loopt lineair van flink onscherp naar volledig scherp over de eerste
     // 75% van het antwoordvenster — als fractie van de ingestelde vraagduur,
     // dus ongeacht of een sessie 5 of 60 seconden per vraag heeft staan.
@@ -6656,16 +6766,16 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const bottomNavItems = [
     { key: "days", icon: "route", label: "Planning" },
     ...(currentUserId ? [{ key: "journal", icon: "book", label: "Dagboek" }] : []),
-    { key: "photos", icon: "camera", label: "Foto's" },
+    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
+    { key: "photos", icon: "camera", label: "Foto's" },
     { key: "accommodation", icon: "bed", label: "Verblijf" },
     { key: "transport", icon: "plane", label: "Vervoer" },
     { key: "packing", icon: "suitcase", label: "Paklijst" },
     { key: "map", icon: "map", label: "Kaart" },
     ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
-    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
