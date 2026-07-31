@@ -5778,8 +5778,20 @@ function shuffleClient(arr) {
 // spanningsopbouw vóór de multiple-choice opties verschijnen. De rolrichting
 // is altijd hetzelfde (naar links), alleen de duur van de vertraging geeft
 // het "tot stilstand komen"-gevoel — geen fysica, gewoon een CSS-easing.
-function PhotoWheel({ pool, target, onDone, size = 220 }) {
+const WHEEL_SPIN_MS = 3400;
+
+function PhotoWheel({ pool, target, onDone }) {
+  const containerRef = useRef(null);
   const trackRef = useRef(null);
+  const [tileSize, setTileSize] = useState(0);
+
+  // Zo breed als de vraagkaart eronder (max-w-md, responsief) in plaats van
+  // een vast aantal pixels — anders oogt de rol een stuk kleiner dan de foto
+  // die er meteen op volgt.
+  React.useLayoutEffect(() => {
+    if (containerRef.current) setTileSize(containerRef.current.clientWidth);
+  }, []);
+
   // Op `target.photo_id` in plaats van op `target` zelf: elke /state-poll (om
   // de 1,5s) levert een nieuw objectliteral voor dezelfde vraag, en zolang
   // hetzelfde fotonummer bedoeld wordt mag dat de rol niet laten herstarten.
@@ -5791,24 +5803,27 @@ function PhotoWheel({ pool, target, onDone, size = 220 }) {
 
   useEffect(() => {
     const el = trackRef.current;
-    if (!el) return;
+    if (!el || !tileSize) return;
     let done = false;
     el.style.transition = "none";
     el.style.transform = "translateX(0px)";
     void el.offsetHeight; // force reflow, anders negeert de browser de reset vóór de animatie
     const raf = requestAnimationFrame(() => {
-      el.style.transition = "transform 1.5s cubic-bezier(0.1,0.8,0.25,1)";
-      el.style.transform = `translateX(-${(sequence.length - 1) * size}px)`;
+      // Lang genoeg om als een echte rol te voelen: eerst duidelijk
+      // ronddraaiend, dan een merkbaar lange, uitdovende staart voordat hij
+      // stilstaat op de juiste foto.
+      el.style.transition = `transform ${WHEEL_SPIN_MS}ms cubic-bezier(0,0,0.2,1)`;
+      el.style.transform = `translateX(-${(sequence.length - 1) * tileSize}px)`;
     });
-    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, 1550);
+    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, WHEEL_SPIN_MS + 50);
     return () => { done = true; cancelAnimationFrame(raf); clearTimeout(timer); };
-  }, [sequence, size]);
+  }, [sequence, tileSize]);
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border-4 border-sky-400 shadow-lg mx-auto" style={{ width: size, height: size }}>
+    <div ref={containerRef} className="relative overflow-hidden rounded-2xl border-4 border-sky-400 shadow-lg mx-auto w-full max-w-[380px] aspect-square">
       <div ref={trackRef} className="flex h-full" style={{ willChange: "transform" }}>
         {sequence.map((p, i) => (
-          <img key={i} src={p.thumb_url || p.url} alt="" className="object-cover shrink-0" style={{ width: size, height: size }} />
+          <img key={i} src={p.thumb_url || p.url} alt="" className="object-cover shrink-0 h-full" style={{ width: tileSize || "100%" }} />
         ))}
       </div>
     </div>
