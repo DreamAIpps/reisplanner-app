@@ -5773,6 +5773,42 @@ function shuffleClient(arr) {
   return a;
 }
 
+// Kleine, gesynthetiseerde geluidseffecten voor de quiz — geen audiobestanden
+// nodig (die passen niet bij een app zonder buildstap), gewoon een paar korte
+// toontjes via de Web Audio API. Eén gedeelde AudioContext, lazy aangemaakt
+// en pas bij een echte gebruikersactie (klik) — Safari/iOS negeert geluid dat
+// zonder gebaar van de gebruiker start, dus de allereerste aanroep gebeurt
+// altijd vanuit een click-handler (start/antwoord-knop).
+let quizAudioCtx = null;
+function quizAudio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!quizAudioCtx) quizAudioCtx = new Ctx();
+  if (quizAudioCtx.state === "suspended") quizAudioCtx.resume().catch(() => {});
+  return quizAudioCtx;
+}
+function playTone(freq, startOffset, duration, { type = "sine", gain = 0.15 } = {}) {
+  const ctx = quizAudio();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + startOffset;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  osc.connect(g);
+  g.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.02);
+}
+function playWheelLand() { playTone(880, 0, 0.12, { type: "triangle" }); playTone(1175, 0.09, 0.2, { type: "triangle" }); }
+function playTick() { playTone(1300, 0, 0.05, { type: "square", gain: 0.07 }); }
+function playCorrect() { playTone(523.25, 0, 0.12); playTone(659.25, 0.09, 0.12); playTone(783.99, 0.18, 0.24); }
+function playWrong() { playTone(196, 0, 0.35, { type: "sawtooth", gain: 0.12 }); }
+function playWinnerFanfare() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playTone(f, i * 0.13, 0.22, { type: "triangle" })); }
+
 // Een slot-achtige foto-rol: een rij foto's uit de reis schuift voorbij en
 // komt vertragend tot stilstand op de foto waar de vraag over gaat, als korte
 // spanningsopbouw vóór de multiple-choice opties verschijnen. De rolrichting
@@ -5846,6 +5882,9 @@ function PhotoQuizTab({ trip, isHost }) {
   const [questionCount, setQuestionCount] = useState(5);
   const [photoPool, setPhotoPool] = useState([]);
   const [revealedIndex, setRevealedIndex] = useState(-1);
+  const [showNewQuizForm, setShowNewQuizForm] = useState(false);
+  const lastTickRef = useRef(null);
+  const doneSoundPlayedRef = useRef(false);
 
   const refreshSession = useCallback(async () => {
     try { const data = await api.getQuizSession(trip.id); setSession(data.session || null); }
@@ -5877,6 +5916,25 @@ function PhotoQuizTab({ trip, isHost }) {
 
   useEffect(() => { setMyPick(null); }, [live?.currentIndex]);
 
+  // Korte tik in de laatste 3 seconden van het antwoordvenster — alleen
+  // tijdens het echte kiezen (niet terwijl de foto-rol nog draait), en
+  // hooguit één keer per seconde-waarde (anders zou elke 1,5s-poll 'm
+  // opnieuw afvuren zolang de weergegeven seconde niet is veranderd).
+  useEffect(() => {
+    if (live?.phase !== "question" || revealedIndex !== live.currentIndex) return;
+    const s = live.remainingSeconds;
+    if (s > 0 && s <= 3 && lastTickRef.current !== s) { lastTickRef.current = s; playTick(); }
+  }, [live?.phase, live?.remainingSeconds, live?.currentIndex, revealedIndex]);
+
+  // Fanfare zodra de eindstand in beeld komt — precies één keer, niet bij
+  // elke poll zolang de quiz al "done" is.
+  useEffect(() => {
+    if (live?.phase === "done" && !doneSoundPlayedRef.current) {
+      doneSoundPlayedRef.current = true;
+      playWinnerFanfare();
+    }
+  }, [live?.phase]);
+
   async function createSession() {
     setCreating(true); setError(null);
     try {
@@ -5884,11 +5942,14 @@ function PhotoQuizTab({ trip, isHost }) {
       setSession(data.session);
       setLive(null);
       setRevealedIndex(-1);
+      setShowNewQuizForm(false);
+      doneSoundPlayedRef.current = false;
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
 
   async function startSession() {
+    quizAudio(); // klik van de gastheer — beste kans om geluid alvast te ontgrendelen
     setStarting(true);
     try { await api.startQuizSession(trip.id, session.id); await refreshSession(); }
     catch (err) { alert(err.message || "Kon quiz niet starten"); }
@@ -5905,10 +5966,12 @@ function PhotoQuizTab({ trip, isHost }) {
 
   async function pick(choice) {
     if (myPick || !live || live.phase !== "question") return;
+    quizAudio(); // ontgrendel de AudioContext binnen dit klik-gebaar (iOS staat geluid niet toe zonder)
     setMyPick({ index: live.currentIndex, choice, pending: true });
     try {
       const res = await api.answerQuizQuestion(session.id, live.currentIndex, choice);
       setMyPick({ index: live.currentIndex, choice, correct: res.correct, points: res.points });
+      if (res.correct) playCorrect(); else playWrong();
     } catch (err) {
       setMyPick(null);
       alert(err.message || "Kon antwoord niet versturen");
@@ -5917,6 +5980,34 @@ function PhotoQuizTab({ trip, isHost }) {
 
   if (session === undefined) {
     return <div className="text-center py-16 text-gray-400">Laden...</div>;
+  }
+
+  // Gedeeld tussen het allereerste scherm (nog nooit een sessie gehad) én
+  // "Nieuwe quiz starten" ná afloop — dat laatste opende voorheen meteen een
+  // nieuwe sessie met de oude waarden, zonder ooit deze instellingen nog eens
+  // te tonen. Zodra er ooit een sessie is geweest blijft `session` immers
+  // altijd de laatst gemaakte sessie (nooit meer null), dus dit was de enige
+  // andere plek waar aantal vragen / tijd per vraag nog aanpasbaar konden zijn.
+  function renderQuizSettings(buttonLabel) {
+    return (
+      <>
+        <div className="flex items-center justify-center gap-4 mb-5 text-sm">
+          <label className="flex items-center gap-2 text-gray-500">
+            Aantal vragen
+            <Input type="number" min={2} max={15} value={questionCount}
+              onChange={(e) => setQuestionCount(Math.min(15, Math.max(2, Number(e.target.value) || 2)))}
+              className="!w-16 !py-1 text-center tnum" />
+          </label>
+          <label className="flex items-center gap-2 text-gray-500">
+            Seconden per vraag
+            <Input type="number" min={5} max={60} value={questionSeconds}
+              onChange={(e) => setQuestionSeconds(Math.min(60, Math.max(5, Number(e.target.value) || 5)))}
+              className="!w-16 !py-1 text-center tnum" />
+          </label>
+        </div>
+        <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : buttonLabel}</Button>
+      </>
+    );
   }
 
   if (!session) {
@@ -5930,25 +6021,7 @@ function PhotoQuizTab({ trip, isHost }) {
             : "Er is nu geen actieve fotoquiz voor deze reis."}
         </p>
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
-        {isHost && (
-          <>
-            <div className="flex items-center justify-center gap-4 mb-5 text-sm">
-              <label className="flex items-center gap-2 text-gray-500">
-                Aantal vragen
-                <Input type="number" min={2} max={15} value={questionCount}
-                  onChange={(e) => setQuestionCount(Math.min(15, Math.max(2, Number(e.target.value) || 2)))}
-                  className="!w-16 !py-1 text-center tnum" />
-              </label>
-              <label className="flex items-center gap-2 text-gray-500">
-                Seconden per vraag
-                <Input type="number" min={5} max={60} value={questionSeconds}
-                  onChange={(e) => setQuestionSeconds(Math.min(60, Math.max(5, Number(e.target.value) || 5)))}
-                  className="!w-16 !py-1 text-center tnum" />
-              </label>
-            </div>
-            <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : "Start een fotoquiz"}</Button>
-          </>
-        )}
+        {isHost && renderQuizSettings("Start een fotoquiz")}
       </div>
     );
   }
@@ -6021,7 +6094,7 @@ function PhotoQuizTab({ trip, isHost }) {
         <div className="max-w-md mx-auto text-center">
           <div className="text-sm text-gray-500 mb-1">Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</div>
           <div className="text-xs text-gray-400 mb-4">Waar hoort deze foto bij?</div>
-          <PhotoWheel pool={photoPool} target={q} onDone={() => setRevealedIndex(live.currentIndex)} />
+          <PhotoWheel pool={photoPool} target={q} onDone={() => { playWheelLand(); setRevealedIndex(live.currentIndex); }} />
         </div>
         </>
       );
@@ -6115,9 +6188,11 @@ function PhotoQuizTab({ trip, isHost }) {
           ))}
         </div>
         {isFinal && session.isHost && (
-          <Button onClick={createSession} disabled={creating} className="mt-5">
-            {creating ? "Bezig..." : "Nieuwe quiz starten"}
-          </Button>
+          <div className="mt-5">
+            {showNewQuizForm
+              ? renderQuizSettings("Start nieuwe quiz")
+              : <Button onClick={() => setShowNewQuizForm(true)}>Nieuwe quiz starten</Button>}
+          </div>
         )}
       </div>
       </>
