@@ -2473,6 +2473,8 @@ function shuffle(arr) {
 // Van elke 4 vragen is er 1 een tekstvraag zonder foto, gebaseerd op de
 // planning/het dagboek/reacties in plaats van een fotopool.
 const TEXT_QUESTION_EVERY = 4;
+// Vraag 5 (0-indexed dus index 4) telt dubbele punten.
+const QUIZ_DOUBLER_INDEX = 4;
 
 async function generateQuizQuestions(tripId, count) {
   const textCount = Math.floor(count / TEXT_QUESTION_EVERY);
@@ -2574,16 +2576,35 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
   }
   while (photoIdx < photoQuestions.length) merged.push(photoQuestions[photoIdx++]);
   while (textIdx < textQuestions.length) merged.push(textQuestions[textIdx++]);
+
+  // Vraag 5 is een "verdubbelaar" (dubbele punten) — alleen relevant als de
+  // quiz er daadwerkelijk 5 heeft. De client toont dit expliciet aan de hand
+  // van dit veld, en de antwoord-route verdubbelt de score ernaar.
+  if (merged[QUIZ_DOUBLER_INDEX]) merged[QUIZ_DOUBLER_INDEX] = { ...merged[QUIZ_DOUBLER_INDEX], doubler: true };
+
   return merged;
 }
 
 // Tekstvragen zonder foto, gebaseerd op de dagplanning, het dagboek en
 // reacties — Claude bedenkt zowel de vraag, het juiste antwoord (rechtstreeks
 // afgeleid uit de meegegeven informatie) als 3 verzonnen foute opties.
+// Haversine — de enige manier om een écht juiste afstand tussen twee plekken
+// te garanderen: Claude zelf laten schatten zou verzonnen kilometers
+// opleveren die niemand kan checken. Alleen activiteiten met minstens één
+// foto met GPS-locatie (uit EXIF) doen mee, want dat is de enige coördinaat
+// die deze app al heeft — er wordt niets extra gegeocodeerd.
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 async function generateQuizTextQuestions(tripId, textCount) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
 
-  const [{ rows: tripRows }, { rows: days }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: entries }, { rows: comments }] = await Promise.all([
+  const [{ rows: tripRows }, { rows: days }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: entries }, { rows: comments }, { rows: geoPhotos }] = await Promise.all([
     query("SELECT name, destination, start_date, end_date FROM trips WHERE id = $1", [tripId]),
     query("SELECT id, date FROM days WHERE trip_id = $1 ORDER BY date", [tripId]),
     query("SELECT day_id, title, time, location FROM activities WHERE trip_id = $1 ORDER BY day_id, time", [tripId]),
@@ -2591,6 +2612,12 @@ async function generateQuizTextQuestions(tripId, textCount) {
     query("SELECT name FROM accommodations WHERE trip_id = $1", [tripId]),
     query("SELECT body FROM journal_entries WHERE trip_id = $1 AND body IS NOT NULL", [tripId]),
     query("SELECT body FROM journal_comments WHERE trip_id = $1 AND body IS NOT NULL", [tripId]),
+    query(
+      `SELECT p.activity_id, p.latitude, p.longitude, a.title FROM photos p
+       JOIN activities a ON a.id = p.activity_id
+       WHERE p.trip_id = $1 AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL`,
+      [tripId]
+    ),
   ]);
 
   const dayNumberById = new Map(days.map((d, i) => [d.id, i + 1]));
@@ -2608,13 +2635,30 @@ async function generateQuizTextQuestions(tripId, textCount) {
   for (const e of entries) lines.push(`Dagboek: "${e.body.slice(0, 200)}"`);
   for (const c of comments) lines.push(`Reactie: "${c.body.slice(0, 200)}"`);
 
+  const activityCoords = new Map();
+  for (const p of geoPhotos) {
+    if (!activityCoords.has(p.activity_id)) activityCoords.set(p.activity_id, { title: p.title, lat: Number(p.latitude), lng: Number(p.longitude) });
+  }
+  const geoEntries = [...activityCoords.values()];
+  const distanceLines = [];
+  for (let i = 0; i < geoEntries.length; i++) {
+    for (let j = i + 1; j < geoEntries.length; j++) {
+      const km = haversineKm(geoEntries[i].lat, geoEntries[i].lng, geoEntries[j].lat, geoEntries[j].lng);
+      const formatted = km < 1 ? `${Math.round(km * 1000)} m` : `${Math.round(km)} km`;
+      distanceLines.push(`Afstand ${geoEntries[i].title} - ${geoEntries[j].title}: ${formatted}`);
+    }
+  }
+  // Niet alle mogelijke paren meegeven bij veel locaties — anders domineren
+  // afstanden de hele prompt. Willekeurige selectie, gewoon een handvol.
+  lines.push(...shuffle(distanceLines).slice(0, 6));
+
   // Ruwe cap tegen een onwerkbaar lange prompt bij een uitgebreide reis.
   const context = lines.slice(0, 150).join("\n");
 
-  const prompt = `Hier is de planning, het dagboek en de reacties van een reis:
+  const prompt = `Hier is de planning, het dagboek, de reacties en (indien aanwezig) een paar echte afstanden tussen locaties van een reis:
 ${context}
 
-Bedenk ${textCount} verschillende meerkeuzevragen over deze reis, gebaseerd op bovenstaande informatie (data, volgorde van activiteiten, locaties, wie iets schreef, wat er gebeurde) — geen vragen over foto's. Voor elke vraag: een kort, ondubbelzinnig juist antwoord dat rechtstreeks uit de informatie hierboven volgt, plus 3 geloofwaardige maar foute opties in dezelfde stijl, allemaal kort (max ~6 woorden). In het Nederlands.
+Bedenk ${textCount} verschillende meerkeuzevragen over deze reis, gebaseerd op bovenstaande informatie (data, volgorde van activiteiten, locaties, wie iets schreef, wat er gebeurde) — geen vragen over foto's. Gebruik, als er afstanden hierboven staan, af en toe (niet elke vraag) ook zo'n afstand — bijvoorbeeld welke twee plekken het dichtst bij elkaar lagen, of hoeveel kilometer ergens ongeveer tussen zat. Voor elke vraag: een kort, ondubbelzinnig juist antwoord dat rechtstreeks uit de informatie hierboven volgt, plus 3 geloofwaardige maar foute opties in dezelfde stijl, allemaal kort (max ~6 woorden). In het Nederlands.
 Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"...","distractors":["...","...","..."]}, ...]} — exact ${textCount} items.`;
 
   const msg = await anthropicClient.messages.create({
@@ -2638,6 +2682,10 @@ Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"..."
 // iedereen nu" — puur een functie van de klok, dus elke deelnemer die op
 // hetzelfde moment pollt krijgt exact dezelfde vraag te zien zonder dat de
 // server een lopende timer hoeft bij te houden.
+// Niet na élke vraag een tussenstand — dat onderbrak het tempo te vaak — maar
+// pas na elke 3e vraag (dus na vraag 3, 6, 9, ...).
+const QUIZ_STANDINGS_EVERY = 3;
+
 function computeQuizPhase(session) {
   const total = session.questions.length;
   // De gastheer kan de quiz voortijdig stoppen (zie de /stop-route) — dat zet
@@ -2647,15 +2695,23 @@ function computeQuizPhase(session) {
   if (session.status === "lobby" || !session.started_at) {
     return { phase: "lobby", index: 0, remainingSeconds: null };
   }
-  const slot = session.question_seconds + session.interval_seconds;
   const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
-  const index = Math.floor(elapsed / slot);
-  if (index >= total) return { phase: "done", index: total - 1, remainingSeconds: null };
-  const intoSlot = elapsed - index * slot;
-  if (intoSlot < session.question_seconds) {
-    return { phase: "question", index, remainingSeconds: Math.ceil(session.question_seconds - intoSlot) };
+  // Vragen hebben niet meer allemaal dezelfde slotlengte: alleen na elke 3e
+  // vraag komt er een tussenstand-pauze bij, dus dit loopt cumulatief door
+  // de vragen heen in plaats van een vaste deling te doen.
+  let acc = 0;
+  for (let i = 0; i < total; i++) {
+    const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
+    if (elapsed < acc + session.question_seconds) {
+      return { phase: "question", index: i, remainingSeconds: Math.ceil(acc + session.question_seconds - elapsed) };
+    }
+    const slot = session.question_seconds + (showsStandings ? session.interval_seconds : 0);
+    if (showsStandings && elapsed < acc + slot) {
+      return { phase: "standings", index: i, remainingSeconds: Math.ceil(acc + slot - elapsed) };
+    }
+    acc += slot;
   }
-  return { phase: "standings", index, remainingSeconds: Math.ceil(slot - intoSlot) };
+  return { phase: "done", index: total - 1, remainingSeconds: null };
 }
 
 async function loadQuizSessionForUser(tripId, userId) {
@@ -2764,12 +2820,12 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
 
   if (phase === "question") {
     const q = session.questions[index];
-    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode, doubler: !!q.doubler };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   } else if (phase === "standings" || phase === "done") {
     const q = session.questions[index];
-    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct, doubler: !!q.doubler };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   }
@@ -2796,7 +2852,9 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
   // Snelheidsbonus zoals Kahoot: hoe eerder in het antwoordvenster, hoe meer
   // punten, met een bodem van 500 zodat een goed antwoord op het laatste
   // moment nog steeds ruim meer oplevert dan een fout antwoord (0 punten).
-  const points = correct ? Math.round(500 + 500 * (remainingSeconds / session.question_seconds)) : 0;
+  // Vraag 5 (q.doubler) telt dubbel.
+  const basePoints = correct ? Math.round(500 + 500 * (remainingSeconds / session.question_seconds)) : 0;
+  const points = q.doubler ? basePoints * 2 : basePoints;
 
   try {
     await query(

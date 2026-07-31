@@ -100,6 +100,14 @@
       100% { transform: translateY(110vh) rotate(540deg); opacity: .85; }
     }
     .rp-streamer { position: fixed; top: 0; width: 8px; height: 26px; border-radius: 2px; pointer-events: none; animation: rp-streamer-fall linear forwards; }
+    /* Tussenstand-rijen die één voor één opbouwen, van de laatste plek naar
+       boven — de animation-delay per rij (zie inline style) bepaalt de
+       volgorde, dit keyframe is voor iedere rij hetzelfde. */
+    @keyframes rp-row-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .rp-standings-row { animation: rp-row-in .35s ease-out both; }
   </style>
 </head>
 <body>
@@ -115,6 +123,6 @@
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=164"></script>
+  <script type="text/babel" src="app.js?v=165"></script>
 </body>
 </html>

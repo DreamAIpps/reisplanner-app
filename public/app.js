@@ -5949,7 +5949,7 @@ function PhotoWheel({ pool, target, onDone }) {
 // begint (lobby → actief) en vóór de eerste vraag — puur decoratief, niet
 // gekoppeld aan een specifieke reis of vraag.
 const QUIZ_OPENING_IMAGE = "/quiz-cover-1.jpg";
-const OPENING_SCREEN_MS = 3500;
+const OPENING_SCREEN_MS = 6500;
 
 function QuizOpeningScreen() {
   return (
@@ -6297,6 +6297,7 @@ function PhotoQuizTab({ trip }) {
         {stopControl}
         <div className="max-w-md mx-auto text-center">
           <div className="text-sm text-gray-500 mb-1">Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</div>
+          {q.doubler && <div className="inline-block mb-2 px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">⚡ Dubbele punten!</div>}
           <div className="text-xs text-gray-400 mb-4">Waar hoort deze foto bij?</div>
           <PhotoWheel pool={photoPool} target={q} onDone={() => { playWheelLand(); setRevealedIndex(live.currentIndex); }} />
         </div>
@@ -6318,10 +6319,11 @@ function PhotoQuizTab({ trip }) {
       <>
       {stopControl}
       <div className="max-w-md mx-auto">
-        <div className="flex items-center justify-between mb-3 text-sm text-gray-500">
+        <div className="flex items-center justify-between mb-1 text-sm text-gray-500">
           <span>Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</span>
           <span className="tnum font-bold text-2xl text-sky-600 leading-none">{live.remainingSeconds}s</span>
         </div>
+        {q.doubler && <div className="mb-3"><span className="inline-block px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">⚡ Dubbele punten!</span></div>}
         <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
           {isTextMode ? (
             <div className="px-5 pt-6 pb-2 text-center">
@@ -6356,7 +6358,7 @@ function PhotoQuizTab({ trip }) {
             </div>
             <div className="text-xs text-gray-400 mt-3 text-center">
               {!answered
-                ? "Kies snel — hoe sneller, hoe meer punten"
+                ? (q.doubler ? "Kies snel — dubbele punten deze ronde!" : "Kies snel — hoe sneller, hoe meer punten")
                 : resolved
                   ? answered.correct ? `Goed! +${answered.points} punten` : "Helaas, geen punten"
                   : "Antwoord verstuurd..."}
@@ -6398,8 +6400,12 @@ function PhotoQuizTab({ trip }) {
           </>
         )}
         <div className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-50 overflow-hidden">
+          {/* Bouwt van onder (laatste plek) naar boven (koploper) op — vandaar
+              de delay op basis van afstand tot de laatste rij, niet de eigen
+              positie. */}
           {sorted.map((p, i) => (
-            <div key={i} className={`flex items-center justify-between px-4 py-2.5 text-sm ${p.isMe ? "bg-sky-50" : ""}`}>
+            <div key={i} className={`rp-standings-row flex items-center justify-between px-4 py-2.5 text-sm ${p.isMe ? "bg-sky-50" : ""}`}
+              style={{ animationDelay: `${(sorted.length - 1 - i) * 0.3}s` }}>
               <span className="flex items-center gap-2 font-medium text-gray-700">
                 <span className="tnum text-gray-400 w-4">{i + 1}</span>
                 {isFinal && i === 0 && p.score > 0 && <Icon name="sparkle" size={13} className="text-sky-500" />}
