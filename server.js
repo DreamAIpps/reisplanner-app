@@ -2638,7 +2638,16 @@ route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => 
 }, { tripScope: "param" });
 
 route("GET", "/api/trips/:id/quiz/session", async (req, res, params) => {
-  const loaded = await loadQuizSessionForUser(params.id, req.user.id);
+  let loaded = await loadQuizSessionForUser(params.id, req.user.id);
+  // Wie al gewone (ook alleen-lezen) toegang tot de reis heeft en de
+  // fotoquiz-tab opent, doet daarmee impliciet mee — geen aparte QR-link meer
+  // nodig. Alleen zinvol zolang de sessie nog leeft; een allang afgelopen
+  // sessie hoeft niemand er nog bij te trekken.
+  if (loaded && !loaded.isParticipant && computeQuizPhase(loaded.session).phase !== "done") {
+    await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+      [loaded.session.id, req.user.id, req.user.given_name || req.user.name || "Speler"]);
+    loaded = await loadQuizSessionForUser(params.id, req.user.id);
+  }
   sendJson(res, 200, { session: loaded ? quizSessionSummary(loaded, req) : null });
 }, { tripScope: "param", allowViewer: true });
 

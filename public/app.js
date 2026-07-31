@@ -6488,17 +6488,6 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   // Don't carry the guest preview over into another trip.
   useEffect(() => { setPreviewViewer(false); }, [tripId]);
 
-  // Alleen-lezen bezoekers krijgen de fotoquiz alléén als ze er via de
-  // sessie-specifieke QR-code bij zijn gekomen (isParticipant) — niet elke
-  // willekeurige gedeelde-reis-viewer mag meespelen, dus dit bepaalt of de
-  // tab in de alleen-lezen tabbalk hieronder überhaupt verschijnt.
-  const [quizAccess, setQuizAccess] = useState(false);
-  useEffect(() => {
-    if (!trip || trip.role !== "viewer") return;
-    let cancelled = false;
-    api.getQuizSession(tripId).then((d) => { if (!cancelled) setQuizAccess(!!d.session?.isParticipant); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [trip, tripId]);
 
   // Records how long this trip is actually open, which the share stats report.
   // Skipped while the tab is hidden so a forgotten background tab does not read
@@ -6729,9 +6718,8 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
       {readOnly ? (
         <>
           {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel
-              dagboek en kaart. De fotoquiz komt er alleen bij als ze via de
-              sessie-specifieke QR-code zijn binnengekomen (quizAccess) — niet
-              elke gedeelde-reis-viewer mag zomaar meespelen. */}
+              dagboek, kaart en de fotoquiz — die wijzigt niets aan de reis,
+              dus past prima bij alleen-lezen toegang. */}
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
             <button onClick={() => setTab("journal")}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "journal" || tab === "days" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
@@ -6743,13 +6731,11 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
               style={tab === "map" ? { color: legibleOn(accent) } : {}}>
               <Icon name="map" size={15} />Kaart
             </button>
-            {quizAccess && (
-              <button onClick={() => setTab("quiz")}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-                style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
-                <Icon name="sparkle" size={15} />Fotoquiz
-              </button>
-            )}
+            <button onClick={() => setTab("quiz")}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+              style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
+              <Icon name="sparkle" size={15} />Fotoquiz
+            </button>
           </div>
           {tab === "map"
             ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
@@ -6768,11 +6754,10 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         </>
       )}
 
-      {/* De fotoquiz rendert los van de rest, full screen — een alleen-lezen
-          bezoeker krijgt hem alleen te zien als die er via de sessie-QR bij
-          hoort (quizAccess), voor eigenaar/editor blijft de tab gewoon altijd
-          bereikbaar zoals hierboven. */}
-      {tab === "quiz" && (readOnly ? quizAccess : true) && (
+      {/* De fotoquiz rendert los van de rest, full screen, voor iedereen met
+          toegang tot de reis — alleen-lezen bezoekers doen mee als speler
+          (isHost blijft false), eigenaar/editor kunnen 'm ook hosten. */}
+      {tab === "quiz" && (
         <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")}>
           <PhotoQuizTab trip={viewTrip} isHost={readOnly ? false : isOwnerActions} />
         </QuizFullscreen>
