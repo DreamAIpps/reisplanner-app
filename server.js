@@ -2535,7 +2535,7 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
     });
   }
 
-  return withRealDistractors.map((p) => {
+  return withRealDistractors.map((p, i) => {
     const missing = 3 - p.real.length;
     const invented = missing > 0 ? (fillerByPhoto.get(p.photoId) || []).slice(0, missing) : [];
     const distractors = [...p.real, ...invented];
@@ -2549,9 +2549,8 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
       correct: p.answer,
       // Per vraag vastgelegd bij het aanmaken van de sessie, niet toevallig
       // per pollende deelnemer — anders zou de ene speler een rad zien en de
-      // andere een blurred foto voor dezelfde vraag. "Af en toe": een
-      // minderheid van de vragen krijgt de blur-variant.
-      mode: Math.random() < 0.35 ? "blur" : "wheel",
+      // andere een blurred foto voor dezelfde vraag. Om en om i.p.v. willekeurig.
+      mode: i % 2 === 0 ? "wheel" : "blur",
     };
   });
 }

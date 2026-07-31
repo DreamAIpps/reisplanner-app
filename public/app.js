@@ -5803,21 +5803,88 @@ function playTone(freq, startOffset, duration, { type = "sine", gain = 0.15 } = 
   osc.start(t0);
   osc.stop(t0 + duration + 0.02);
 }
-function playWheelLand() { playTone(880, 0, 0.12, { type: "triangle" }); playTone(1175, 0.09, 0.2, { type: "triangle" }); }
+// Voor de dramatische "riser" bij de intro: een doorlopende frequentiesweep
+// in plaats van een vast toonhoogte, net als de spanningsopbouw in echte
+// spelshowmuziek (Weekend Miljonairs, Rad van Fortuin).
+function playSweep(freqStart, freqEnd, startOffset, duration, { type = "sawtooth", gain = 0.12 } = {}) {
+  const ctx = quizAudio();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + startOffset;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freqStart, t0);
+  osc.frequency.linearRampToValueAtTime(freqEnd, t0 + duration);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + duration * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration + 0.05);
+  osc.connect(g);
+  g.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.08);
+}
+function playWheelLand() {
+  playTone(110, 0, 0.15, { type: "sine", gain: 0.16 }); // korte lage "thump" voor extra impact
+  playTone(880, 0.03, 0.12, { type: "triangle" });
+  playTone(1175, 0.12, 0.24, { type: "triangle" });
+}
 function playTick() { playTone(1300, 0, 0.05, { type: "square", gain: 0.07 }); }
-function playCorrect() { playTone(523.25, 0, 0.12); playTone(659.25, 0.09, 0.12); playTone(783.99, 0.18, 0.24); }
-function playWrong() { playTone(196, 0, 0.35, { type: "sawtooth", gain: 0.12 }); }
-function playWinnerFanfare() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playTone(f, i * 0.13, 0.22, { type: "triangle" })); }
-// Kort spelshow-intromuziekje — vier snelle stootjes gevolgd door een langer
-// uithoudende slotnoot, in blokgolf voor dat ietwat retro "u gaat live"-gevoel.
+// Het klikkende geluid van een rad-van-fortuin-wieltje: één klikje per
+// passerende foto, getimed op exact dezelfde cubic-bezier-vertraging als de
+// visuele rol (zie inverseEase in PhotoWheel) — dus de klikjes versnellen
+// niet lineair maar volgen precies hoe de rol zelf ook vertraagt.
+function playWheelClick(offset = 0) { playTone(1600, offset, 0.03, { type: "square", gain: 0.08 }); }
+// Dezelfde cubic-bezier(0,0,0.2,1) als de CSS-transition van de rol zelf —
+// hiermee wordt uitgerekend op welk tijdstip elke volgende foto de kijkkant
+// bereikt, zodat de klikjes precies de visuele vertraging volgen in plaats
+// van een simpel, onrealistisch gelijkmatig tempo.
+function easeDecelerateAt(x) {
+  function bez(t, p1, p2) { const mt = 1 - t; return 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t; }
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (bez(mid, 0, 0.2) < x) lo = mid; else hi = mid;
+  }
+  return bez((lo + hi) / 2, 0, 1);
+}
+function wheelClickTimes(tileCount, totalMs) {
+  const times = [];
+  for (let i = 1; i < tileCount; i++) {
+    const targetY = i / tileCount;
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      if (easeDecelerateAt(mid) < targetY) lo = mid; else hi = mid;
+    }
+    times.push(((lo + hi) / 2) * (totalMs / 1000));
+  }
+  return times;
+}
+function playCorrect() {
+  [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => playTone(f, i * 0.08, 0.16, { type: "triangle", gain: 0.14 }));
+}
+function playWrong() {
+  playSweep(320, 110, 0, 0.5, { type: "sawtooth", gain: 0.14 }); // "womp womp" — dalende glide i.p.v. één vaste zoemtoon
+}
+function playWinnerFanfare() {
+  [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => playTone(f, i * 0.12, 0.2, { type: "triangle", gain: 0.13 }));
+  // Slotakkoord: drie tonen tegelijk voor wat meer "voluit" op het eind.
+  [1046.5, 1318.5, 1568].forEach((f) => playTone(f, 0.6, 0.7, { type: "triangle", gain: 0.11 }));
+}
+// Dramatisch spelshow-intromuziekje: een oplopende spanningssweep (de
+// "riser" die je in echte spelshows vlak vóór de start hoort), gevolgd door
+// een stevige aanslag en een fanfare-achtige oplopende reeks — in plaats van
+// het simpele setje pieptonen van hiervoor.
 function playGameShowIntro() {
+  playSweep(90, 700, 0, 0.55, { type: "sawtooth", gain: 0.13 });
+  playTone(80, 0.55, 0.18, { type: "sine", gain: 0.2 }); // stevige lage "hit"
+  [523.25, 659.25, 783.99].forEach((f) => playTone(f, 0.58, 0.22, { type: "square", gain: 0.13 }));
   [
-    { f: 523.25, t: 0, d: 0.09 },
-    { f: 659.25, t: 0.1, d: 0.09 },
-    { f: 783.99, t: 0.2, d: 0.09 },
-    { f: 1046.5, t: 0.3, d: 0.09 },
-    { f: 1318.5, t: 0.42, d: 0.45 },
-  ].forEach(({ f, t, d }) => playTone(f, t, d, { type: "square", gain: 0.12 }));
+    { f: 659.25, t: 0.78, d: 0.09 },
+    { f: 783.99, t: 0.88, d: 0.09 },
+    { f: 1046.5, t: 0.98, d: 0.09 },
+    { f: 1318.5, t: 1.08, d: 0.5 },
+  ].forEach(({ f, t, d }) => playTone(f, t, d, { type: "square", gain: 0.13 }));
 }
 
 // Een slot-achtige foto-rol: een rij foto's uit de reis schuift voorbij en
@@ -5862,6 +5929,7 @@ function PhotoWheel({ pool, target, onDone }) {
       el.style.transition = `transform ${WHEEL_SPIN_MS}ms cubic-bezier(0,0,0.2,1)`;
       el.style.transform = `translateX(-${(sequence.length - 1) * tileSize}px)`;
     });
+    wheelClickTimes(sequence.length, WHEEL_SPIN_MS).forEach((t) => playWheelClick(t));
     const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, WHEEL_SPIN_MS + 50);
     return () => { done = true; cancelAnimationFrame(raf); clearTimeout(timer); };
   }, [sequence, tileSize]);
