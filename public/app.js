@@ -5778,7 +5778,7 @@ function shuffleClient(arr) {
 // spanningsopbouw vóór de multiple-choice opties verschijnen. De rolrichting
 // is altijd hetzelfde (naar links), alleen de duur van de vertraging geeft
 // het "tot stilstand komen"-gevoel — geen fysica, gewoon een CSS-easing.
-const WHEEL_SPIN_MS = 3400;
+const WHEEL_SPIN_MS = 4300;
 
 function PhotoWheel({ pool, target, onDone }) {
   const containerRef = useRef(null);
@@ -6035,7 +6035,7 @@ function PhotoQuizTab({ trip, isHost }) {
       <div className="max-w-md mx-auto">
         <div className="flex items-center justify-between mb-3 text-sm text-gray-500">
           <span>Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</span>
-          <span className="tnum font-semibold text-sky-600">{live.remainingSeconds}s</span>
+          <span className="tnum font-bold text-2xl text-sky-600 leading-none">{live.remainingSeconds}s</span>
         </div>
         <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
           <img src={q.thumb_url || q.url} alt="" className="w-full aspect-square object-cover" />
