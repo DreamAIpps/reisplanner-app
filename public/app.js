@@ -7127,8 +7127,12 @@ function AdminView({ onBack, currentUserId }) {
                       {t.destination && <div className="text-sm text-gray-500 flex items-center gap-1"><Icon name="pin" size={13} />{t.destination}</div>}
                       {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
                     </div>
-                    <div className="shrink-0">
-                      <Select value={t.user_id || ""} onChange={(e) => handleAssign(t.id, e.target.value || null)} className="text-xs">
+                    {/* Zonder een breedtegrens hier kan de <Select> (die zelf
+                        w-full is) net zo breed worden als de langste
+                        gebruikersnaam — bij genoeg gebruikers duwt dat de
+                        verwijderknop erna uit beeld op een smal scherm. */}
+                    <div className="shrink-0 w-32 sm:w-40">
+                      <Select value={t.user_id || ""} onChange={(e) => handleAssign(t.id, e.target.value || null)} className="!w-full text-xs">
                         <option value="">— Niet gekoppeld —</option>
                         {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
                       </Select>
