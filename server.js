@@ -2547,6 +2547,11 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
       thumb_url: `/api/photos/${p.photoId}/thumb`,
       options,
       correct: p.answer,
+      // Per vraag vastgelegd bij het aanmaken van de sessie, niet toevallig
+      // per pollende deelnemer — anders zou de ene speler een rad zien en de
+      // andere een blurred foto voor dezelfde vraag. "Af en toe": een
+      // minderheid van de vragen krijgt de blur-variant.
+      mode: Math.random() < 0.35 ? "blur" : "wheel",
     };
   });
 }
@@ -2665,13 +2670,14 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
   const payload = {
     phase, currentIndex: index, remainingSeconds,
     totalQuestions: session.questions.length,
+    questionSeconds: session.question_seconds,
     isHost: session.host_user_id === req.user.id,
     participants: participants.map((p) => ({ name: p.name, score: p.score, isMe: p.user_id === req.user.id })),
   };
 
   if (phase === "question") {
     const q = session.questions[index];
-    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options };
+    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   } else if (phase === "standings" || phase === "done") {

@@ -5917,14 +5917,17 @@ function PhotoQuizTab({ trip, isHost }) {
   useEffect(() => { setMyPick(null); }, [live?.currentIndex]);
 
   // Korte tik in de laatste 3 seconden van het antwoordvenster — alleen
-  // tijdens het echte kiezen (niet terwijl de foto-rol nog draait), en
-  // hooguit één keer per seconde-waarde (anders zou elke 1,5s-poll 'm
-  // opnieuw afvuren zolang de weergegeven seconde niet is veranderd).
+  // tijdens het echte kiezen (niet terwijl de foto-rol nog draait; de
+  // blur-variant heeft geen rad, dus daar mag de tik altijd), en hooguit één
+  // keer per seconde-waarde (anders zou elke 1,5s-poll 'm opnieuw afvuren
+  // zolang de weergegeven seconde niet is veranderd).
   useEffect(() => {
-    if (live?.phase !== "question" || revealedIndex !== live.currentIndex) return;
+    if (live?.phase !== "question") return;
+    const stillSpinning = live.question?.mode !== "blur" && revealedIndex !== live.currentIndex;
+    if (stillSpinning) return;
     const s = live.remainingSeconds;
     if (s > 0 && s <= 3 && lastTickRef.current !== s) { lastTickRef.current = s; playTick(); }
-  }, [live?.phase, live?.remainingSeconds, live?.currentIndex, revealedIndex]);
+  }, [live?.phase, live?.remainingSeconds, live?.currentIndex, live?.question?.mode, revealedIndex]);
 
   // Fanfare zodra de eindstand in beeld komt — precies één keer, niet bij
   // elke poll zolang de quiz al "done" is.
@@ -6082,12 +6085,15 @@ function PhotoQuizTab({ trip, isHost }) {
 
   if (phase === "question" && live?.question) {
     const q = live.question;
+    const isBlurMode = q.mode === "blur";
 
     // Vóór elke nieuwe vraag draait de foto-rol één keer tot stilstand op
     // deze foto — alleen bij de allereerste keer dat dit vraagnummer in beeld
     // komt, niet bij elke poll erna (anders zou hij bij elke verversing
-    // opnieuw beginnen te draaien).
-    if (revealedIndex !== live.currentIndex) {
+    // opnieuw beginnen te draaien). De blur-variant slaat het rad helemaal
+    // over: daar mag je vanaf het begin al antwoorden, terwijl de foto
+    // vanzelf scherper wordt.
+    if (!isBlurMode && revealedIndex !== live.currentIndex) {
       return (
         <>
         {stopControl}
@@ -6102,6 +6108,14 @@ function PhotoQuizTab({ trip, isHost }) {
 
     const answered = myPick || live.myAnswer;
     const resolved = answered && !answered.pending;
+    // Loopt lineair van flink onscherp naar volledig scherp over de eerste
+    // 75% van het antwoordvenster — als fractie van de ingestelde vraagduur,
+    // dus ongeacht of een sessie 5 of 60 seconden per vraag heeft staan.
+    const blurPx = (() => {
+      if (!isBlurMode || !live.questionSeconds) return 0;
+      const elapsedFraction = (live.questionSeconds - live.remainingSeconds) / live.questionSeconds;
+      return Math.max(0, 18 * (1 - elapsedFraction / 0.75));
+    })();
     return (
       <>
       {stopControl}
@@ -6111,7 +6125,9 @@ function PhotoQuizTab({ trip, isHost }) {
           <span className="tnum font-bold text-2xl text-sky-600 leading-none">{live.remainingSeconds}s</span>
         </div>
         <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
-          <img src={q.thumb_url || q.url} alt="" className="w-full aspect-square object-cover" />
+          <img src={q.thumb_url || q.url} alt=""
+            className="w-full aspect-square object-cover"
+            style={isBlurMode ? { filter: `blur(${blurPx}px)`, transition: "filter 1.5s linear" } : undefined} />
           <div className="p-4">
             <div className="text-sm font-semibold text-gray-800 mb-3">Waar hoort deze foto bij?</div>
             <div className="space-y-2">
