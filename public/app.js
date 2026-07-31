@@ -5808,6 +5808,17 @@ function playTick() { playTone(1300, 0, 0.05, { type: "square", gain: 0.07 }); }
 function playCorrect() { playTone(523.25, 0, 0.12); playTone(659.25, 0.09, 0.12); playTone(783.99, 0.18, 0.24); }
 function playWrong() { playTone(196, 0, 0.35, { type: "sawtooth", gain: 0.12 }); }
 function playWinnerFanfare() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playTone(f, i * 0.13, 0.22, { type: "triangle" })); }
+// Kort spelshow-intromuziekje — vier snelle stootjes gevolgd door een langer
+// uithoudende slotnoot, in blokgolf voor dat ietwat retro "u gaat live"-gevoel.
+function playGameShowIntro() {
+  [
+    { f: 523.25, t: 0, d: 0.09 },
+    { f: 659.25, t: 0.1, d: 0.09 },
+    { f: 783.99, t: 0.2, d: 0.09 },
+    { f: 1046.5, t: 0.3, d: 0.09 },
+    { f: 1318.5, t: 0.42, d: 0.45 },
+  ].forEach(({ f, t, d }) => playTone(f, t, d, { type: "square", gain: 0.12 }));
+}
 
 // Een slot-achtige foto-rol: een rij foto's uit de reis schuift voorbij en
 // komt vertragend tot stilstand op de foto waar de vraag over gaat, als korte
@@ -5883,8 +5894,10 @@ function PhotoQuizTab({ trip, isHost }) {
   const [photoPool, setPhotoPool] = useState([]);
   const [revealedIndex, setRevealedIndex] = useState(-1);
   const [showNewQuizForm, setShowNewQuizForm] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const lastTickRef = useRef(null);
   const doneSoundPlayedRef = useRef(false);
+  const introPlayedRef = useRef(false);
 
   const refreshSession = useCallback(async () => {
     try { const data = await api.getQuizSession(trip.id); setSession(data.session || null); }
@@ -5938,6 +5951,16 @@ function PhotoQuizTab({ trip, isHost }) {
     }
   }, [live?.phase]);
 
+  // Spelshow-intromuziekje zodra de quiz écht begint — voor iedereen die op
+  // dat moment aan het pollen is (niet alleen de gastheer die op "start"
+  // klikte), en precies één keer per sessie.
+  useEffect(() => {
+    if (live && live.phase !== "lobby" && !introPlayedRef.current) {
+      introPlayedRef.current = true;
+      playGameShowIntro();
+    }
+  }, [live?.phase]);
+
   async function createSession() {
     setCreating(true); setError(null);
     try {
@@ -5947,6 +5970,7 @@ function PhotoQuizTab({ trip, isHost }) {
       setRevealedIndex(-1);
       setShowNewQuizForm(false);
       doneSoundPlayedRef.current = false;
+      introPlayedRef.current = false;
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
@@ -5965,6 +5989,34 @@ function PhotoQuizTab({ trip, isHost }) {
     try { await api.stopQuizSession(trip.id, session.id); await refreshSession(); }
     catch (err) { alert(err.message || "Kon quiz niet stoppen"); }
     finally { setStopping(false); }
+  }
+
+  // navigator.clipboard.writeText() geeft geen enkele terugkoppeling als hij
+  // stilzwijgend weigert (geen HTTPS-context, geen clipboard-permissie in een
+  // ingesloten webview, iOS-eigenaardigheden) — de knop leek dan "niets te
+  // doen". Nu met een echte fallback via een verborgen textarea + execCommand,
+  // en zichtbare feedback zodra het (via welke weg dan ook) echt is gelukt.
+  async function copyJoinLink() {
+    try {
+      await navigator.clipboard.writeText(session.joinLink);
+    } catch {
+      try {
+        const el = document.createElement("textarea");
+        el.value = session.joinLink;
+        el.style.position = "fixed";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch {
+        alert("Kopiëren is niet gelukt. Tik op de link hierboven om 'm handmatig te selecteren.");
+        return;
+      }
+    }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   async function pick(choice) {
@@ -5995,17 +6047,21 @@ function PhotoQuizTab({ trip, isHost }) {
     return (
       <>
         <div className="flex items-center justify-center gap-4 mb-5 text-sm">
+          {/* Een <select> in plaats van een los getal om in te typen: op de
+              telefoon (waar dit toch altijd wordt bediend) opent dit het
+              systeemeigen wieltje om uit te kiezen — geen tikfoutjes met een
+              cijfertoetsenbord meer mogelijk. */}
           <label className="flex items-center gap-2 text-gray-500">
             Aantal vragen
-            <Input type="number" min={2} max={15} value={questionCount}
-              onChange={(e) => setQuestionCount(Math.min(15, Math.max(2, Number(e.target.value) || 2)))}
-              className="!w-16 !py-1 text-center tnum" />
+            <Select value={questionCount} onChange={(e) => setQuestionCount(Number(e.target.value))} className="!w-20 !py-1.5 text-center tnum">
+              {Array.from({ length: 14 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}</option>)}
+            </Select>
           </label>
           <label className="flex items-center gap-2 text-gray-500">
             Seconden per vraag
-            <Input type="number" min={5} max={60} value={questionSeconds}
-              onChange={(e) => setQuestionSeconds(Math.min(60, Math.max(5, Number(e.target.value) || 5)))}
-              className="!w-16 !py-1 text-center tnum" />
+            <Select value={questionSeconds} onChange={(e) => setQuestionSeconds(Number(e.target.value))} className="!w-20 !py-1.5 text-center tnum">
+              {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((n) => <option key={n} value={n}>{n}</option>)}
+            </Select>
           </label>
         </div>
         <Button onClick={createSession} disabled={creating}>{creating ? "Quiz wordt gemaakt..." : buttonLabel}</Button>
@@ -6061,8 +6117,8 @@ function PhotoQuizTab({ trip, isHost }) {
               <div className="flex gap-2 mt-2">
                 <input readOnly value={session.joinLink} onClick={(e) => e.target.select()}
                   className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 bg-gray-50 focus:outline-none" />
-                <Button variant="secondary" onClick={() => navigator.clipboard.writeText(session.joinLink)} className="!text-xs !px-3 !py-1.5 shrink-0">
-                  Kopiëren
+                <Button variant="secondary" onClick={copyJoinLink} className="!text-xs !px-3 !py-1.5 shrink-0">
+                  {linkCopied ? <><Icon name="check" size={13} className="mr-1" />Gekopieerd</> : "Kopiëren"}
                 </Button>
               </div>
             </div>
