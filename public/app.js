@@ -6656,16 +6656,16 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const bottomNavItems = [
     { key: "days", icon: "route", label: "Planning" },
     ...(currentUserId ? [{ key: "journal", icon: "book", label: "Dagboek" }] : []),
-    { key: "photos", icon: "camera", label: "Foto's" },
+    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
   ];
   // Reachable only via the "Meer" dropdown on mobile
   const moreMenuItems = [
+    { key: "photos", icon: "camera", label: "Foto's" },
     { key: "accommodation", icon: "bed", label: "Verblijf" },
     { key: "transport", icon: "plane", label: "Vervoer" },
     { key: "packing", icon: "suitcase", label: "Paklijst" },
     { key: "map", icon: "map", label: "Kaart" },
     ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
-    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 

@@ -1064,7 +1064,17 @@ route("DELETE", "/api/trips/:id", async (req, res, params) => {
 route("GET", "/api/trips/:id/days", async (req, res, params) => {
   const role = req.tripRole;
   const { rows: days } = await query("SELECT * FROM days WHERE trip_id = $1 ORDER BY date ASC", [params.id]);
-  const { rows: acts } = await query("SELECT * FROM activities WHERE trip_id = $1 ORDER BY time ASC NULLS LAST, id ASC", [params.id]);
+  // "time" is vrije tekst, geen echt TIME-veld — handmatig ingevoerd via
+  // <input type="time"> komt altijd al als "HH:MM" binnen, maar de AI-import
+  // vanuit een reisbevestiging haalt er soms "9:00" (zonder voorloopnul) uit.
+  // Alfabetisch sorteren zet zo'n "9:00" ná "14:30" i.p.v. ervoor — precies
+  // waarom activiteiten soms niet op volgorde stonden. lpad(...,5,'0') dwingt
+  // elke waarde naar "HH:MM" vóór het vergelijken.
+  const { rows: acts } = await query(
+    `SELECT * FROM activities WHERE trip_id = $1
+     ORDER BY (CASE WHEN time IS NOT NULL AND time <> '' THEN LPAD(time, 5, '0') END) ASC NULLS LAST, id ASC`,
+    [params.id]
+  );
   // Privé items zijn er voor de eigenaar/editors nog gewoon, maar bestaan voor
   // een alleen-lezen kijker niet — dezelfde rol die ook geen kosten ziet.
   const visibleActs = role === "viewer" ? acts.filter((a) => !a.is_private) : acts;
@@ -1544,8 +1554,12 @@ async function resizeFullPhoto(buffer, mediaType) {
 }
 
 route("GET", "/api/trips/:id/photos", async (req, res, params) => {
+  // Op wanneer de foto daadwerkelijk genomen is (EXIF), niet op wanneer 'm
+  // toevallig geüpload is — anders staat een later toegevoegde foto van
+  // eerder op de dag alsnog achteraan. Foto's zonder EXIF-tijdstip (taken_at
+  // NULL) vallen terug op de uploadvolgorde, onderaan.
   const { rows } = await query(
-    "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY created_at ASC",
+    "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY taken_at ASC NULLS LAST, created_at ASC",
     [params.id]
   );
   sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb` })));
