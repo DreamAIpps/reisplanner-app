@@ -93,6 +93,13 @@
       100% { opacity: 0; transform: translate(-50%, -50%) scale(1.05) rotate(0deg); }
     }
     .rp-heartpop { animation: rp-heartpop .7s cubic-bezier(.2,1.4,.4,1) forwards; }
+    /* Slingers bij het eindscherm van de fotoquiz — vallen één keer naar
+       beneden en blijven op hun eindpositie hangen (forwards), geen loop. */
+    @keyframes rp-streamer-fall {
+      0%   { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(110vh) rotate(540deg); opacity: .85; }
+    }
+    .rp-streamer { position: fixed; top: 0; width: 8px; height: 26px; border-radius: 2px; pointer-events: none; animation: rp-streamer-fall linear forwards; }
   </style>
 </head>
 <body>
@@ -108,6 +115,6 @@
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=160"></script>
+  <script type="text/babel" src="app.js?v=161"></script>
 </body>
 </html>

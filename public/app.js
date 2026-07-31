@@ -5949,6 +5949,7 @@ function PhotoWheel({ pool, target, onDone }) {
 // vervormen naar de echte foto, in plaats van meteen met de wazige echte foto
 // te beginnen — puur decoratief, niet gekoppeld aan een specifieke reis.
 const QUIZ_COVER_IMAGES = ["/quiz-cover-1.jpg"];
+const MORPH_HOLD_MS = 3000;
 const MORPH_INTRO_MS = 3000;
 
 // Benadert een "vervorming" zonder echte beeld-warping (die past niet bij een
@@ -5964,6 +5965,7 @@ function PhotoMorphIntro({ coverSrc, targetSrc, onDone }) {
     const targetEl = targetRef.current;
     if (!coverEl || !targetEl) return;
     let done = false;
+    let raf = null;
     coverEl.style.transition = "none";
     targetEl.style.transition = "none";
     coverEl.style.opacity = "1";
@@ -5971,22 +5973,58 @@ function PhotoMorphIntro({ coverSrc, targetSrc, onDone }) {
     targetEl.style.opacity = "0";
     targetEl.style.filter = "blur(25px)";
     void coverEl.offsetHeight;
-    const raf = requestAnimationFrame(() => {
-      coverEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
-      targetEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
-      coverEl.style.opacity = "0";
-      coverEl.style.filter = "blur(22px)";
-      targetEl.style.opacity = "1";
-      targetEl.style.filter = "blur(18px)"; // sluit aan op de startwaarde van de gewone blur-aftelling erna
-    });
-    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, MORPH_INTRO_MS + 50);
-    return () => { done = true; cancelAnimationFrame(raf); clearTimeout(timer); };
+    // Eerst de omslagfoto gewoon een tijdje laten staan (MORPH_HOLD_MS) vóór
+    // de overgang zelf begint — anders begon hij meteen te vervagen en was
+    // er nauwelijks tijd om 'm te zien staan.
+    const holdTimer = setTimeout(() => {
+      raf = requestAnimationFrame(() => {
+        coverEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
+        targetEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
+        coverEl.style.opacity = "0";
+        coverEl.style.filter = "blur(22px)";
+        targetEl.style.opacity = "1";
+        targetEl.style.filter = "blur(18px)"; // sluit aan op de startwaarde van de gewone blur-aftelling erna
+      });
+    }, MORPH_HOLD_MS);
+    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, MORPH_HOLD_MS + MORPH_INTRO_MS + 50);
+    return () => { done = true; clearTimeout(holdTimer); if (raf) cancelAnimationFrame(raf); clearTimeout(timer); };
   }, [coverSrc, targetSrc]);
 
   return (
     <div className="relative w-full aspect-square">
       <img ref={coverRef} src={coverSrc} alt="" className="absolute inset-0 w-full h-full object-cover" />
       <img ref={targetRef} src={targetSrc} alt="" className="absolute inset-0 w-full h-full object-cover" />
+    </div>
+  );
+}
+
+const STREAMER_COLORS = ["#FF7A00", "#E4571A", "#3355CC", "#55AA55", "#AA5599", "#F0C419", "#22AACC"];
+
+// Slingers voor het eindscherm van de fotoquiz — vallen één keer naar
+// beneden (zie .rp-streamer in index.html) en blijven daarna hangen, geen
+// oneindige loop. Willekeurige posities/timing worden één keer bepaald bij
+// het monteren, niet bij elke re-render (anders "regent" het bij elke poll
+// opnieuw).
+function PartyStreamers({ count = 60 }) {
+  const pieces = React.useMemo(() => Array.from({ length: count }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    delay: Math.random() * 0.6,
+    duration: 2.6 + Math.random() * 1.6,
+    color: STREAMER_COLORS[i % STREAMER_COLORS.length],
+    rotate: Math.round(Math.random() * 360),
+  })), [count]);
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 70 }}>
+      {pieces.map((p) => (
+        <div key={p.id} className="rp-streamer" style={{
+          left: `${p.left}%`,
+          backgroundColor: p.color,
+          animationDelay: `${p.delay}s`,
+          animationDuration: `${p.duration}s`,
+          transform: `rotate(${p.rotate}deg)`,
+        }} />
+      ))}
     </div>
   );
 }
@@ -6358,6 +6396,7 @@ function PhotoQuizTab({ trip, isHost }) {
     return (
       <>
       {stopControl}
+      {isFinal && <PartyStreamers />}
       <div className="max-w-md mx-auto text-center">
         {isFinal ? (
           <>
