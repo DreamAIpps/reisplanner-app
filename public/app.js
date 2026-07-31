@@ -446,6 +446,8 @@ const api = {
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
+  deleteAdminTrip: (tripId) => apiFetch(`/api/admin/trips/${tripId}`, { method: "DELETE" }),
+  deleteAdminUser: (userId) => apiFetch(`/api/admin/users/${userId}`, { method: "DELETE" }),
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   getStorageInfo: () => apiFetch("/api/admin/storage"),
   shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
@@ -6869,7 +6871,7 @@ function fmtBytes(n) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-function AdminView({ onBack }) {
+function AdminView({ onBack, currentUserId }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6944,6 +6946,18 @@ function AdminView({ onBack }) {
   async function handleAssign(tripId, userId) {
     await api.assignTrip(tripId, userId || null);
     reload();
+  }
+
+  async function handleDeleteTrip(trip) {
+    if (!confirm(`"${trip.name}" definitief verwijderen? Dit verwijdert ook alle dagen, foto's, dagboek en het dagboek van iedereen die meekeek.`)) return;
+    try { await api.deleteAdminTrip(trip.id); reload(); }
+    catch (err) { alert(err.message || "Verwijderen mislukt"); }
+  }
+
+  async function handleDeleteUser(u) {
+    if (!confirm(`${u.name || u.email} definitief verwijderen? Reizen die deze gebruiker bezat blijven bestaan maar raken ontkoppeld (net als bij "Niet gekoppeld").`)) return;
+    try { await api.deleteAdminUser(u.id); reload(); }
+    catch (err) { alert(err.message || "Verwijderen mislukt"); }
   }
 
   const byUser = trips.reduce((acc, t) => {
@@ -7070,6 +7084,10 @@ function AdminView({ onBack }) {
                         {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
                       </Select>
                     </div>
+                    <button type="button" onClick={() => handleDeleteTrip(t)} aria-label="Reis verwijderen"
+                      className="shrink-0 text-gray-300 hover:text-red-500 transition-colors p-1">
+                      <Icon name="trash" size={16} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -7106,6 +7124,12 @@ function AdminView({ onBack }) {
               <div className="text-xs text-gray-400 shrink-0 text-right">
                 {(byUser[u.id]?.trips.length || 0)} rei{(byUser[u.id]?.trips.length || 0) !== 1 ? "zen" : "s"}
               </div>
+              {u.id !== currentUserId && (
+                <button type="button" onClick={() => handleDeleteUser(u)} aria-label="Gebruiker verwijderen"
+                  className="shrink-0 text-gray-300 hover:text-red-500 transition-colors p-1">
+                  <Icon name="trash" size={16} />
+                </button>
+              )}
             </div>
           ))}
           {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}
@@ -7305,7 +7329,7 @@ function App() {
             </button>
           </>
         ) : view.name === "admin" ? (
-          <AdminView onBack={() => setView({ name: "list" })} />
+          <AdminView onBack={() => setView({ name: "list" })} currentUserId={user?.id} />
         ) : (
           <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
         )}

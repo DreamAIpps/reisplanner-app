@@ -968,6 +968,28 @@ route("GET", "/api/admin/trips", async (req, res) => {
   sendJson(res, 200, rows);
 });
 
+// Alle trip_id-verwijzingen in het schema staan ON DELETE CASCADE, dus dit
+// ruimt dagen/activiteiten/foto's/dagboek/quiz-sessies etc. vanzelf mee op.
+route("DELETE", "/api/admin/trips/:id", async (req, res, params) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  await query("DELETE FROM trips WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
+// trips.user_id heeft bewust geen foreign key (zie de tabeldefinitie) — een
+// gebruiker verwijderen zou anders die reizen als wees achterlaten met een
+// user_id die nergens meer naar wijst. Eerst ontkoppelen (net als de gewone
+// "reis toewijzen"-actie hierboven) bewaart de reizen zelf, alleen de
+// koppeling verdwijnt; de rest (sessies, quiz-deelnames, etc.) ruimt de
+// database vanzelf op via de bestaande ON DELETE CASCADE/SET NULL-regels.
+route("DELETE", "/api/admin/users/:id", async (req, res, params) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  if (Number(params.id) === req.user.id) return sendError(res, 400, "Je kunt jezelf niet verwijderen");
+  await query("UPDATE trips SET user_id = NULL WHERE user_id = $1", [params.id]);
+  await query("DELETE FROM users WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+});
+
 // ---------- Trip routes ----------
 route("GET", "/api/trips", async (req, res) => {
   const { rows } = await query(`
