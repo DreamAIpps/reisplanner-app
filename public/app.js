@@ -5945,55 +5945,18 @@ function PhotoWheel({ pool, target, onDone }) {
   );
 }
 
-// Leuke openingsbeelden die bij de eerste (en tweede) blur-ronde van een quiz
-// vervormen naar de echte foto, in plaats van meteen met de wazige echte foto
-// te beginnen — puur decoratief, niet gekoppeld aan een specifieke reis.
-const QUIZ_COVER_IMAGES = ["/quiz-cover-1.jpg"];
-const MORPH_HOLD_MS = 3000;
-const MORPH_INTRO_MS = 3000;
+// Openingsscherm dat één keer per sessie te zien is, zodra de quiz écht
+// begint (lobby → actief) en vóór de eerste vraag — puur decoratief, niet
+// gekoppeld aan een specifieke reis of vraag.
+const QUIZ_OPENING_IMAGE = "/quiz-cover-1.jpg";
+const OPENING_SCREEN_MS = 3500;
 
-// Benadert een "vervorming" zonder echte beeld-warping (die past niet bij een
-// app zonder buildstap/zware libraries): de omslagfoto vervaagt én wordt
-// wazig terwijl de echte foto er tegelijk scherper en zichtbaarder onder
-// vandaan komt — twee gestapelde lagen die in elkaar overvloeien.
-function PhotoMorphIntro({ coverSrc, targetSrc, onDone }) {
-  const coverRef = useRef(null);
-  const targetRef = useRef(null);
-
-  useEffect(() => {
-    const coverEl = coverRef.current;
-    const targetEl = targetRef.current;
-    if (!coverEl || !targetEl) return;
-    let done = false;
-    let raf = null;
-    coverEl.style.transition = "none";
-    targetEl.style.transition = "none";
-    coverEl.style.opacity = "1";
-    coverEl.style.filter = "blur(0px)";
-    targetEl.style.opacity = "0";
-    targetEl.style.filter = "blur(25px)";
-    void coverEl.offsetHeight;
-    // Eerst de omslagfoto gewoon een tijdje laten staan (MORPH_HOLD_MS) vóór
-    // de overgang zelf begint — anders begon hij meteen te vervagen en was
-    // er nauwelijks tijd om 'm te zien staan.
-    const holdTimer = setTimeout(() => {
-      raf = requestAnimationFrame(() => {
-        coverEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
-        targetEl.style.transition = `opacity ${MORPH_INTRO_MS}ms ease-in, filter ${MORPH_INTRO_MS}ms ease-in`;
-        coverEl.style.opacity = "0";
-        coverEl.style.filter = "blur(22px)";
-        targetEl.style.opacity = "1";
-        targetEl.style.filter = "blur(18px)"; // sluit aan op de startwaarde van de gewone blur-aftelling erna
-      });
-    }, MORPH_HOLD_MS);
-    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, MORPH_HOLD_MS + MORPH_INTRO_MS + 50);
-    return () => { done = true; clearTimeout(holdTimer); if (raf) cancelAnimationFrame(raf); clearTimeout(timer); };
-  }, [coverSrc, targetSrc]);
-
+function QuizOpeningScreen() {
   return (
-    <div className="relative w-full aspect-square">
-      <img ref={coverRef} src={coverSrc} alt="" className="absolute inset-0 w-full h-full object-cover" />
-      <img ref={targetRef} src={targetSrc} alt="" className="absolute inset-0 w-full h-full object-cover" />
+    <div className="max-w-sm mx-auto">
+      <div className="rounded-2xl overflow-hidden shadow-lg">
+        <img src={QUIZ_OPENING_IMAGE} alt="" className="w-full object-cover" />
+      </div>
     </div>
   );
 }
@@ -6045,8 +6008,8 @@ function PhotoQuizTab({ trip }) {
   const [questionCount, setQuestionCount] = useState(5);
   const [photoPool, setPhotoPool] = useState([]);
   const [revealedIndex, setRevealedIndex] = useState(-1);
-  const [morphRevealedIndex, setMorphRevealedIndex] = useState(-1);
-  const blurOrderRef = useRef([]); // volgorde van vraag-indexen die "blur" bleken te zijn
+  const [openingScreenActive, setOpeningScreenActive] = useState(false);
+  const openingScreenShownRef = useRef(false);
   const [showNewQuizForm, setShowNewQuizForm] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const lastTickRef = useRef(null);
@@ -6115,6 +6078,18 @@ function PhotoQuizTab({ trip }) {
     }
   }, [live?.phase]);
 
+  // Openingsscherm: net als het intromuziekje hierboven precies één keer
+  // getriggerd zodra de quiz de lobby uit is, en toont zichzelf even (los van
+  // de eigenlijke serverfase) vóór de eerste vraag in beeld komt.
+  useEffect(() => {
+    if (live && live.phase !== "lobby" && !openingScreenShownRef.current) {
+      openingScreenShownRef.current = true;
+      setOpeningScreenActive(true);
+      const timer = setTimeout(() => setOpeningScreenActive(false), OPENING_SCREEN_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [live?.phase]);
+
   async function createSession() {
     setCreating(true); setError(null);
     try {
@@ -6125,8 +6100,8 @@ function PhotoQuizTab({ trip }) {
       setShowNewQuizForm(false);
       doneSoundPlayedRef.current = false;
       introPlayedRef.current = false;
-      setMorphRevealedIndex(-1);
-      blurOrderRef.current = [];
+      openingScreenShownRef.current = false;
+      setOpeningScreenActive(false);
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
@@ -6254,6 +6229,18 @@ function PhotoQuizTab({ trip }) {
     </div>
   );
 
+  // Neemt voorrang op de eigenlijke fase, ongeacht of de server intussen al
+  // bij de eerste vraag is — dit is puur een lokale, eenmalige vertraging
+  // vóór de eerste vraag verschijnt.
+  if (openingScreenActive) {
+    return (
+      <>
+      {stopControl}
+      <QuizOpeningScreen />
+      </>
+    );
+  }
+
   if (phase === "lobby") {
     const count = participants.length || session.participantCount || 0;
     return (
@@ -6295,24 +6282,16 @@ function PhotoQuizTab({ trip }) {
 
   if (phase === "question" && live?.question) {
     const q = live.question;
+    const isTextMode = q.type === "text";
     const isBlurMode = q.mode === "blur";
-
-    // Bijhouden welke blur-ronde dit is (0e, 1e, ...) — puur op volgorde van
-    // wanneer de client een blur-vraag voor het eerst tegenkomt, niet
-    // gekoppeld aan het exacte afwisselpatroon van de server. De eerste
-    // (en straks tweede) blur-ronde krijgt een leuk openingsbeeld dat naar de
-    // echte foto vervormt; latere blur-rondes beginnen gewoon direct wazig.
-    if (isBlurMode && !blurOrderRef.current.includes(live.currentIndex)) blurOrderRef.current.push(live.currentIndex);
-    const coverSrc = isBlurMode ? QUIZ_COVER_IMAGES[blurOrderRef.current.indexOf(live.currentIndex)] : null;
-    const showMorphIntro = isBlurMode && coverSrc && morphRevealedIndex !== live.currentIndex;
 
     // Vóór elke nieuwe vraag draait de foto-rol één keer tot stilstand op
     // deze foto — alleen bij de allereerste keer dat dit vraagnummer in beeld
     // komt, niet bij elke poll erna (anders zou hij bij elke verversing
-    // opnieuw beginnen te draaien). De blur-variant slaat het rad helemaal
-    // over: daar mag je vanaf het begin al antwoorden, terwijl de foto
-    // vanzelf scherper wordt.
-    if (!isBlurMode && revealedIndex !== live.currentIndex) {
+    // opnieuw beginnen te draaien). De blur-variant en de tekstvraag (die
+    // geen foto heeft) slaan het rad helemaal over: daar mag je vanaf het
+    // begin al antwoorden.
+    if (!isTextMode && !isBlurMode && revealedIndex !== live.currentIndex) {
       return (
         <>
         {stopControl}
@@ -6344,15 +6323,18 @@ function PhotoQuizTab({ trip }) {
           <span className="tnum font-bold text-2xl text-sky-600 leading-none">{live.remainingSeconds}s</span>
         </div>
         <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
-          {showMorphIntro ? (
-            <PhotoMorphIntro coverSrc={coverSrc} targetSrc={q.thumb_url || q.url} onDone={() => setMorphRevealedIndex(live.currentIndex)} />
+          {isTextMode ? (
+            <div className="px-5 pt-6 pb-2 text-center">
+              <Icon name="bulb" size={30} strokeWidth={1.3} className="mx-auto mb-3 text-sky-400" />
+              <div className="font-display text-lg text-gray-800 leading-snug">{q.question}</div>
+            </div>
           ) : (
             <img src={q.thumb_url || q.url} alt=""
               className="w-full aspect-square object-cover"
               style={isBlurMode ? { filter: `blur(${blurPx}px)`, transition: "filter 1.5s linear" } : undefined} />
           )}
           <div className="p-4">
-            <div className="text-sm font-semibold text-gray-800 mb-3">Waar hoort deze foto bij?</div>
+            {!isTextMode && <div className="text-sm font-semibold text-gray-800 mb-3">Waar hoort deze foto bij?</div>}
             <div className="space-y-2">
               {q.options.map((opt) => {
                 const isPicked = answered && answered.choice === opt;

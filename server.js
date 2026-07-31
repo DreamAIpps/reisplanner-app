@@ -2470,7 +2470,14 @@ function shuffle(arr) {
 // Foute antwoorden komen zoveel mogelijk uit de reis zelf (andere echte
 // activiteiten) — pas als een reis daar te weinig van heeft, verzint Claude
 // het ontbrekende aantal erbij, in dezelfde stijl als de bestemming.
+// Van elke 4 vragen is er 1 een tekstvraag zonder foto, gebaseerd op de
+// planning/het dagboek/reacties in plaats van een fotopool.
+const TEXT_QUESTION_EVERY = 4;
+
 async function generateQuizQuestions(tripId, count) {
+  const textCount = Math.floor(count / TEXT_QUESTION_EVERY);
+  const photoCount = count - textCount;
+
   const [{ rows: photos }, { rows: activities }, { rows: tripRows }] = await Promise.all([
     query("SELECT id, activity_id FROM photos WHERE trip_id = $1 AND activity_id IS NOT NULL", [tripId]),
     query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
@@ -2496,13 +2503,13 @@ async function generateQuizQuestions(tripId, count) {
   const picked = [];
   const seenAnswers = new Set();
   for (const c of shuffled) {
-    if (picked.length >= count) break;
+    if (picked.length >= photoCount) break;
     if (seenAnswers.has(c.answer)) continue;
     seenAnswers.add(c.answer);
     picked.push(c);
   }
   for (const c of shuffled) {
-    if (picked.length >= count) break;
+    if (picked.length >= photoCount) break;
     if (!picked.includes(c)) picked.push(c);
   }
 
@@ -2535,13 +2542,14 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
     });
   }
 
-  return withRealDistractors.map((p, i) => {
+  const photoQuestions = withRealDistractors.map((p, i) => {
     const missing = 3 - p.real.length;
     const invented = missing > 0 ? (fillerByPhoto.get(p.photoId) || []).slice(0, missing) : [];
     const distractors = [...p.real, ...invented];
     while (distractors.length < 3) distractors.push(`Optie ${distractors.length + 1}`);
     const options = shuffle([p.answer, ...distractors]);
     return {
+      type: "photo",
       photo_id: p.photoId,
       url: `/api/photos/${p.photoId}/raw`,
       thumb_url: `/api/photos/${p.photoId}/thumb`,
@@ -2552,6 +2560,77 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
       // andere een blurred foto voor dezelfde vraag. Om en om i.p.v. willekeurig.
       mode: i % 2 === 0 ? "wheel" : "blur",
     };
+  });
+
+  const textQuestions = textCount > 0 ? await generateQuizTextQuestions(tripId, textCount) : [];
+
+  // Elke 4e vraag (positie 4, 8, 12, ...) is een tekstvraag, de rest blijft
+  // fotovragen in hun eigen volgorde.
+  const merged = [];
+  let photoIdx = 0, textIdx = 0;
+  for (let i = 0; i < count; i++) {
+    if ((i + 1) % TEXT_QUESTION_EVERY === 0 && textIdx < textQuestions.length) merged.push(textQuestions[textIdx++]);
+    else if (photoIdx < photoQuestions.length) merged.push(photoQuestions[photoIdx++]);
+  }
+  while (photoIdx < photoQuestions.length) merged.push(photoQuestions[photoIdx++]);
+  while (textIdx < textQuestions.length) merged.push(textQuestions[textIdx++]);
+  return merged;
+}
+
+// Tekstvragen zonder foto, gebaseerd op de dagplanning, het dagboek en
+// reacties — Claude bedenkt zowel de vraag, het juiste antwoord (rechtstreeks
+// afgeleid uit de meegegeven informatie) als 3 verzonnen foute opties.
+async function generateQuizTextQuestions(tripId, textCount) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
+
+  const [{ rows: tripRows }, { rows: days }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: entries }, { rows: comments }] = await Promise.all([
+    query("SELECT name, destination, start_date, end_date FROM trips WHERE id = $1", [tripId]),
+    query("SELECT id, date FROM days WHERE trip_id = $1 ORDER BY date", [tripId]),
+    query("SELECT day_id, title, time, location FROM activities WHERE trip_id = $1 ORDER BY day_id, time", [tripId]),
+    query("SELECT from_location, to_location, type FROM transports WHERE trip_id = $1", [tripId]),
+    query("SELECT name FROM accommodations WHERE trip_id = $1", [tripId]),
+    query("SELECT body FROM journal_entries WHERE trip_id = $1 AND body IS NOT NULL", [tripId]),
+    query("SELECT body FROM journal_comments WHERE trip_id = $1 AND body IS NOT NULL", [tripId]),
+  ]);
+
+  const dayNumberById = new Map(days.map((d, i) => [d.id, i + 1]));
+  const trip = tripRows[0] || {};
+  const lines = [`Reis: ${trip.name || "reis"} naar ${trip.destination || "onbekende bestemming"}`];
+  if (trip.start_date) lines.push(`Periode: ${trip.start_date} t/m ${trip.end_date}`);
+  for (const a of activities) {
+    const dayNum = dayNumberById.get(a.day_id);
+    lines.push(`Dag ${dayNum || "?"}${a.time ? " " + a.time : ""}: ${a.title}${a.location ? ` (${a.location})` : ""}`);
+  }
+  for (const t of transports) {
+    if (t.from_location && t.to_location) lines.push(`Vervoer (${t.type}): ${t.from_location} → ${t.to_location}`);
+  }
+  for (const acc of accommodations) lines.push(`Verblijf: ${acc.name}`);
+  for (const e of entries) lines.push(`Dagboek: "${e.body.slice(0, 200)}"`);
+  for (const c of comments) lines.push(`Reactie: "${c.body.slice(0, 200)}"`);
+
+  // Ruwe cap tegen een onwerkbaar lange prompt bij een uitgebreide reis.
+  const context = lines.slice(0, 150).join("\n");
+
+  const prompt = `Hier is de planning, het dagboek en de reacties van een reis:
+${context}
+
+Bedenk ${textCount} verschillende meerkeuzevragen over deze reis, gebaseerd op bovenstaande informatie (data, volgorde van activiteiten, locaties, wie iets schreef, wat er gebeurde) — geen vragen over foto's. Voor elke vraag: een kort, ondubbelzinnig juist antwoord dat rechtstreeks uit de informatie hierboven volgt, plus 3 geloofwaardige maar foute opties in dezelfde stijl, allemaal kort (max ~6 woorden). In het Nederlands.
+Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"...","distractors":["...","...","..."]}, ...]} — exact ${textCount} items.`;
+
+  const msg = await anthropicClient.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1200,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
+
+  return (parsed.items || []).slice(0, textCount).map((item) => {
+    const distractors = (item.distractors || []).filter((d) => d && d !== item.correct).slice(0, 3);
+    while (distractors.length < 3) distractors.push(`Optie ${distractors.length + 1}`);
+    const options = shuffle([item.correct, ...distractors]);
+    return { type: "text", question: item.question, options, correct: item.correct };
   });
 }
 
@@ -2685,12 +2764,12 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
 
   if (phase === "question") {
     const q = session.questions[index];
-    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   } else if (phase === "standings" || phase === "done") {
     const q = session.questions[index];
-    payload.question = { photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   }
