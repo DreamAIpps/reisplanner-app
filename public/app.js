@@ -5760,6 +5760,61 @@ function QuizFullscreen({ onClose, children }) {
   );
 }
 
+// Fisher-Yates, niet `.sort(() => Math.random() - 0.5)` — die laatste schudt
+// niet uniform (zie de vergelijkbare fix in generateQuizQuestions op de
+// server) en zou hier de foto's in de rol systematisch in dezelfde volgorde
+// laten eindigen.
+function shuffleClient(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Een slot-achtige foto-rol: een rij foto's uit de reis schuift voorbij en
+// komt vertragend tot stilstand op de foto waar de vraag over gaat, als korte
+// spanningsopbouw vóór de multiple-choice opties verschijnen. De rolrichting
+// is altijd hetzelfde (naar links), alleen de duur van de vertraging geeft
+// het "tot stilstand komen"-gevoel — geen fysica, gewoon een CSS-easing.
+function PhotoWheel({ pool, target, onDone, size = 220 }) {
+  const trackRef = useRef(null);
+  // Op `target.photo_id` in plaats van op `target` zelf: elke /state-poll (om
+  // de 1,5s) levert een nieuw objectliteral voor dezelfde vraag, en zolang
+  // hetzelfde fotonummer bedoeld wordt mag dat de rol niet laten herstarten.
+  const sequence = React.useMemo(() => {
+    const filler = shuffleClient(pool.filter((p) => p.id !== target.photo_id && (p.thumb_url || p.url))).slice(0, 13);
+    while (filler.length < 9) filler.push(target);
+    return [...filler, target];
+  }, [pool, target.photo_id]);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    let done = false;
+    el.style.transition = "none";
+    el.style.transform = "translateX(0px)";
+    void el.offsetHeight; // force reflow, anders negeert de browser de reset vóór de animatie
+    const raf = requestAnimationFrame(() => {
+      el.style.transition = "transform 1.5s cubic-bezier(0.1,0.8,0.25,1)";
+      el.style.transform = `translateX(-${(sequence.length - 1) * size}px)`;
+    });
+    const timer = setTimeout(() => { if (!done) { done = true; onDone(); } }, 1550);
+    return () => { done = true; cancelAnimationFrame(raf); clearTimeout(timer); };
+  }, [sequence, size]);
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border-4 border-sky-400 shadow-lg mx-auto" style={{ width: size, height: size }}>
+      <div ref={trackRef} className="flex h-full" style={{ willChange: "transform" }}>
+        {sequence.map((p, i) => (
+          <img key={i} src={p.thumb_url || p.url} alt="" className="object-cover shrink-0" style={{ width: size, height: size }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Een Kahoot-achtige fotoquiz: één sessie, gedeeld via QR-code, met tussenstand
 // na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
 // GET .../state (zie computeQuizPhase in server.js) — deze component pollt
@@ -5774,6 +5829,8 @@ function PhotoQuizTab({ trip, isHost }) {
   const [myPick, setMyPick] = useState(null);
   const [questionSeconds, setQuestionSeconds] = useState(15);
   const [questionCount, setQuestionCount] = useState(5);
+  const [photoPool, setPhotoPool] = useState([]);
+  const [revealedIndex, setRevealedIndex] = useState(-1);
 
   const refreshSession = useCallback(async () => {
     try { const data = await api.getQuizSession(trip.id); setSession(data.session || null); }
@@ -5781,6 +5838,13 @@ function PhotoQuizTab({ trip, isHost }) {
   }, [trip.id]);
 
   useEffect(() => { refreshSession(); }, [refreshSession]);
+
+  // Vulling voor de foto-rol (zie PhotoWheel) — gewoon de fotobibliotheek van
+  // de reis, niet gekoppeld aan quizvragen, dus geen risico dat een nog niet
+  // gestelde vraag hierdoor wordt verklapt.
+  useEffect(() => {
+    api.getPhotos(trip.id).then((photos) => setPhotoPool(photos || [])).catch(() => {});
+  }, [trip.id]);
 
   useEffect(() => {
     if (!session || !session.isParticipant) { setLive(null); return; }
@@ -5804,6 +5868,7 @@ function PhotoQuizTab({ trip, isHost }) {
       const data = await api.createQuizSession(trip.id, { questionSeconds, questionCount });
       setSession(data.session);
       setLive(null);
+      setRevealedIndex(-1);
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
@@ -5929,6 +5994,24 @@ function PhotoQuizTab({ trip, isHost }) {
 
   if (phase === "question" && live?.question) {
     const q = live.question;
+
+    // Vóór elke nieuwe vraag draait de foto-rol één keer tot stilstand op
+    // deze foto — alleen bij de allereerste keer dat dit vraagnummer in beeld
+    // komt, niet bij elke poll erna (anders zou hij bij elke verversing
+    // opnieuw beginnen te draaien).
+    if (revealedIndex !== live.currentIndex) {
+      return (
+        <>
+        {stopControl}
+        <div className="max-w-md mx-auto text-center">
+          <div className="text-sm text-gray-500 mb-1">Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</div>
+          <div className="text-xs text-gray-400 mb-4">Waar hoort deze foto bij?</div>
+          <PhotoWheel pool={photoPool} target={q} onDone={() => setRevealedIndex(live.currentIndex)} />
+        </div>
+        </>
+      );
+    }
+
     const answered = myPick || live.myAnswer;
     const resolved = answered && !answered.pending;
     return (
