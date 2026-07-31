@@ -5990,6 +5990,29 @@ function QuizDoublerScreen() {
   );
 }
 
+const SCORE_SPIN_MS = 3000;
+
+// Telt op van de vorige naar de nieuwe stand in plaats van 'm meteen te
+// tonen — dezelfde "eerst draaien, dan landen"-gedachte als de foto-rol,
+// maar dan voor de score zelf. Ease-out: snel op gang, rustig uitlopend.
+function AnimatedScore({ from, to, active, duration = SCORE_SPIN_MS }) {
+  const [display, setDisplay] = useState(active ? from : to);
+  useEffect(() => {
+    if (!active) { setDisplay(to); return; }
+    let raf;
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(Math.round(from + (to - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, from, to, duration]);
+  return <span className="tnum font-semibold text-gray-700">{display}</span>;
+}
+
 const STREAMER_COLORS = ["#FF7A00", "#E4571A", "#3355CC", "#55AA55", "#AA5599", "#F0C419", "#22AACC"];
 
 // Slingers voor het eindscherm van de fotoquiz — vallen één keer naar
@@ -6041,6 +6064,10 @@ function PhotoQuizTab({ trip }) {
   const openingScreenShownRef = useRef(false);
   const [doublerScreenActive, setDoublerScreenActive] = useState(false);
   const doublerScreenShownRef = useRef(false);
+  const [scoreSpinActive, setScoreSpinActive] = useState(false);
+  const scoreSpinBaselineRef = useRef(new Map()); // id -> score vóór deze onthulling
+  const lastRevealScoresRef = useRef(null); // id -> score ná de vórige onthulling (null = nog geen enkele gehad)
+  const revealedStandingsIndexRef = useRef(-1);
   const [showNewQuizForm, setShowNewQuizForm] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const lastTickRef = useRef(null);
@@ -6133,6 +6160,24 @@ function PhotoQuizTab({ trip }) {
     }
   }, [live?.phase, live?.currentIndex, live?.question?.doubler]);
 
+  // Tussenstand-onthulling: eerst de oude stand tonen, dan de score per
+  // deelnemer laten oplopen naar de nieuwe stand, precies één keer per ronde
+  // (niet bij elke poll terwijl de tussenstand al in beeld staat).
+  useEffect(() => {
+    if ((live?.phase === "standings" || live?.phase === "done") && revealedStandingsIndexRef.current !== live.currentIndex) {
+      revealedStandingsIndexRef.current = live.currentIndex;
+      const participants = live.participants || [];
+      scoreSpinBaselineRef.current = lastRevealScoresRef.current
+        || new Map(participants.map((p) => [p.id ?? p.name, 0]));
+      setScoreSpinActive(true);
+      const timer = setTimeout(() => {
+        setScoreSpinActive(false);
+        lastRevealScoresRef.current = new Map(participants.map((p) => [p.id ?? p.name, p.score]));
+      }, SCORE_SPIN_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [live?.phase, live?.currentIndex]);
+
   async function createSession() {
     setCreating(true); setError(null);
     try {
@@ -6147,6 +6192,10 @@ function PhotoQuizTab({ trip }) {
       setOpeningScreenActive(false);
       doublerScreenShownRef.current = false;
       setDoublerScreenActive(false);
+      setScoreSpinActive(false);
+      scoreSpinBaselineRef.current = new Map();
+      lastRevealScoresRef.current = null;
+      revealedStandingsIndexRef.current = -1;
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
@@ -6465,7 +6514,7 @@ function PhotoQuizTab({ trip }) {
                 {isFinal && i === 0 && p.score > 0 && <Icon name="sparkle" size={13} className="text-sky-500" />}
                 {p.name}{p.isMe && <span className="text-xs text-gray-400"> (jij)</span>}
               </span>
-              <span className="tnum font-semibold text-gray-700">{p.score}</span>
+              <AnimatedScore from={scoreSpinBaselineRef.current.get(p.id ?? p.name) ?? p.score} to={p.score} active={scoreSpinActive} />
             </div>
           ))}
         </div>

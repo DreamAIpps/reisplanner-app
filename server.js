@@ -2707,6 +2707,13 @@ Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"..."
 // Niet na élke vraag een tussenstand — dat onderbrak het tempo te vaak — maar
 // pas na elke 3e vraag (dus na vraag 3, 6, 9, ...).
 const QUIZ_STANDINGS_EVERY = 3;
+// De verdubbelaar-vraag krijgt een paar seconden extra bedenktijd bovenop de
+// ingestelde tijd per vraag — dubbele punten mogen ook wat meer tijd kosten.
+const QUIZ_DOUBLER_BONUS_SECONDS = 5;
+
+function questionDuration(session, index) {
+  return session.question_seconds + (session.questions[index]?.doubler ? QUIZ_DOUBLER_BONUS_SECONDS : 0);
+}
 
 function computeQuizPhase(session) {
   const total = session.questions.length;
@@ -2719,15 +2726,17 @@ function computeQuizPhase(session) {
   }
   const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
   // Vragen hebben niet meer allemaal dezelfde slotlengte: alleen na elke 3e
-  // vraag komt er een tussenstand-pauze bij, dus dit loopt cumulatief door
-  // de vragen heen in plaats van een vaste deling te doen.
+  // vraag komt er een tussenstand-pauze bij, en de verdubbelaar-vraag duurt
+  // zelf ook langer, dus dit loopt cumulatief door de vragen heen in plaats
+  // van een vaste deling te doen.
   let acc = 0;
   for (let i = 0; i < total; i++) {
     const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
-    if (elapsed < acc + session.question_seconds) {
-      return { phase: "question", index: i, remainingSeconds: Math.ceil(acc + session.question_seconds - elapsed) };
+    const qDuration = questionDuration(session, i);
+    if (elapsed < acc + qDuration) {
+      return { phase: "question", index: i, remainingSeconds: Math.ceil(acc + qDuration - elapsed) };
     }
-    const slot = session.question_seconds + (showsStandings ? session.interval_seconds : 0);
+    const slot = qDuration + (showsStandings ? session.interval_seconds : 0);
     if (showsStandings && elapsed < acc + slot) {
       return { phase: "standings", index: i, remainingSeconds: Math.ceil(acc + slot - elapsed) };
     }
@@ -2835,9 +2844,12 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
   const payload = {
     phase, currentIndex: index, remainingSeconds,
     totalQuestions: session.questions.length,
-    questionSeconds: session.question_seconds,
+    // De effectieve duur van déze vraag (inclusief eventuele verdubbelaar-
+    // bonus), niet zomaar de sessie-brede instelling — anders klopt de
+    // blur-aftelling op de client niet meer voor de verdubbelaar-vraag.
+    questionSeconds: questionDuration(session, index),
     isHost: session.host_user_id === req.user.id,
-    participants: participants.map((p) => ({ name: p.name, score: p.score, isMe: p.user_id === req.user.id })),
+    participants: participants.map((p) => ({ id: p.user_id, name: p.name, score: p.score, isMe: p.user_id === req.user.id })),
   };
 
   if (phase === "question") {
@@ -2874,8 +2886,11 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
   // Snelheidsbonus zoals Kahoot: hoe eerder in het antwoordvenster, hoe meer
   // punten, met een bodem van 500 zodat een goed antwoord op het laatste
   // moment nog steeds ruim meer oplevert dan een fout antwoord (0 punten).
-  // Vraag 5 (q.doubler) telt dubbel.
-  const basePoints = correct ? Math.round(500 + 500 * (remainingSeconds / session.question_seconds)) : 0;
+  // Vraag 5 (q.doubler) telt dubbel én heeft zelf ook een langere duur (zie
+  // questionDuration) — die langere duur is hier de juiste noemer, anders zou
+  // de snelheidsbonus verkeerd uitpakken (remainingSeconds kan dan groter
+  // zijn dan session.question_seconds).
+  const basePoints = correct ? Math.round(500 + 500 * (remainingSeconds / questionDuration(session, index))) : 0;
   const points = q.doubler ? basePoints * 2 : basePoints;
 
   try {
