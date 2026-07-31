@@ -2603,9 +2603,9 @@ function quizSessionSummary(loaded, req) {
 }
 
 route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => {
-  const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
-  if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan een quiz starten");
-
+  // Elk reislid mag een quiz aanmaken, ook alleen-lezen bezoekers — wie 'm
+  // aanmaakt wordt vanzelf de gastheer van déze sessie (host_user_id), los
+  // van wie de reis zelf bezit.
   // "done" bestaat niet als kolomwaarde (status blijft 'active'), dus of de
   // bestaande sessie nog leeft wordt met dezelfde tijd-afgeleide logica bepaald
   // als /state gebruikt — anders zou "nieuwe quiz starten" na afloop de allang
@@ -2635,7 +2635,7 @@ route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => 
 
   const loaded = await loadQuizSessionForUser(params.id, req.user.id);
   sendJson(res, 200, { session: quizSessionSummary(loaded, req) });
-}, { tripScope: "param" });
+}, { tripScope: "param", allowViewer: true });
 
 route("GET", "/api/trips/:id/quiz/session", async (req, res, params) => {
   let loaded = await loadQuizSessionForUser(params.id, req.user.id);
@@ -2657,14 +2657,14 @@ route("POST", "/api/trips/:id/quiz/sessions/:sessionId/start", async (req, res, 
   if (rows[0].status !== "lobby") return sendJson(res, 200, { ok: true });
   await query("UPDATE quiz_sessions SET status = 'active', started_at = NOW() WHERE id = $1", [params.sessionId]);
   sendJson(res, 200, { ok: true });
-}, { tripScope: "param" });
+}, { tripScope: "param", allowViewer: true });
 
 route("POST", "/api/trips/:id/quiz/sessions/:sessionId/stop", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1 AND trip_id = $2", [params.sessionId, params.id]);
   if (!rows.length || rows[0].host_user_id !== req.user.id) return sendError(res, 403, "Alleen de gastheer kan de quiz stoppen");
   await query("UPDATE quiz_sessions SET status = 'done' WHERE id = $1", [params.sessionId]);
   sendJson(res, 200, { ok: true });
-}, { tripScope: "param" });
+}, { tripScope: "param", allowViewer: true });
 
 route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1", [params.sessionId]);

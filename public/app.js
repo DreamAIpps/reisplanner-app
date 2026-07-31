@@ -6033,7 +6033,7 @@ function PartyStreamers({ count = 60 }) {
 // na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
 // GET .../state (zie computeQuizPhase in server.js) — deze component pollt
 // alleen, er wordt hier niets aan lokale timers of host-besturing gedaan.
-function PhotoQuizTab({ trip, isHost }) {
+function PhotoQuizTab({ trip }) {
   const [session, setSession] = useState(undefined); // undefined = laden, null = geen sessie
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -6231,12 +6231,10 @@ function PhotoQuizTab({ trip, isHost }) {
         <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
         <h3 className="font-display text-[21px] text-gray-800 mb-2">Fotoquiz</h3>
         <p className="text-sm text-gray-500 leading-relaxed mb-5">
-          {isHost
-            ? "Foto's uit deze reis, elk met vier antwoorden. Start een sessie en laat anderen meespelen via een QR-code — met tussenstand en een winnaar aan het eind."
-            : "Er is nu geen actieve fotoquiz voor deze reis."}
+          Foto's uit deze reis, elk met vier antwoorden. Start een sessie en laat anderen meespelen via een QR-code — met tussenstand en een winnaar aan het eind.
         </p>
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
-        {isHost && renderQuizSettings("Start een fotoquiz")}
+        {renderQuizSettings("Start een fotoquiz")}
       </div>
     );
   }
@@ -6755,11 +6753,13 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
       )}
 
       {/* De fotoquiz rendert los van de rest, full screen, voor iedereen met
-          toegang tot de reis — alleen-lezen bezoekers doen mee als speler
-          (isHost blijft false), eigenaar/editor kunnen 'm ook hosten. */}
+          toegang tot de reis — ook alleen-lezen bezoekers kunnen 'm hosten
+          (een nieuwe sessie aanmaken/starten/stoppen), niet alleen
+          eigenaar/editor. Wie een sessie aanmaakt wordt daar zelf gastheer
+          van, ongeacht wie de reis bezit. */}
       {tab === "quiz" && (
         <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")}>
-          <PhotoQuizTab trip={viewTrip} isHost={readOnly ? false : isOwnerActions} />
+          <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>
       )}
 
