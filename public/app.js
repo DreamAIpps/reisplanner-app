@@ -5702,8 +5702,14 @@ function TripActionsMenu({ onEdit, onDelete }) {
 
   return (
     <div className="relative" ref={wrapRef}>
+      {/* touchAction: net als de dubbeltik-fix in de fotoviewer eerder — zonder
+          dit kan een browser op een echt touchscreen de tik laten wachten op
+          een eventuele tweede tik (zoom-ambiguïteit), iets wat een synthetische
+          muisklik in tests nooit blootlegt. Ook iets groter (w-9/h-9 i.p.v.
+          w-8/h-8) voor een ruimer tikgebied. */}
       <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Meer opties"
-        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 transition-colors">
+        style={{ touchAction: "manipulation" }}
+        className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 text-gray-500 transition-colors">
         <Icon name="more" size={18} />
       </button>
       {open && (
@@ -5886,6 +5892,12 @@ function playGameShowIntro() {
     { f: 1318.5, t: 1.08, d: 0.5 },
   ].forEach(({ f, t, d }) => playTone(f, t, d, { type: "square", gain: 0.13 }));
 }
+// Sting voor de verdubbelaar-tussenpagina: een korte oplopende sweep gevolgd
+// door een heldere hit, om het "dit is bijzonder" gevoel te onderstrepen.
+function playDoublerSting() {
+  playSweep(200, 900, 0, 0.4, { type: "square", gain: 0.15 });
+  playTone(1046.5, 0.4, 0.3, { type: "triangle", gain: 0.16 });
+}
 
 // Een slot-achtige foto-rol: een rij foto's uit de reis schuift voorbij en
 // komt vertragend tot stilstand op de foto waar de vraag over gaat, als korte
@@ -5961,6 +5973,21 @@ function QuizOpeningScreen() {
   );
 }
 
+const DOUBLER_SCREEN_MS = 3000;
+
+// Tussenpagina vlak vóór de verdubbelaar-vraag — even iets groots en
+// opvallends vóór de vraag zelf verschijnt, zodat niemand die dubbele punten
+// mist.
+function QuizDoublerScreen() {
+  return (
+    <div className="max-w-sm mx-auto text-center py-14">
+      <div className="text-6xl mb-4 leading-none">⚡</div>
+      <h2 className="font-display text-4xl font-bold text-amber-500 mb-2">Verdubbelaar!</h2>
+      <p className="text-sm text-gray-500">Deze vraag levert dubbele punten op</p>
+    </div>
+  );
+}
+
 const STREAMER_COLORS = ["#FF7A00", "#E4571A", "#3355CC", "#55AA55", "#AA5599", "#F0C419", "#22AACC"];
 
 // Slingers voor het eindscherm van de fotoquiz — vallen één keer naar
@@ -6010,6 +6037,8 @@ function PhotoQuizTab({ trip }) {
   const [revealedIndex, setRevealedIndex] = useState(-1);
   const [openingScreenActive, setOpeningScreenActive] = useState(false);
   const openingScreenShownRef = useRef(false);
+  const [doublerScreenActive, setDoublerScreenActive] = useState(false);
+  const doublerScreenShownRef = useRef(false);
   const [showNewQuizForm, setShowNewQuizForm] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const lastTickRef = useRef(null);
@@ -6090,6 +6119,18 @@ function PhotoQuizTab({ trip }) {
     }
   }, [live?.phase]);
 
+  // Tussenpagina vlak vóór de verdubbelaar-vraag — precies één keer, zodra
+  // die vraag voor het eerst in beeld komt (niet bij elke poll erna).
+  useEffect(() => {
+    if (live?.phase === "question" && live.question?.doubler && !doublerScreenShownRef.current) {
+      doublerScreenShownRef.current = true;
+      setDoublerScreenActive(true);
+      playDoublerSting();
+      const timer = setTimeout(() => setDoublerScreenActive(false), DOUBLER_SCREEN_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [live?.phase, live?.currentIndex, live?.question?.doubler]);
+
   async function createSession() {
     setCreating(true); setError(null);
     try {
@@ -6102,6 +6143,8 @@ function PhotoQuizTab({ trip }) {
       introPlayedRef.current = false;
       openingScreenShownRef.current = false;
       setOpeningScreenActive(false);
+      doublerScreenShownRef.current = false;
+      setDoublerScreenActive(false);
     } catch (err) { setError(err.message || "Kon geen quiz starten"); }
     finally { setCreating(false); }
   }
@@ -6284,6 +6327,15 @@ function PhotoQuizTab({ trip }) {
     const q = live.question;
     const isTextMode = q.type === "text";
     const isBlurMode = q.mode === "blur";
+
+    if (doublerScreenActive) {
+      return (
+        <>
+        {stopControl}
+        <QuizDoublerScreen />
+        </>
+      );
+    }
 
     // Vóór elke nieuwe vraag draait de foto-rol één keer tot stilstand op
     // deze foto — alleen bij de allereerste keer dat dit vraagnummer in beeld
