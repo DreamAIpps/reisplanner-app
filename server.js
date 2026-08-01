@@ -2485,6 +2485,14 @@ const QUIZ_INTERVAL_SECONDS = 6;
 const QUIZ_QUESTION_COUNT_DEFAULT = 5;
 const QUIZ_QUESTION_COUNT_MIN = 2;
 const QUIZ_QUESTION_COUNT_MAX = 15;
+// Moet gelijk zijn aan OPENING_SCREEN_MS/1000 in app.js — de client toont dat
+// openingsscherm los van de kloktijd, dus zonder deze vertraging zou vraag 1
+// al voor een flink deel verstreken zijn tegen de tijd dat spelers hem te
+// zien krijgen.
+const QUIZ_OPENING_SCREEN_SECONDS = 6.5;
+// Korte "dit was het goede antwoord"-pauze ná iedere vraag, ook als het geen
+// tussenstand-ronde is (die krijgt de langere QUIZ_INTERVAL_SECONDS).
+const QUIZ_REVEAL_SECONDS = 3;
 
 // `.sort(() => Math.random() - 0.5)` is een bekende valse vriend: geen echte
 // shuffle, en met kleine arrays (zoals 4 meerkeuze-opties) systematisch
@@ -2500,12 +2508,25 @@ function shuffle(arr) {
   return a;
 }
 
-// Alleen foto's die aan een activiteit hangen leveren een zinnige vraag op —
-// verblijf en vervoer zijn logistiek, geen locatie/activiteit om te raden, en
-// een foto die alleen aan de dag zelf hangt heeft al helemaal geen naam.
+// Zelfde aanpak als dateIsoInTimezone/todayIso in app.js: geeft YYYY-MM-DD
+// terug in de tijdzone van de reis. Gebruikt om toekomstige activiteiten
+// (die nog moeten gebeuren) buiten de quiz te houden — anders zou de quiz
+// zelf een verrassing kunnen verklappen.
+function quizTodayIso(timezone) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+// Foto's bij een activiteit, vervoer of verblijf leveren een zinnige vraag
+// op — een foto die alleen aan de dag zelf hangt heeft geen naam om te raden.
 // Foute antwoorden komen zoveel mogelijk uit de reis zelf (andere echte
-// activiteiten) — pas als een reis daar te weinig van heeft, verzint Claude
-// het ontbrekende aantal erbij, in dezelfde stijl als de bestemming.
+// activiteiten/vervoer/verblijf) — pas als een reis daar te weinig van heeft,
+// verzint Claude het ontbrekende aantal erbij, in dezelfde stijl als de
+// bestemming. Activiteiten die nog moeten gebeuren (toekomstige dagen) tellen
+// niet mee — nog niet ervaren, en mogelijk een verrassing.
 // Van elke 4 vragen is er 1 een tekstvraag zonder foto, gebaseerd op de
 // planning/het dagboek/reacties in plaats van een fotopool.
 const TEXT_QUESTION_EVERY = 4;
@@ -2521,23 +2542,31 @@ async function generateQuizQuestions(tripId, count) {
   // voorkomen. Foto's die alleen aan een dag hangen (nergens specifiek aan
   // gekoppeld) blijven terecht buiten beeld: daar is geen zinnig "waar
   // hoort deze foto bij"-antwoord voor te bedenken.
-  const [{ rows: photos }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: tripRows }] = await Promise.all([
+  const [{ rows: photos }, { rows: activities }, { rows: days }, { rows: transports }, { rows: accommodations }, { rows: tripRows }] = await Promise.all([
     query(
       "SELECT id, activity_id, transport_id, accommodation_id FROM photos WHERE trip_id = $1 AND (activity_id IS NOT NULL OR transport_id IS NOT NULL OR accommodation_id IS NOT NULL)",
       [tripId]
     ),
-    query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
+    query("SELECT id, day_id, title FROM activities WHERE trip_id = $1", [tripId]),
+    query("SELECT id, date FROM days WHERE trip_id = $1", [tripId]),
     query("SELECT id, type, from_location, to_location FROM transports WHERE trip_id = $1", [tripId]),
     query("SELECT id, name FROM accommodations WHERE trip_id = $1", [tripId]),
-    query("SELECT name, destination FROM trips WHERE id = $1", [tripId]),
+    query("SELECT name, destination, timezone FROM trips WHERE id = $1", [tripId]),
   ]);
 
+  const dayDateById = new Map(days.map((d) => [d.id, new Date(d.date).toISOString().slice(0, 10)]));
+  const todayStr = quizTodayIso(tripRows[0]?.timezone);
+  const pastActivities = activities.filter((a) => {
+    const dayDate = dayDateById.get(a.day_id);
+    return !dayDate || dayDate <= todayStr;
+  });
+
   const transportLabel = (t) => (t.from_location && t.to_location ? `${t.type}: ${t.from_location} → ${t.to_location}` : t.type);
-  const actMap = new Map(activities.map((a) => [a.id, a.title]));
+  const actMap = new Map(pastActivities.map((a) => [a.id, a.title]));
   const transMap = new Map(transports.map((t) => [t.id, transportLabel(t)]));
   const accMap = new Map(accommodations.map((a) => [a.id, a.name]));
   const allTitles = [...new Set([
-    ...activities.map((a) => a.title),
+    ...pastActivities.map((a) => a.title),
     ...transports.map(transportLabel),
     ...accommodations.map((a) => a.name),
   ].filter(Boolean))];
@@ -2663,9 +2692,9 @@ async function generateQuizTextQuestions(tripId, textCount) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
 
   const [{ rows: tripRows }, { rows: days }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: entries }, { rows: comments }, { rows: geoPhotos }] = await Promise.all([
-    query("SELECT name, destination, start_date, end_date FROM trips WHERE id = $1", [tripId]),
+    query("SELECT name, destination, start_date, end_date, timezone FROM trips WHERE id = $1", [tripId]),
     query("SELECT id, date FROM days WHERE trip_id = $1 ORDER BY date", [tripId]),
-    query("SELECT day_id, title, time, location FROM activities WHERE trip_id = $1 ORDER BY day_id, time", [tripId]),
+    query("SELECT id, day_id, title, time, location FROM activities WHERE trip_id = $1 ORDER BY day_id, time", [tripId]),
     query("SELECT from_location, to_location, type FROM transports WHERE trip_id = $1", [tripId]),
     query("SELECT name FROM accommodations WHERE trip_id = $1", [tripId]),
     query("SELECT body FROM journal_entries WHERE trip_id = $1 AND body IS NOT NULL", [tripId]),
@@ -2679,10 +2708,19 @@ async function generateQuizTextQuestions(tripId, textCount) {
   ]);
 
   const dayNumberById = new Map(days.map((d, i) => [d.id, i + 1]));
+  const dayDateById = new Map(days.map((d) => [d.id, new Date(d.date).toISOString().slice(0, 10)]));
   const trip = tripRows[0] || {};
+  const todayStr = quizTodayIso(trip.timezone);
+  // Nog niet gebeurde activiteiten (toekomstige dagen) horen niet in de
+  // trivia thuis — nog niet ervaren, en mogelijk een verrassing.
+  const pastActivities = activities.filter((a) => {
+    const dayDate = dayDateById.get(a.day_id);
+    return !dayDate || dayDate <= todayStr;
+  });
+  const pastActivityIds = new Set(pastActivities.map((a) => a.id));
   const lines = [`Reis: ${trip.name || "reis"} naar ${trip.destination || "onbekende bestemming"}`];
   if (trip.start_date) lines.push(`Periode: ${trip.start_date} t/m ${trip.end_date}`);
-  for (const a of activities) {
+  for (const a of pastActivities) {
     const dayNum = dayNumberById.get(a.day_id);
     lines.push(`Dag ${dayNum || "?"}${a.time ? " " + a.time : ""}: ${a.title}${a.location ? ` (${a.location})` : ""}`);
   }
@@ -2695,6 +2733,7 @@ async function generateQuizTextQuestions(tripId, textCount) {
 
   const activityCoords = new Map();
   for (const p of geoPhotos) {
+    if (!pastActivityIds.has(p.activity_id)) continue;
     if (!activityCoords.has(p.activity_id)) activityCoords.set(p.activity_id, { title: p.title, lat: Number(p.latitude), lng: Number(p.longitude) });
   }
   const geoEntries = [...activityCoords.values()];
@@ -2759,7 +2798,7 @@ function questionWindow(session, index) {
   let acc = 0;
   for (let i = 0; i < index; i++) {
     const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
-    acc += questionDuration(session, i) + (showsStandings ? session.interval_seconds : 0);
+    acc += questionDuration(session, i) + (showsStandings ? session.interval_seconds : QUIZ_REVEAL_SECONDS);
   }
   return { start: acc, end: acc + questionDuration(session, index) };
 }
@@ -2774,10 +2813,11 @@ function computeQuizPhase(session) {
     return { phase: "lobby", index: 0, remainingSeconds: null };
   }
   const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
-  // Vragen hebben niet meer allemaal dezelfde slotlengte: alleen na elke 3e
-  // vraag komt er een tussenstand-pauze bij, en de verdubbelaar-vraag duurt
-  // zelf ook langer, dus dit loopt cumulatief door de vragen heen in plaats
-  // van een vaste deling te doen.
+  // Vragen hebben niet meer allemaal dezelfde slotlengte: elke vraag krijgt
+  // een korte "dit was het goede antwoord"-pauze, en na elke 3e vraag is dat
+  // de langere tussenstand-pauze in plaats daarvan. De verdubbelaar-vraag
+  // duurt zelf ook langer. Dit loopt daarom cumulatief door de vragen heen in
+  // plaats van een vaste deling te doen.
   let acc = 0;
   for (let i = 0; i < total; i++) {
     const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
@@ -2785,9 +2825,10 @@ function computeQuizPhase(session) {
     if (elapsed < acc + qDuration) {
       return { phase: "question", index: i, remainingSeconds: Math.ceil(acc + qDuration - elapsed) };
     }
-    const slot = qDuration + (showsStandings ? session.interval_seconds : 0);
-    if (showsStandings && elapsed < acc + slot) {
-      return { phase: "standings", index: i, remainingSeconds: Math.ceil(acc + slot - elapsed) };
+    const revealSeconds = showsStandings ? session.interval_seconds : QUIZ_REVEAL_SECONDS;
+    const slot = qDuration + revealSeconds;
+    if (elapsed < acc + slot) {
+      return { phase: "standings", index: i, remainingSeconds: Math.ceil(acc + slot - elapsed), showsLeaderboard: showsStandings };
     }
     acc += slot;
   }
@@ -2870,7 +2911,14 @@ route("POST", "/api/trips/:id/quiz/sessions/:sessionId/start", async (req, res, 
   const { rows } = await query("SELECT * FROM quiz_sessions WHERE id = $1 AND trip_id = $2", [params.sessionId, params.id]);
   if (!rows.length || rows[0].host_user_id !== req.user.id) return sendError(res, 403, "Alleen de gastheer kan de quiz starten");
   if (rows[0].status !== "lobby") return sendJson(res, 200, { ok: true });
-  await query("UPDATE quiz_sessions SET status = 'active', started_at = NOW() WHERE id = $1", [params.sessionId]);
+  // started_at ligt bewust een stukje in de toekomst: de client toont dan nog
+  // het openingsscherm (los van de kloktijd), en zonder deze marge liep vraag
+  // 1 daar al voor een flink deel doorheen tegen de tijd dat spelers hem
+  // daadwerkelijk te zien kregen.
+  await query(
+    `UPDATE quiz_sessions SET status = 'active', started_at = NOW() + INTERVAL '${QUIZ_OPENING_SCREEN_SECONDS} seconds' WHERE id = $1`,
+    [params.sessionId]
+  );
   sendJson(res, 200, { ok: true });
 }, { tripScope: "param", allowViewer: true });
 
@@ -2889,7 +2937,15 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
   const me = participants.find((p) => p.user_id === req.user.id);
   if (!me) return sendError(res, 403, "Je doet niet mee aan deze quiz");
 
-  const { phase, index, remainingSeconds } = computeQuizPhase(session);
+  const { phase, index, remainingSeconds, showsLeaderboard } = computeQuizPhase(session);
+  // status blijft anders voor altijd 'active' staan voor een quiz die gewoon
+  // is uitgespeeld (nooit expliciet gestopt) — de historische statistieken
+  // (zie /quiz/stats) tellen alleen sessies met status 'done' mee, dus zonder
+  // dit zou zo'n potje daar nooit in meetellen.
+  if (phase === "done" && session.status !== "done") {
+    query("UPDATE quiz_sessions SET status = 'done' WHERE id = $1 AND status != 'done'", [session.id])
+      .catch((err) => console.error("Quiz status-afronding mislukt:", err.message));
+  }
   const payload = {
     phase, currentIndex: index, remainingSeconds,
     totalQuestions: session.questions.length,
@@ -2898,6 +2954,10 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
     // blur-aftelling op de client niet meer voor de verdubbelaar-vraag.
     questionSeconds: questionDuration(session, index),
     isHost: session.host_user_id === req.user.id,
+    // Alleen bij elke 3e vraag de volle tussenstand (ranglijst) — de korte
+    // "dit was het goede antwoord"-pauze na de andere vragen toont alleen het
+    // antwoord, geen ranglijst.
+    showsLeaderboard: phase === "standings" ? !!showsLeaderboard : true,
     participants: participants.map((p) => ({ id: p.user_id, name: p.name, score: p.score, isMe: p.user_id === req.user.id })),
   };
 
@@ -2968,6 +3028,30 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
 
   sendJson(res, 200, { correct, points, correctOption: q.correct });
 });
+
+// Alleen echt afgelopen potjes (status 'done') tellen mee — een sessie die
+// nog loopt zou het gemiddelde met een onvolledige score vertekenen. Zie de
+// /state-route hierboven, die status lazy op 'done' zet zodra een sessie
+// volgens de kloktijd is uitgespeeld (ook als niemand ooit op "stoppen" klikt).
+route("GET", "/api/trips/:id/quiz/stats", async (req, res, params) => {
+  const { rows } = await query(
+    `SELECT qp.user_id, u.name, u.given_name,
+            SUM(qp.score)::int AS total_score,
+            COUNT(*)::int AS games_played,
+            ROUND(AVG(qp.score))::int AS avg_score
+     FROM quiz_participants qp
+     JOIN quiz_sessions qs ON qs.id = qp.session_id
+     JOIN users u ON u.id = qp.user_id
+     WHERE qs.trip_id = $1 AND qs.status = 'done'
+     GROUP BY qp.user_id, u.name, u.given_name
+     ORDER BY total_score DESC`,
+    [params.id]
+  );
+  sendJson(res, 200, rows.map((r) => ({
+    userId: r.user_id, name: r.given_name || r.name || "Speler",
+    totalScore: r.total_score, gamesPlayed: r.games_played, avgScore: r.avg_score,
+  })));
+}, { tripScope: "param", allowViewer: true });
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {

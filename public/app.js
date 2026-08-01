@@ -443,6 +443,7 @@ const api = {
   stopQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/stop`, { method: "POST", body: "{}" }),
   getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
   answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
+  getQuizStats: (tripId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/trips/${tripId}/quiz/stats`),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -6062,14 +6063,19 @@ function PhotoQuizTab({ trip }) {
   const [revealedIndex, setRevealedIndex] = useState(-1);
   const [openingScreenActive, setOpeningScreenActive] = useState(false);
   const openingScreenShownRef = useRef(false);
+  const openingScreenTimerRef = useRef(null);
   const [doublerScreenActive, setDoublerScreenActive] = useState(false);
   const doublerScreenShownRef = useRef(false);
+  const doublerScreenTimerRef = useRef(null);
   const [scoreSpinActive, setScoreSpinActive] = useState(false);
+  const scoreSpinTimerRef = useRef(null);
   const scoreSpinBaselineRef = useRef(new Map()); // id -> score vóór deze onthulling
   const lastRevealScoresRef = useRef(null); // id -> score ná de vórige onthulling (null = nog geen enkele gehad)
   const revealedStandingsIndexRef = useRef(-1);
   const [showNewQuizForm, setShowNewQuizForm] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState(null);
   const lastTickRef = useRef(null);
   const doneSoundPlayedRef = useRef(false);
   const introPlayedRef = useRef(false);
@@ -6080,6 +6086,14 @@ function PhotoQuizTab({ trip }) {
   }, [trip.id]);
 
   useEffect(() => { refreshSession(); }, [refreshSession]);
+
+  async function toggleStats() {
+    if (showStats) { setShowStats(false); return; }
+    setShowStats(true);
+    setStats(null);
+    try { setStats(await api.getQuizStats(trip.id)); }
+    catch { setStats([]); }
+  }
 
   // Vulling voor de foto-rol (zie PhotoWheel) — gewoon de fotobibliotheek van
   // de reis, niet gekoppeld aan quizvragen, dus geen risico dat een nog niet
@@ -6139,44 +6153,56 @@ function PhotoQuizTab({ trip }) {
   // Openingsscherm: net als het intromuziekje hierboven precies één keer
   // getriggerd zodra de quiz de lobby uit is, en toont zichzelf even (los van
   // de eigenlijke serverfase) vóór de eerste vraag in beeld komt.
+  //
+  // Belangrijk: geen `return () => clearTimeout(timer)` hier — dat zou de
+  // timer bij elke volgende fase-wisseling annuleren (het effect draait
+  // opnieuw zodra live.phase verandert, en React ruimt dan eerst de vorige
+  // cleanup op), waardoor het scherm nooit meer automatisch verdwijnt als er
+  // binnen de weergaveduur alweer een nieuwe fase intreedt. De timer leeft in
+  // een ref en wordt alleen bij het unmounten van de tab opgeruimd.
   useEffect(() => {
     if (live && live.phase !== "lobby" && !openingScreenShownRef.current) {
       openingScreenShownRef.current = true;
       setOpeningScreenActive(true);
-      const timer = setTimeout(() => setOpeningScreenActive(false), OPENING_SCREEN_MS);
-      return () => clearTimeout(timer);
+      openingScreenTimerRef.current = setTimeout(() => setOpeningScreenActive(false), OPENING_SCREEN_MS);
     }
   }, [live?.phase]);
+  useEffect(() => () => clearTimeout(openingScreenTimerRef.current), []);
 
   // Tussenpagina vlak vóór de verdubbelaar-vraag — precies één keer, zodra
-  // die vraag voor het eerst in beeld komt (niet bij elke poll erna).
+  // die vraag voor het eerst in beeld komt (niet bij elke poll erna). Zelfde
+  // reden als hierboven: de timer leeft in een ref, geen cleanup-per-render.
   useEffect(() => {
     if (live?.phase === "question" && live.question?.doubler && !doublerScreenShownRef.current) {
       doublerScreenShownRef.current = true;
       setDoublerScreenActive(true);
       playDoublerSting();
-      const timer = setTimeout(() => setDoublerScreenActive(false), DOUBLER_SCREEN_MS);
-      return () => clearTimeout(timer);
+      doublerScreenTimerRef.current = setTimeout(() => setDoublerScreenActive(false), DOUBLER_SCREEN_MS);
     }
   }, [live?.phase, live?.currentIndex, live?.question?.doubler]);
+  useEffect(() => () => clearTimeout(doublerScreenTimerRef.current), []);
 
   // Tussenstand-onthulling: eerst de oude stand tonen, dan de score per
   // deelnemer laten oplopen naar de nieuwe stand, precies één keer per ronde
-  // (niet bij elke poll terwijl de tussenstand al in beeld staat).
+  // (niet bij elke poll terwijl de tussenstand al in beeld staat). Alleen bij
+  // een echte tussenstand (elke 3e vraag) of de eindstand — de korte "dit was
+  // het goede antwoord"-pauze na de andere vragen toont sowieso geen
+  // ranglijst, dus daar hoeft ook niets te spinnen.
   useEffect(() => {
-    if ((live?.phase === "standings" || live?.phase === "done") && revealedStandingsIndexRef.current !== live.currentIndex) {
+    const isRealStandings = live?.phase === "done" || (live?.phase === "standings" && live?.showsLeaderboard);
+    if (isRealStandings && revealedStandingsIndexRef.current !== live.currentIndex) {
       revealedStandingsIndexRef.current = live.currentIndex;
       const participants = live.participants || [];
       scoreSpinBaselineRef.current = lastRevealScoresRef.current
         || new Map(participants.map((p) => [p.id ?? p.name, 0]));
       setScoreSpinActive(true);
-      const timer = setTimeout(() => {
+      scoreSpinTimerRef.current = setTimeout(() => {
         setScoreSpinActive(false);
         lastRevealScoresRef.current = new Map(participants.map((p) => [p.id ?? p.name, p.score]));
       }, SCORE_SPIN_MS);
-      return () => clearTimeout(timer);
     }
-  }, [live?.phase, live?.currentIndex]);
+  }, [live?.phase, live?.currentIndex, live?.showsLeaderboard]);
+  useEffect(() => () => clearTimeout(scoreSpinTimerRef.current), []);
 
   async function createSession() {
     setCreating(true); setError(null);
@@ -6188,10 +6214,13 @@ function PhotoQuizTab({ trip }) {
       setShowNewQuizForm(false);
       doneSoundPlayedRef.current = false;
       introPlayedRef.current = false;
+      clearTimeout(openingScreenTimerRef.current);
       openingScreenShownRef.current = false;
       setOpeningScreenActive(false);
+      clearTimeout(doublerScreenTimerRef.current);
       doublerScreenShownRef.current = false;
       setDoublerScreenActive(false);
+      clearTimeout(scoreSpinTimerRef.current);
       setScoreSpinActive(false);
       scoreSpinBaselineRef.current = new Map();
       lastRevealScoresRef.current = null;
@@ -6294,6 +6323,32 @@ function PhotoQuizTab({ trip }) {
     );
   }
 
+  // Alleen potjes die echt zijn afgerond tellen mee (zie de server-route) —
+  // dus bij een reis die nog nooit een quiz heeft uitgespeeld is deze lijst
+  // gewoon leeg.
+  function renderStats() {
+    if (stats === null) return <div className="text-sm text-gray-400 py-4 text-center">Laden...</div>;
+    if (!stats.length) return <div className="text-sm text-gray-400 py-4 text-center">Nog geen afgeronde potjes.</div>;
+    return (
+      <div className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-50 overflow-hidden text-left">
+        <div className="flex items-center justify-between px-4 py-2 text-xs text-gray-400">
+          <span>Speler</span>
+          <span className="flex gap-4"><span className="w-16 text-right">Totaal</span><span className="w-14 text-right">Potjes</span><span className="w-16 text-right">Gem.</span></span>
+        </div>
+        {stats.map((s) => (
+          <div key={s.userId} className="flex items-center justify-between px-4 py-2.5 text-sm">
+            <span className="font-medium text-gray-700">{s.name}</span>
+            <span className="flex gap-4 tnum">
+              <span className="w-16 text-right font-semibold text-gray-700">{s.totalScore}</span>
+              <span className="w-14 text-right text-gray-400">{s.gamesPlayed}</span>
+              <span className="w-16 text-right text-gray-400">{s.avgScore}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (!session) {
     return (
       <div className="text-center py-14 max-w-sm mx-auto">
@@ -6304,6 +6359,12 @@ function PhotoQuizTab({ trip }) {
         </p>
         {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
         {renderQuizSettings("Start een fotoquiz")}
+        <div className="mt-5">
+          <button type="button" onClick={toggleStats} className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
+            {showStats ? "Verberg topscores" : "Topscores bekijken"}
+          </button>
+          {showStats && <div className="mt-3">{renderStats()}</div>}
+        </div>
       </div>
     );
   }
@@ -6474,6 +6535,55 @@ function PhotoQuizTab({ trip }) {
     );
   }
 
+  // Korte "dit was het goede antwoord"-pauze ná elke vraag die geen
+  // tussenstand-ronde is — alleen het antwoord, geen ranglijst (die komt
+  // alleen elke 3e vraag, zie showsLeaderboard vanuit de server).
+  if (phase === "standings" && live && live.showsLeaderboard === false) {
+    const q = live.question;
+    const myAnswer = (myPick && myPick.index === live.currentIndex) ? myPick : live.myAnswer;
+    return (
+      <>
+      {stopControl}
+      <div className="max-w-md mx-auto">
+        <div className="text-sm text-gray-500 mb-3 text-center">Vraag <span className="tnum font-semibold text-gray-700">{live.currentIndex + 1}</span> / {totalQuestions}</div>
+        <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-white">
+          {q?.type === "text" ? (
+            <div className="px-5 pt-6 pb-2 text-center">
+              <Icon name="bulb" size={30} strokeWidth={1.3} className="mx-auto mb-3 text-sky-400" />
+              <div className="font-display text-lg text-gray-800 leading-snug">{q.question}</div>
+            </div>
+          ) : q ? (
+            <img src={q.thumb_url || q.url} alt="" className="w-full aspect-square object-cover" />
+          ) : null}
+          <div className="p-4">
+            {q?.options && (
+              <div className="space-y-2 mb-3">
+                {q.options.map((opt) => {
+                  const isCorrect = opt === q.correct;
+                  const isMine = myAnswer && myAnswer.choice === opt;
+                  const cls = isCorrect
+                    ? "border-green-300 bg-green-50 text-green-700"
+                    : isMine ? "border-red-300 bg-red-50 text-red-700" : "border-gray-100 text-gray-400";
+                  return (
+                    <div key={opt} className={`px-4 py-2.5 rounded-xl border text-sm font-medium ${cls}`}>
+                      {opt}
+                      {isCorrect && <Icon name="check" size={14} className="ml-1.5 inline text-green-600" />}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-gray-400 text-center">
+              {q?.correct && <>Juiste antwoord: <span className="font-semibold text-gray-600">{q.correct}</span></>}
+              {live.remainingSeconds != null && <> · volgende vraag over {live.remainingSeconds}s</>}
+            </p>
+          </div>
+        </div>
+      </div>
+      </>
+    );
+  }
+
   if (phase === "standings" || phase === "done") {
     const sorted = [...participants].sort((a, b) => b.score - a.score);
     const top = sorted.length ? sorted[0].score : 0;
@@ -6524,6 +6634,14 @@ function PhotoQuizTab({ trip }) {
             {showNewQuizForm
               ? renderQuizSettings("Start nieuwe quiz")
               : <Button onClick={() => setShowNewQuizForm(true)}>Nieuwe quiz starten</Button>}
+          </div>
+        )}
+        {isFinal && (
+          <div className="mt-5">
+            <button type="button" onClick={toggleStats} className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
+              {showStats ? "Verberg topscores" : "Topscores bekijken"}
+            </button>
+            {showStats && <div className="mt-3">{renderStats()}</div>}
           </div>
         )}
       </div>
