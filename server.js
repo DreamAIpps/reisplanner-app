@@ -2517,7 +2517,7 @@ async function generateQuizQuestions(tripId, count) {
   const photoCount = count - textCount;
 
   const [{ rows: photos }, { rows: activities }, { rows: tripRows }] = await Promise.all([
-    query("SELECT id, activity_id, latitude, longitude FROM photos WHERE trip_id = $1 AND activity_id IS NOT NULL", [tripId]),
+    query("SELECT id, activity_id FROM photos WHERE trip_id = $1 AND activity_id IS NOT NULL", [tripId]),
     query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
     query("SELECT name, destination FROM trips WHERE id = $1", [tripId]),
   ]);
@@ -2529,21 +2529,11 @@ async function generateQuizQuestions(tripId, count) {
     .map((p) => {
       const answer = actMap.get(p.activity_id);
       if (!answer) return null;
-      const hasGps = p.latitude != null && p.longitude != null;
-      return { photoId: p.id, answer, hasGps, lat: hasGps ? Number(p.latitude) : null, lng: hasGps ? Number(p.longitude) : null };
+      return { photoId: p.id, answer };
     })
     .filter(Boolean);
 
   if (!candidates.length) return [];
-
-  // Startpunt voor de kaart-raadvragen: het gemiddelde van alle GPS-locaties
-  // in de reis, niet de specifieke locatie van dé vraag — geeft een zinnige
-  // regio om te beginnen (bv. "ergens in Kyoto") zonder het antwoord zelf te
-  // verklappen.
-  const gpsPoints = candidates.filter((c) => c.hasGps);
-  const mapCenter = gpsPoints.length
-    ? { lat: gpsPoints.reduce((s, c) => s + c.lat, 0) / gpsPoints.length, lng: gpsPoints.reduce((s, c) => s + c.lng, 0) / gpsPoints.length }
-    : null;
 
   // Eerst zoveel mogelijk unieke antwoorden (anders is de quiz al opgelost
   // zodra je 'm de tweede keer ziet), pas daarna dubbele antwoorden toestaan
@@ -2591,25 +2581,16 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
     });
   }
 
-  // Om en om wheel/blur/map i.p.v. willekeurig — vastgelegd bij het aanmaken
-  // van de sessie, niet toevallig per pollende deelnemer, anders zou de ene
-  // speler een rad zien en de andere een kaart voor dezelfde vraag. "map"
-  // slaat over naar de volgende modus in de rij als déze foto geen GPS heeft
-  // (kan niet geraden worden op een kaart zonder een echt antwoord).
-  const MODE_ORDER = ["wheel", "blur", "map"];
-  let modeCursor = 0;
-  const photoQuestions = withRealDistractors.map((p) => {
+  // Om en om wheel/blur i.p.v. willekeurig — vastgelegd bij het aanmaken van
+  // de sessie, niet toevallig per pollende deelnemer, anders zou de ene
+  // speler een rad zien en de andere een blur-foto voor dezelfde vraag.
+  const MODE_ORDER = ["wheel", "blur"];
+  const photoQuestions = withRealDistractors.map((p, i) => {
     const missing = 3 - p.real.length;
     const invented = missing > 0 ? (fillerByPhoto.get(p.photoId) || []).slice(0, missing) : [];
     const distractors = [...p.real, ...invented];
     while (distractors.length < 3) distractors.push(`Optie ${distractors.length + 1}`);
     const options = shuffle([p.answer, ...distractors]);
-    let mode = "wheel";
-    for (let tries = 0; tries < MODE_ORDER.length; tries++) {
-      const candidate = MODE_ORDER[modeCursor % MODE_ORDER.length];
-      modeCursor++;
-      if (candidate !== "map" || p.hasGps) { mode = candidate; break; }
-    }
     return {
       type: "photo",
       photo_id: p.photoId,
@@ -2617,8 +2598,7 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
       thumb_url: `/api/photos/${p.photoId}/thumb`,
       options,
       correct: p.answer,
-      mode,
-      ...(mode === "map" ? { lat: p.lat, lng: p.lng, mapCenter } : {}),
+      mode: MODE_ORDER[i % MODE_ORDER.length],
     };
   });
 
@@ -2749,6 +2729,19 @@ const QUIZ_DOUBLER_BONUS_SECONDS = 5;
 
 function questionDuration(session, index) {
   return session.question_seconds + (session.questions[index]?.doubler ? QUIZ_DOUBLER_BONUS_SECONDS : 0);
+}
+
+// Cumulatief start/eind-tijdstip (in seconden sinds started_at) van één
+// specifieke vraag — gebruikt door de antwoord-route om een net-op-tijd
+// verstuurd antwoord nog aan de juiste vraag te kunnen toewijzen, ook als
+// de vraag zelf inmiddels (net) gesloten is.
+function questionWindow(session, index) {
+  let acc = 0;
+  for (let i = 0; i < index; i++) {
+    const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
+    acc += questionDuration(session, i) + (showsStandings ? session.interval_seconds : 0);
+  }
+  return { start: acc, end: acc + questionDuration(session, index) };
 }
 
 function computeQuizPhase(session) {
@@ -2890,14 +2883,12 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
 
   if (phase === "question") {
     const q = session.questions[index];
-    // mapCenter is een regio-gemiddelde, geen geheim — lat/lng van dít
-    // antwoord blijft hier bewust weg tot de tussenstand/eindstand.
-    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode, doubler: !!q.doubler, ...(q.mode === "map" ? { mapCenter: q.mapCenter } : {}) };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, mode: q.mode, doubler: !!q.doubler };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   } else if (phase === "standings" || phase === "done") {
     const q = session.questions[index];
-    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct, doubler: !!q.doubler, ...(q.mode === "map" ? { lat: q.lat, lng: q.lng, mapCenter: q.mapCenter } : {}) };
+    payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct, doubler: !!q.doubler };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
   }
@@ -2913,43 +2904,41 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
   if (!meRows.length) return sendError(res, 403, "Je doet niet mee aan deze quiz");
   const participantId = meRows[0].id;
 
-  const { phase, index, remainingSeconds } = computeQuizPhase(session);
-  if (phase !== "question") return sendError(res, 400, "Deze vraag is al gesloten");
   const questionIndex = Number(body?.questionIndex);
-  if (questionIndex !== index) return sendError(res, 400, "Deze vraag is niet meer actief");
-
-  const q = session.questions[index];
-  let choice, correct, points, distanceKm = null;
-
-  if (q.mode === "map") {
-    // Kaart-raadvragen: geen meerkeuze maar een lat/lng-gok, punten lopen
-    // af met de afstand tot de echte locatie (Haversine) in plaats van met
-    // reactietijd — precisie is hier het punt, niet snelheid.
-    const guessLat = Number(body?.lat), guessLng = Number(body?.lng);
-    if (!Number.isFinite(guessLat) || !Number.isFinite(guessLng)) return sendError(res, 400, "Ongeldige locatie");
-    distanceKm = haversineKm(guessLat, guessLng, q.lat, q.lng);
-    correct = distanceKm < 2; // puur voor UI-kleuring ("spot on"), geen harde grens voor punten
-    choice = JSON.stringify({ lat: guessLat, lng: guessLng });
-    const basePoints = Math.round(1000 * Math.exp(-distanceKm / 8));
-    points = q.doubler ? basePoints * 2 : basePoints;
-  } else {
-    choice = typeof body?.choice === "string" ? body.choice : null;
-    correct = choice === q.correct;
-    // Snelheidsbonus zoals Kahoot: hoe eerder in het antwoordvenster, hoe meer
-    // punten, met een bodem van 500 zodat een goed antwoord op het laatste
-    // moment nog steeds ruim meer oplevert dan een fout antwoord (0 punten).
-    // Vraag 5 (q.doubler) telt dubbel én heeft zelf ook een langere duur (zie
-    // questionDuration) — die langere duur is hier de juiste noemer, anders zou
-    // de snelheidsbonus verkeerd uitpakken (remainingSeconds kan dan groter
-    // zijn dan session.question_seconds).
-    const basePoints = correct ? Math.round(500 + 500 * (remainingSeconds / questionDuration(session, index))) : 0;
-    points = q.doubler ? basePoints * 2 : basePoints;
+  if (!Number.isInteger(questionIndex) || questionIndex < 0 || questionIndex >= session.questions.length) {
+    return sendError(res, 400, "Ongeldige vraag");
   }
+  if (session.status !== "active" || !session.started_at) return sendError(res, 400, "Deze vraag is al gesloten");
+
+  // Een antwoord dat de speler nét op tijd verstuurde kan door netwerk- of
+  // verwerkingstijd pas ná het echte sluiten van de vraag bij de server
+  // aankomen — zonder een korte genadetermijn zou zo'n antwoord ten onrechte
+  // worden afgewezen als "niet meer actief" terwijl de speler wel op tijd was.
+  const ANSWER_GRACE_SECONDS = 4;
+  const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
+  const { start, end } = questionWindow(session, questionIndex);
+  if (elapsed < start || elapsed > end + ANSWER_GRACE_SECONDS) {
+    return sendError(res, 400, "Deze vraag is niet meer actief");
+  }
+  const remainingSeconds = Math.max(0, end - elapsed);
+
+  const q = session.questions[questionIndex];
+  const choice = typeof body?.choice === "string" ? body.choice : null;
+  const correct = choice === q.correct;
+  // Snelheidsbonus zoals Kahoot: hoe eerder in het antwoordvenster, hoe meer
+  // punten, met een bodem van 500 zodat een goed antwoord op het laatste
+  // moment nog steeds ruim meer oplevert dan een fout antwoord (0 punten).
+  // Vraag 5 (q.doubler) telt dubbel én heeft zelf ook een langere duur (zie
+  // questionDuration) — die langere duur is hier de juiste noemer, anders zou
+  // de snelheidsbonus verkeerd uitpakken (remainingSeconds kan dan groter
+  // zijn dan session.question_seconds).
+  const basePoints = correct ? Math.round(500 + 500 * (remainingSeconds / questionDuration(session, questionIndex))) : 0;
+  const points = q.doubler ? basePoints * 2 : basePoints;
 
   try {
     await query(
       "INSERT INTO quiz_answers (session_id, participant_id, question_index, choice, correct, points) VALUES ($1,$2,$3,$4,$5,$6)",
-      [session.id, participantId, index, choice, correct, points]
+      [session.id, participantId, questionIndex, choice, correct, points]
     );
   } catch (err) {
     if (err.code === "23505") return sendError(res, 400, "Je hebt deze vraag al beantwoord");
@@ -2957,7 +2946,7 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
   }
   await query("UPDATE quiz_participants SET score = score + $1 WHERE id = $2", [points, participantId]);
 
-  sendJson(res, 200, { correct, points, correctOption: q.correct, distanceKm: distanceKm != null ? Math.round(distanceKm * 10) / 10 : null });
+  sendJson(res, 200, { correct, points, correctOption: q.correct });
 });
 
 // ---------- Expenses ----------
