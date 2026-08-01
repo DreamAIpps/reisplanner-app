@@ -2516,18 +2516,38 @@ async function generateQuizQuestions(tripId, count) {
   const textCount = Math.floor(count / TEXT_QUESTION_EVERY);
   const photoCount = count - textCount;
 
-  const [{ rows: photos }, { rows: activities }, { rows: tripRows }] = await Promise.all([
-    query("SELECT id, activity_id FROM photos WHERE trip_id = $1 AND activity_id IS NOT NULL", [tripId]),
+  // Niet alleen foto's bij een activiteit — ook foto's die aan een vervoer
+  // of verblijf hangen horen ergens bij en mogen dus ook in de quiz
+  // voorkomen. Foto's die alleen aan een dag hangen (nergens specifiek aan
+  // gekoppeld) blijven terecht buiten beeld: daar is geen zinnig "waar
+  // hoort deze foto bij"-antwoord voor te bedenken.
+  const [{ rows: photos }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: tripRows }] = await Promise.all([
+    query(
+      "SELECT id, activity_id, transport_id, accommodation_id FROM photos WHERE trip_id = $1 AND (activity_id IS NOT NULL OR transport_id IS NOT NULL OR accommodation_id IS NOT NULL)",
+      [tripId]
+    ),
     query("SELECT id, title FROM activities WHERE trip_id = $1", [tripId]),
+    query("SELECT id, type, from_location, to_location FROM transports WHERE trip_id = $1", [tripId]),
+    query("SELECT id, name FROM accommodations WHERE trip_id = $1", [tripId]),
     query("SELECT name, destination FROM trips WHERE id = $1", [tripId]),
   ]);
 
+  const transportLabel = (t) => (t.from_location && t.to_location ? `${t.type}: ${t.from_location} → ${t.to_location}` : t.type);
   const actMap = new Map(activities.map((a) => [a.id, a.title]));
-  const allTitles = [...new Set(activities.map((a) => a.title).filter(Boolean))];
+  const transMap = new Map(transports.map((t) => [t.id, transportLabel(t)]));
+  const accMap = new Map(accommodations.map((a) => [a.id, a.name]));
+  const allTitles = [...new Set([
+    ...activities.map((a) => a.title),
+    ...transports.map(transportLabel),
+    ...accommodations.map((a) => a.name),
+  ].filter(Boolean))];
 
   const candidates = photos
     .map((p) => {
-      const answer = actMap.get(p.activity_id);
+      const answer = p.activity_id != null ? actMap.get(p.activity_id)
+        : p.transport_id != null ? transMap.get(p.transport_id)
+        : p.accommodation_id != null ? accMap.get(p.accommodation_id)
+        : null;
       if (!answer) return null;
       return { photoId: p.id, answer };
     })
