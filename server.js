@@ -3033,6 +3033,11 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
 // nog loopt zou het gemiddelde met een onvolledige score vertekenen. Zie de
 // /state-route hierboven, die status lazy op 'done' zet zodra een sessie
 // volgens de kloktijd is uitgespeeld (ook als niemand ooit op "stoppen" klikt).
+// Én: alleen deelnemers die ook echt minstens één vraag hebben beantwoord —
+// wie de fotoquiz-tab alleen maar opende terwijl een ander al aan het spelen
+// was, wordt automatisch als deelnemer toegevoegd (zie GET .../quiz/session)
+// maar heeft dan nooit meegespeeld. Die zonder deze voorwaarde meetellen als
+// "gespeeld potje" met score 0 trok het gemiddelde scheef.
 route("GET", "/api/trips/:id/quiz/stats", async (req, res, params) => {
   const { rows } = await query(
     `SELECT qp.user_id, u.name, u.given_name,
@@ -3043,6 +3048,7 @@ route("GET", "/api/trips/:id/quiz/stats", async (req, res, params) => {
      JOIN quiz_sessions qs ON qs.id = qp.session_id
      JOIN users u ON u.id = qp.user_id
      WHERE qs.trip_id = $1 AND qs.status = 'done'
+       AND EXISTS (SELECT 1 FROM quiz_answers qa WHERE qa.participant_id = qp.id)
      GROUP BY qp.user_id, u.name, u.given_name
      ORDER BY total_score DESC`,
     [params.id]
