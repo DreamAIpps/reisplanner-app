@@ -1738,7 +1738,15 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [viewingIndex, setViewingIndex] = useState(null);
+  // Los in het dagverhaal geüploade foto (nog aan geen activiteit gekoppeld)
+  // krijgt meteen de vraag of hij tot een activiteit gepromoveerd moet worden.
+  // Alleen zinvol op dat dagniveau — een foto die al bij een activiteit hoort
+  // is al "van" iets, en buiten het dagboek (large=false, bijv. de foto's-tab)
+  // is er geen losse dag-context om dit aan te bieden.
+  const [activityPromptPhoto, setActivityPromptPhoto] = useState(null);
+  const [showActivityForm, setShowActivityForm] = useState(false);
   const canAssign = !readOnly && !!days;
+  const canOfferActivity = large && !readOnly && !!dayId && !activityId && !transportId && !accommodationId && !!days;
   const { dayGroups, otherTransports, otherAccommodations } = canAssign
     ? computeDayGroups(days, transports || [], accommodations || [])
     : { dayGroups: [], otherTransports: [], otherAccommodations: [] };
@@ -1754,6 +1762,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     // another — a batch of ten photos no longer waits for nine full round-trips
     // before the tenth even starts.
     const failed = [];
+    const uploaded = [];
     await mapWithConcurrency(files, 3, async (file) => {
       try {
         const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
@@ -1761,20 +1770,36 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         // Pas ná het eventueel verkleinen checken: anders werd precies de grote
         // telefoonfoto die downscaleImage moest redden alsnog geweigerd.
         if ((base64.length * 3) / 4 > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
-        await api.addPhoto(tripId, {
+        const saved = await api.addPhoto(tripId, {
           day_id: dayId || null, activity_id: activityId || null, transport_id: transportId || null, accommodation_id: accommodationId || null,
           image: { data: base64, mediaType: image.mediaType },
           taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
         });
+        uploaded.push(saved);
       } catch (err) {
         failed.push(`${file.name} (${err.message || "mislukt"})`);
       }
     });
     setUploading(false);
     onChange();
+    // Bij meerdere foto's tegelijk maar één keer aanbieden, voor de eerst
+    // geüploade — anders volgt er een hele stapel prompts achter elkaar.
+    if (canOfferActivity && uploaded.length) setActivityPromptPhoto(uploaded[0]);
     if (failed.length) {
       alert(`${files.length - failed.length} van ${files.length} foto's geüpload.\n\nNiet gelukt:\n${failed.join("\n")}`);
     }
+  }
+
+  // De foto hing al ergens (los in het dagverhaal) toen de activiteit nog
+  // niet bestond — na het aanmaken hoeft dus alleen de koppeling verlegd te
+  // worden, niet opnieuw geüpload.
+  async function handleActivityCreated(activity) {
+    if (activityPromptPhoto) {
+      await api.updatePhoto(activityPromptPhoto.id, { day_id: activity.day_id, activity_id: activity.id, transport_id: null, accommodation_id: null });
+    }
+    setShowActivityForm(false);
+    setActivityPromptPhoto(null);
+    onChange();
   }
 
   async function handleDelete(id) {
@@ -1843,6 +1868,18 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         </button>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+      {canOfferActivity && activityPromptPhoto && (
+        <div className="mt-2 flex items-center gap-2 text-xs bg-sky-50 text-sky-700 px-3 py-2 rounded-lg" style={{ maxWidth: largeMaxWidth }}>
+          <span className="flex-1">Activiteit van deze foto maken?</span>
+          <button type="button" onClick={() => setShowActivityForm(true)} className="font-semibold hover:underline">Ja</button>
+          <button type="button" onClick={() => setActivityPromptPhoto(null)} className="text-sky-400 hover:text-sky-600" aria-label="Niet nu">✕</button>
+        </div>
+      )}
+      {showActivityForm && (
+        <ActivityForm dayId={dayId} tripId={tripId} days={days}
+          onSaved={handleActivityCreated}
+          onClose={() => { setShowActivityForm(false); setActivityPromptPhoto(null); }} />
+      )}
       {viewingIndex != null && (
         <PhotoLightbox photos={photos} index={viewingIndex}
           onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
