@@ -585,4 +585,4 @@ async function mergeDuplicatePhotos() {
   }
 }
 
-module.exports = { query, initDb };
+module.exports = { query, initDb, pool };

@@ -6409,8 +6409,18 @@ function QrCode({ value, size = 180 }) {
 // Niet quiz-specifiek ondanks de naam — generieke volledig-scherm-overlay,
 // ook hergebruikt door het fotoboek.
 function QuizFullscreen({ onClose, children, label = "Sluiten" }) {
+  const scrollRef = useRef(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  function handleScroll(e) {
+    setShowScrollTop(e.target.scrollTop > 400);
+  }
+  function scrollToTop() {
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
-    <div className="fixed inset-0 z-[60] bg-gray-50 overflow-y-auto">
+    <div ref={scrollRef} onScroll={handleScroll} className="fixed inset-0 z-[60] bg-gray-50 overflow-y-auto">
       <div className="sticky top-0 z-10 flex justify-end p-3" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
         <button onClick={onClose} aria-label={label}
           className="w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center text-gray-500 hover:text-gray-700">
@@ -6418,6 +6428,17 @@ function QuizFullscreen({ onClose, children, label = "Sluiten" }) {
         </button>
       </div>
       <div className="px-4 pb-10" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>{children}</div>
+      {/* Vooral handig in het fotoboek, waar een pagina met veel foto's flink
+          kan doorscrollen — "fixed" i.p.v. "sticky" omdat dit element zelf
+          buiten de doorschuivende inhoud staat, direct in de scrollende
+          container. */}
+      {showScrollTop && (
+        <button onClick={scrollToTop} aria-label="Naar boven"
+          className="fixed z-20 w-11 h-11 rounded-full bg-white shadow-lg border border-gray-100 flex items-center justify-center text-gray-500 hover:text-sky-600 transition-colors"
+          style={{ right: "1rem", bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}>
+          <Icon name="arrowUp" size={18} />
+        </button>
+      )}
     </div>
   );
 }
