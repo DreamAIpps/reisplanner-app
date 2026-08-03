@@ -5982,11 +5982,13 @@ function QrCode({ value, size = 180 }) {
 // Neemt het hele scherm over — koptekst, tabbalk en onderbalk verdwijnen
 // achter deze laag — zodat de quiz als een echt spelmoment voelt in plaats
 // van nog een tabblad tussen de rest van de reisplanning.
-function QuizFullscreen({ onClose, children }) {
+// Niet quiz-specifiek ondanks de naam — generieke volledig-scherm-overlay,
+// ook hergebruikt door het fotoboek.
+function QuizFullscreen({ onClose, children, label = "Sluiten" }) {
   return (
     <div className="fixed inset-0 z-[60] bg-gray-50 overflow-y-auto">
       <div className="sticky top-0 z-10 flex justify-end p-3" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
-        <button onClick={onClose} aria-label="Fotoquiz sluiten"
+        <button onClick={onClose} aria-label={label}
           className="w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center text-gray-500 hover:text-gray-700">
           <Icon name="close" size={18} />
         </button>
@@ -7197,15 +7199,21 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           eigenaar/editor. Wie een sessie aanmaakt wordt daar zelf gastheer
           van, ongeacht wie de reis bezit. */}
       {tab === "quiz" && (
-        <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")}>
+        <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")} label="Fotoquiz sluiten">
           <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>
       )}
 
       {/* Zelfde reden als de fotoquiz hierboven: los van de readOnly-splitsing
           zodat ook alleen-lezen reisleden (niet alleen eigenaar/editor) samen
-          een fotoboek kunnen samenstellen. */}
-      {tab === "photobook" && <PhotobookTab trip={viewTrip} />}
+          een fotoboek kunnen samenstellen. Ook hier volledig scherm, net als
+          de fotoquiz — geeft de pagina's/foto's meer ruimte dan tussen de
+          normale tabs. */}
+      {tab === "photobook" && (
+        <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")} label="Fotoboek sluiten">
+          <PhotobookTab trip={viewTrip} />
+        </QuizFullscreen>
+      )}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
       {!readOnly && showMoreMenu && (
