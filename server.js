@@ -16,6 +16,7 @@ const heicDecode = require("heic-decode");
 const { query, initDb } = require("./db");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
+const PDFDocument = require("pdfkit");
 const anthropicClient = new Anthropic();
 
 const PORT = process.env.PORT || 3002;
@@ -3125,13 +3126,27 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
       [bookId, i, photobookCaption(photos[i])]
     );
     await query(
-      "INSERT INTO photobook_page_photos (page_id, photo_id, position) VALUES ($1,$2,0)",
-      [pageRows[0].id, photos[i].id]
+      "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height) VALUES ($1,$2,0,$3,$4,$5,$6)",
+      [pageRows[0].id, photos[i].id, 0.1, 0.1, 0.8, 0.8]
     );
   }
 
   sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: photos.length });
 }, { tripScope: "param", allowViewer: true });
+
+// Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
+// de pagina) — geklemd tussen redelijke grenzen zodat een corrupte of
+// geknoeide waarde een pagina niet onbruikbaar (bijv. negatieve breedte of
+// ver buiten beeld) kan maken.
+function clampPhotoRect(p) {
+  const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  return {
+    x: Math.min(1, Math.max(0, n(p.x, 0.1))),
+    y: Math.min(1, Math.max(0, n(p.y, 0.1))),
+    width: Math.min(1, Math.max(0.03, n(p.width, 0.4))),
+    height: Math.min(1, Math.max(0.03, n(p.height, 0.4))),
+  };
+}
 
 function photobookBackground(page) {
   if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
@@ -3159,6 +3174,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
     photosByPage.get(p.page_id).push({
       id: p.id, photoId: p.photo_id, caption: p.caption,
+      x: p.x, y: p.y, width: p.width, height: p.height,
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
     });
   }
@@ -3234,13 +3250,113 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
       const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
+      const rect = clampPhotoRect(page.photos[j]);
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
-        [pageId, Number(page.photos[j].photo_id), j, caption]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height]
       );
     }
   }
   sendJson(res, 200, { ok: true, pageCount: items.length });
+}, { tripScope: "photobooks", allowViewer: true });
+
+// A4 in PDF-punten (72 punten per inch): 210mm x 297mm.
+const PDF_PAGE_WIDTH = 595.28;
+const PDF_PAGE_HEIGHT = 841.89;
+
+route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
+  const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
+  if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
+  const book = bookRows[0];
+
+  const { rows: pages } = await query(
+    "SELECT * FROM photobook_pages WHERE photobook_id = $1 ORDER BY position ASC",
+    [params.id]
+  );
+  const { rows: pagePhotoRows } = await query(
+    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, p.data
+     FROM photobook_page_photos pgp
+     JOIN photobook_pages pp ON pp.id = pgp.page_id
+     JOIN photos p ON p.id = pgp.photo_id
+     WHERE pp.photobook_id = $1 ORDER BY pgp.page_id ASC, pgp.position ASC`,
+    [params.id]
+  );
+  const photosByPage = new Map();
+  for (const p of pagePhotoRows) {
+    if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
+    photosByPage.get(p.page_id).push(p);
+  }
+  // Een achtergrondfoto staat los van de gewone paginafoto's (die zijn er
+  // juist bewust uit gehaald toen 'm als achtergrond werd gekozen) — die
+  // moeten dus apart opgehaald worden.
+  const bgPhotoIds = pages.filter((p) => p.background_type === "photo" && p.background_photo_id).map((p) => p.background_photo_id);
+  const bgPhotosById = new Map();
+  if (bgPhotoIds.length) {
+    const { rows: bgRows } = await query("SELECT id, data FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
+    for (const r of bgRows) bgPhotosById.set(r.id, r.data);
+  }
+
+  const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
+  res.writeHead(200, {
+    "Content-Type": "application/pdf",
+    "Content-Disposition": `attachment; filename="${filename}.pdf"`,
+  });
+
+  const doc = new PDFDocument({ size: "A4", autoFirstPage: false, margin: 0 });
+  doc.pipe(res);
+
+  for (const page of pages) {
+    doc.addPage({ size: "A4", margin: 0 });
+
+    if (page.background_type === "color" && page.background_color) {
+      doc.rect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT).fill(page.background_color);
+    } else if (page.background_type === "photo" && page.background_photo_id) {
+      const bgData = bgPhotosById.get(page.background_photo_id);
+      if (bgData) {
+        try {
+          doc.image(bgData, 0, 0, { cover: [PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT] });
+        } catch (err) {
+          console.error("Fotoboek-PDF: achtergrondfoto kon niet worden ingevoegd:", err?.message || err);
+        }
+      }
+    }
+
+    for (const ph of (photosByPage.get(page.id) || [])) {
+      const x = ph.x * PDF_PAGE_WIDTH, y = ph.y * PDF_PAGE_HEIGHT;
+      const w = ph.width * PDF_PAGE_WIDTH, h = ph.height * PDF_PAGE_HEIGHT;
+      try {
+        doc.save();
+        doc.rect(x, y, w, h).clip();
+        doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
+        doc.restore();
+      } catch (err) {
+        console.error("Fotoboek-PDF: foto kon niet worden ingevoegd:", err?.message || err);
+      }
+      if (ph.caption) {
+        const capH = Math.min(24, h * 0.3);
+        doc.rect(x, y + h - capH, w, capH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
+        doc.fontSize(8).fillColor("#463D38")
+          .text(ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2), { width: Math.max(1, w - 8), height: capH, ellipsis: true });
+      }
+    }
+
+    if (page.title || page.description) {
+      const bandH = 70;
+      if (page.background_type) {
+        doc.rect(0, 0, PDF_PAGE_WIDTH, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
+      }
+      let ty = 18;
+      if (page.title) {
+        doc.fontSize(18).fillColor("#241D19").text(page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, ellipsis: true });
+        ty += 26;
+      }
+      if (page.description) {
+        doc.fontSize(10).fillColor("#5E534D").text(page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, ellipsis: true });
+      }
+    }
+  }
+
+  doc.end();
 }, { tripScope: "photobooks", allowViewer: true });
 
 // ---------- Expenses ----------

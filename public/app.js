@@ -5631,6 +5631,73 @@ function PhotobookTab({ trip }) {
 
 const PHOTOBOOK_BG_SWATCHES = ["#FDF5F0", "#F4F2EF", "#E6E0DA", "#241D19", "#FF7A00", "#3D5A80"];
 
+// Vrij verslepen (heel het element) en met de hoekgreep vergroten/verkleinen
+// op de A4-canvas — x/y/width/height zijn fracties van de pagina, dus de
+// berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
+// niet via vaste pixelwaarden. Pointer Events (i.p.v. HTML5 drag-and-drop)
+// omdat die zowel met muis als met een vinger op de telefoon werken.
+function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl }) {
+  const dragRef = useRef(null);
+
+  function beginDrag(e, mode) {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      mode, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
+      startRect: { x: photo.x, y: photo.y, width: photo.width, height: photo.height },
+    };
+  }
+  function onDrag(e) {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const el = getPageEl();
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const fx = (e.clientX - d.startX) / rect.width;
+    const fy = (e.clientY - d.startY) / rect.height;
+    if (d.mode === "move") {
+      onChangeRect({
+        x: Math.min(1 - d.startRect.width, Math.max(0, d.startRect.x + fx)),
+        y: Math.min(1 - d.startRect.height, Math.max(0, d.startRect.y + fy)),
+      });
+    } else {
+      onChangeRect({
+        width: Math.min(1 - d.startRect.x, Math.max(0.05, d.startRect.width + fx)),
+        height: Math.min(1 - d.startRect.y, Math.max(0.05, d.startRect.height + fy)),
+      });
+    }
+  }
+  function endDrag(e) {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+  }
+
+  return (
+    <div
+      onPointerDown={(e) => beginDrag(e, "move")}
+      onPointerMove={onDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      className={`absolute select-none touch-none ${selected ? "cursor-move ring-2 ring-sky-500 ring-offset-1" : "cursor-pointer"}`}
+      style={{ left: `${photo.x * 100}%`, top: `${photo.y * 100}%`, width: `${photo.width * 100}%`, height: `${photo.height * 100}%` }}
+    >
+      <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover rounded-[2px] pointer-events-none" />
+      {selected && (
+        <div
+          onPointerDown={(e) => beginDrag(e, "resize")}
+          onPointerMove={onDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          className="absolute -right-2 -bottom-2 w-6 h-6 rounded-full bg-sky-600 border-2 border-white shadow-md cursor-nwse-resize touch-none flex items-center justify-center"
+        >
+          <div className="w-2 h-2 border-b-2 border-r-2 border-white" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [pages, setPages] = useState(null); // null = laden
@@ -5641,6 +5708,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
+  const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
 
   useEffect(() => {
     api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
@@ -5677,17 +5746,29 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function removePhoto(pageIndex, photoIndex) {
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, photos: p.photos.filter((_, j) => j !== photoIndex) })));
+    setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? null : sel));
     setDirty(true);
   }
+  // Verandert de volgorde in de array, wat ook de z-volgorde op de canvas is
+  // (later in de lijst = bovenop) — dus dit is "naar voren/achteren", niet
+  // een verticale lijst-positie zoals vóór het vrije verslepen.
   function movePhoto(pageIndex, photoIndex, dir) {
+    const page = pages[pageIndex];
+    const j = photoIndex + dir;
+    if (!page || j < 0 || j >= page.photos.length) return;
     setPages((ps) => ps.map((p, i) => {
       if (i !== pageIndex) return p;
-      const j = photoIndex + dir;
-      if (j < 0 || j >= p.photos.length) return p;
       const copy = [...p.photos];
       [copy[photoIndex], copy[j]] = [copy[j], copy[photoIndex]];
       return { ...p, photos: copy };
     }));
+    setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? { page: pageIndex, photo: j } : sel));
+    setDirty(true);
+  }
+  function updatePhotoRect(pageIndex, photoIndex, patch) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, photos: p.photos.map((ph, j) => (j === photoIndex ? { ...ph, ...patch } : ph)),
+    })));
     setDirty(true);
   }
   function setBackgroundColor(pageIndex, color) {
@@ -5704,6 +5785,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       photos: p.photos.filter((ph) => ph.photoId !== photo.photoId),
       background: { type: "photo", photoId: photo.photoId, url: photo.url },
     })));
+    setSelectedPhoto((sel) => (sel && sel.page === pageIndex ? null : sel));
     setDirty(true);
   }
 
@@ -5720,9 +5802,21 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function confirmPicker() {
     const chosen = allPhotos.filter((p) => pickerSelected.has(p.id));
-    setPages((ps) => ps.map((p, i) => (i !== pickerForPage ? p : {
-      ...p, photos: [...p.photos, ...chosen.map((c) => ({ photoId: c.id, caption: null, url: c.url, thumbUrl: c.thumb_url }))],
-    })));
+    setPages((ps) => ps.map((p, i) => {
+      if (i !== pickerForPage) return p;
+      const startCount = p.photos.length;
+      // Trapsgewijs verschoven zodat meerdere nieuwe foto's niet precies
+      // boven op elkaar landen — de gebruiker verschuift ze daarna zelf naar
+      // hun plek.
+      const added = chosen.map((c, k) => {
+        const cascade = (startCount + k) % 6;
+        return {
+          photoId: c.id, caption: null, url: c.url, thumbUrl: c.thumb_url,
+          x: 0.08 + cascade * 0.05, y: 0.08 + cascade * 0.05, width: 0.38, height: 0.3,
+        };
+      });
+      return { ...p, photos: [...p.photos, ...added] };
+    }));
     setDirty(true);
     setPickerForPage(null);
   }
@@ -5740,7 +5834,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         background: !p.background ? null
           : p.background.type === "color" ? { type: "color", value: p.background.value }
           : { type: "photo", photo_id: p.background.photoId },
-        photos: p.photos.map((ph) => ({ photo_id: ph.photoId, caption: ph.caption })),
+        photos: p.photos.map((ph) => ({ photo_id: ph.photoId, caption: ph.caption, x: ph.x, y: ph.y, width: ph.width, height: ph.height })),
       })));
       setDirty(false);
     } catch (err) { setError(err.message || "Opslaan mislukt"); }
@@ -5777,6 +5871,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
           <Icon name="eye" size={17} />
         </button>
+        <a href={`/api/photobooks/${bookId}/pdf`} download aria-label="Downloaden als PDF"
+          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+          <Icon name="doc" size={17} />
+        </a>
         <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
           <Icon name="trash" size={16} />
         </button>
@@ -5839,34 +5937,67 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               )}
             </div>
 
-            <div className="space-y-2">
-              {page.photos.map((ph, j) => (
-                <div key={`${ph.photoId}-${j}`} className="flex gap-2 items-start">
-                  <img src={ph.thumbUrl || ph.url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
-                  <Input value={ph.caption || ""} onChange={(e) => setPhotoCaption(i, j, e.target.value)}
-                    placeholder="Bijschrift (optioneel)" className="!text-sm flex-1" />
-                  <div className="flex flex-col gap-0.5 shrink-0">
-                    <button type="button" onClick={() => useAsBackground(i, ph)} title="Als achtergrond gebruiken"
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-sky-600 hover:bg-sky-50 transition-colors">
-                      <Icon name="frame" size={12} />
-                    </button>
-                    <button type="button" onClick={() => movePhoto(i, j, -1)} disabled={j === 0}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-gray-600 disabled:opacity-30 transition-colors">
-                      <Icon name="arrowUp" size={11} />
-                    </button>
-                    <button type="button" onClick={() => removePhoto(i, j)}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors">
-                      <Icon name="close" size={11} />
-                    </button>
-                  </div>
+            {/* Echte A4-verhouding (210:297) — wat je hier ziet is de pagina.
+                Tik een foto aan om 'm te verslepen (sleep de hele foto) of te
+                schalen (sleep de blauwe greep rechtsonder). */}
+            <div
+              ref={(el) => { canvasRefs.current[i] = el; }}
+              onPointerDown={() => setSelectedPhoto(null)}
+              className="relative w-full rounded-lg overflow-hidden border border-gray-100"
+              style={{
+                aspectRatio: "210 / 297",
+                background: page.background?.type === "color" ? page.background.value
+                  : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
+                  : "#FAF9F7",
+              }}
+            >
+              {(page.title || page.description) && (
+                <div className={`absolute top-0 left-0 right-0 p-3 pointer-events-none ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
+                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate">{page.title}</h3>}
+                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2">{page.description}</p>}
                 </div>
+              )}
+              {page.photos.map((ph, j) => (
+                <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
+                  selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
+                  onSelect={() => setSelectedPhoto({ page: i, photo: j })}
+                  onChangeRect={(patch) => updatePhotoRect(i, j, patch)}
+                  getPageEl={() => canvasRefs.current[i]} />
               ))}
               {page.photos.length === 0 && !page.background && (
-                <div className="text-xs text-gray-400 py-2">Nog geen foto's op deze pagina.</div>
+                <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
               )}
             </div>
+
+            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (
+              <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-sky-50 border border-sky-100">
+                <img src={page.photos[selectedPhoto.photo].thumbUrl || page.photos[selectedPhoto.photo].url} alt=""
+                  className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                <Input value={page.photos[selectedPhoto.photo].caption || ""} onChange={(e) => setPhotoCaption(i, selectedPhoto.photo, e.target.value)}
+                  placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white flex-1" />
+                <div className="flex items-center gap-1 shrink-0">
+                  <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                    <Icon name="arrowLeft" size={13} />
+                  </button>
+                  <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, 1)} disabled={selectedPhoto.photo === page.photos.length - 1} title="Naar voren"
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                    <Icon name="arrowRight" size={13} />
+                  </button>
+                  <button type="button" onClick={() => useAsBackground(i, page.photos[selectedPhoto.photo])} title="Als achtergrond gebruiken"
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 transition-colors">
+                    <Icon name="frame" size={13} />
+                  </button>
+                  <button type="button" onClick={() => removePhoto(i, selectedPhoto.photo)} title="Verwijderen"
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button type="button" onClick={() => openPicker(i)}
-              className="mt-3 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+              className="mt-2 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
               + Foto's toevoegen
             </button>
           </div>
@@ -5926,33 +6057,29 @@ function PhotobookPreview({ title, pages, onClose }) {
       </div>
       <div className="px-4 pb-10 space-y-4" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>
         {pages.map((page, i) => (
-          <div key={i} className="rounded-2xl overflow-hidden shadow-2xl min-h-[70vh] relative flex flex-col"
+          <div key={i} className="rounded-2xl overflow-hidden shadow-2xl relative"
             style={{
+              aspectRatio: "210 / 297",
               background: page.background?.type === "color" ? page.background.value
                 : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                 : "#FAF9F7",
             }}>
-            <div className="p-5 flex-1 flex flex-col">
-              {(page.title || page.description) && (
-                <div className={`mb-4 ${page.background ? "bg-white/85 backdrop-blur-sm rounded-xl p-3" : ""}`}>
-                  {page.title && <h3 className="font-display text-xl text-gray-800 mb-1">{page.title}</h3>}
-                  {page.description && <p className="text-sm text-gray-600 leading-relaxed">{page.description}</p>}
-                </div>
-              )}
-              {page.photos.length > 0 && (
-                <div className={`grid gap-2 ${page.photos.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-                  {page.photos.map((ph, j) => (
-                    <div key={j} className="rounded-xl overflow-hidden bg-black/5">
-                      <img src={ph.url} alt="" className="w-full aspect-square object-cover" />
-                      {ph.caption && <div className="text-xs px-2 py-1.5 bg-white/85">{ph.caption}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {page.photos.length === 0 && !page.title && !page.description && (
-                <div className="flex-1 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
-              )}
-            </div>
+            {(page.title || page.description) && (
+              <div className={`absolute top-0 left-0 right-0 p-4 ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
+                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1">{page.title}</h3>}
+                {page.description && <p className="text-sm text-gray-600 leading-relaxed">{page.description}</p>}
+              </div>
+            )}
+            {page.photos.map((ph, j) => (
+              <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
+                style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
+                <img src={ph.url} alt="" className="w-full h-full object-cover" />
+                {ph.caption && <div className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate">{ph.caption}</div>}
+              </div>
+            ))}
+            {page.photos.length === 0 && !page.title && !page.description && (
+              <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
+            )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
           </div>
         ))}
