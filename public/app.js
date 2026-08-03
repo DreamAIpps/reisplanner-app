@@ -388,7 +388,6 @@ const guestApi = {
   getAdminTrips() { return Promise.resolve([]); },
   getAdminUsers() { return Promise.resolve([]); },
   assignTrip() { return Promise.resolve(null); },
-  suggestPhoto() { return Promise.reject(new Error("Log in om automatisch foto's te zoeken")); },
 };
 
 const api = {
@@ -459,7 +458,6 @@ const api = {
   getStorageInfo: () => apiFetch("/api/admin/storage"),
   getCockpitMetrics: () => apiFetch("/api/admin/metrics"),
   shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
-  suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
   updatePackingItem: (id, d) => _guestMode ? guestApi.updatePackingItem(id, d) : apiFetch(`/api/packing/${id}`, { method: "PUT", body: JSON.stringify(d) }),
@@ -886,20 +884,7 @@ function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "", timezone: initial.timezone || "" } : { ...EMPTY_TRIP });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const [photoAuthor, setPhotoAuthor] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  async function handleSuggestPhoto() {
-    if (!form.destination) return;
-    setPhotoLoading(true); setPhotoAuthor(null);
-    try {
-      const data = await api.suggestPhoto(form.destination);
-      setForm((f) => ({ ...f, cover_image: data.url }));
-      setPhotoAuthor({ name: data.author, link: data.author_link });
-    } catch (err) { alert("Kon geen foto vinden: " + err.message); }
-    finally { setPhotoLoading(false); }
-  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -953,22 +938,12 @@ function TripForm({ initial, onSaved, onClose }) {
         </Field>
         <Field label="Omslagfoto">
           <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input value={form.cover_image} onChange={set("cover_image")} placeholder="Foto-URL, of zoek automatisch →" />
-              <Button type="button" variant="secondary" onClick={handleSuggestPhoto} disabled={photoLoading || !form.destination} className="shrink-0">
-                {photoLoading ? "..." : <><Icon name="search" size={14} className="mr-1.5" />Zoeken</>}
-              </Button>
-            </div>
+            <Input value={form.cover_image} onChange={set("cover_image")} placeholder="Foto-URL" />
             {form.cover_image && (
               <div className="relative rounded-lg overflow-hidden h-32">
                 <img src={form.cover_image} alt="preview" className="w-full h-full object-cover" />
-                <button type="button" onClick={() => { setForm((f) => ({ ...f, cover_image: "" })); setPhotoAuthor(null); }}
+                <button type="button" onClick={() => setForm((f) => ({ ...f, cover_image: "" }))}
                   className="absolute top-1 right-1 bg-black/50 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-black/70">×</button>
-                {photoAuthor && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-white text-xs px-2 py-1">
-                    Foto door <a href={photoAuthor.link + "?utm_source=reisplanner&utm_medium=referral"} target="_blank" rel="noreferrer" className="underline">{photoAuthor.name}</a> via Unsplash
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -2203,40 +2178,14 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [importing, setImporting] = useState(false);
   const [editingAccommodation, setEditingAccommodation] = useState(null);
   const [addingAccommodation, setAddingAccommodation] = useState(false);
-  const [locationPhotos, setLocationPhotos] = useState({});
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
-  const fetchedRef = useRef(new Set());
   const accent = trip.cover_color || "#FF7A00";
 
   const loadJournal = useCallback(async () => {
     try { setTripJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
-
-  useEffect(() => {
-    if (_guestMode) return; // /api/photo-suggest requires a session
-    const locs = new Set();
-    days.forEach((day) => (day.activities || []).forEach((a) => { if (a.location) locs.add(a.location); }));
-    [...locs].slice(0, 10).forEach(async (loc) => {
-      if (fetchedRef.current.has(loc)) return;
-      fetchedRef.current.add(loc);
-      // Cached in localStorage, not just a ref: the ref died on every tab switch,
-      // so returning to Dagplanning re-issued up to 10 Unsplash calls. Their demo
-      // tier allows 50/hour, so a handful of visits silently exhausted the quota
-      // and the card images stopped appearing for everyone.
-      const cacheKey = `locphoto:${loc}`;
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) { setLocationPhotos((p) => ({ ...p, [loc]: cached })); return; }
-      try {
-        const d = await api.suggestPhoto(loc);
-        if (d?.thumb) {
-          try { localStorage.setItem(cacheKey, d.thumb); } catch {}
-          setLocationPhotos((p) => ({ ...p, [loc]: d.thumb }));
-        }
-      } catch {}
-    });
-  }, [days]);
 
   async function handleDeleteActivity(id) {
     if (!confirm("Activiteit verwijderen?")) return;
@@ -2465,20 +2414,10 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
                     {/* Activity cards */}
                     {day.activities.map((act) => {
-                      const photo = act.location ? locationPhotos[act.location] : null;
                       return (
                         <div key={act.id}
                           onClick={() => setEditingActivity(act)}
                           className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow cursor-pointer">
-                          {photo && (
-                            <div className="h-32 overflow-hidden relative">
-                              <img src={photo} alt={act.location} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                              {act.location && (
-                                <div className="absolute bottom-2 left-3 text-white text-xs font-medium drop-shadow flex items-center gap-1"><Icon name="pin" size={12} />{act.location}</div>
-                              )}
-                            </div>
-                          )}
                           <div className="flex items-start gap-3 px-3 py-2.5">
                             <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right pt-0.5">{act.time || "—"}</span>
                             <div className="flex-1 min-w-0">
@@ -2491,7 +2430,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                                 <span className="truncate">{act.category || "Activiteit"}</span>
                                 {act.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(act.cost, trip.currency)}</span>}
                               </div>
-                              {!photo && act.location && <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1"><Icon name="pin" size={12} /><span className="truncate">{act.location}</span></div>}
+                              {act.location && <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1"><Icon name="pin" size={12} /><span className="truncate">{act.location}</span></div>}
                               {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
                             </div>
                             {!readOnly && (

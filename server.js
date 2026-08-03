@@ -2513,25 +2513,6 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   catch { sendError(res, 500, "Kon tips niet verwerken"); }
 });
 
-// ---------- Photo suggestion via Unsplash ----------
-route("GET", "/api/photo-suggest", async (req, res, params, body) => {
-  const url = new URL(req.url, "http://localhost");
-  const destination = url.searchParams.get("destination") || "";
-  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
-  if (!process.env.UNSPLASH_ACCESS_KEY) return sendError(res, 503, "UNSPLASH_ACCESS_KEY niet geconfigureerd");
-
-  const apiUrl = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(destination + " travel landscape")}&orientation=landscape&content_filter=high&client_id=${process.env.UNSPLASH_ACCESS_KEY}`;
-  const resp = await fetch(apiUrl);
-  if (!resp.ok) return sendError(res, 502, "Unsplash API fout");
-  const data = await resp.json();
-  sendJson(res, 200, {
-    url: data.urls.regular,
-    thumb: data.urls.small,
-    author: data.user.name,
-    author_link: data.user.links.html,
-  });
-});
-
 // ---------- Import (email parsing via Claude) ----------
 route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   const { text, image } = body;
