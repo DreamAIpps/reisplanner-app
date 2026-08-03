@@ -430,6 +430,30 @@ async function initDb() {
       answered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (participant_id, question_index)
     );
+
+    -- Fotoboek: door het gezin zelf samen te stellen uit de foto's van de reis
+    -- (voorgestelde selectie/volgorde/bijschrift, zelf aan te passen). Bestellen
+    -- bij een drukkerij komt in een latere stap; print_order_id staat hier vast
+    -- klaar zodat die stap geen aparte migratie nodig heeft.
+    CREATE TABLE IF NOT EXISTS photobooks (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT 'Fotoboek',
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      print_order_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS photobooks_trip_idx ON photobooks(trip_id);
+
+    CREATE TABLE IF NOT EXISTS photobook_pages (
+      id SERIAL PRIMARY KEY,
+      photobook_id INTEGER NOT NULL REFERENCES photobooks(id) ON DELETE CASCADE,
+      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      caption TEXT
+    );
+    CREATE INDEX IF NOT EXISTS photobook_pages_book_idx ON photobook_pages(photobook_id, position);
   `);
 
   // Trips created before the "fris oranje" redesign still carry a cover_color
