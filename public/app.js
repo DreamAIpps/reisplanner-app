@@ -535,6 +535,22 @@ function daysUntilDeparture(startDate) {
   const start = new Date(startDate); start.setHours(0, 0, 0, 0);
   return Math.round((start - today) / 86400000);
 }
+// Reizen-overzicht: aankomende reizen bovenaan, oplopend naar vertrek (dus de
+// eerstvolgende reis staat als eerste). Afgelopen reizen komen daarna, met de
+// meest recente bovenaan. Reizen zonder datum sluiten de rij.
+function sortTripsByDeparture(trips) {
+  return [...trips].sort((a, b) => {
+    const da = a.start_date ? daysUntilDeparture(a.start_date) : null;
+    const db = b.start_date ? daysUntilDeparture(b.start_date) : null;
+    if (da === null && db === null) return 0;
+    if (da === null) return 1;
+    if (db === null) return -1;
+    const aUpcoming = da >= 0, bUpcoming = db >= 0;
+    if (aUpcoming && bUpcoming) return da - db;
+    if (!aUpcoming && !bUpcoming) return db - da;
+    return aUpcoming ? -1 : 1;
+  });
+}
 // Guards the journal payload: on an array response `.entries` resolves to
 // Array.prototype.entries, and passing that function to setState makes React
 // treat it as an updater and call it with no receiver.
@@ -8354,7 +8370,7 @@ function App() {
 
   const loadTrips = useCallback(async () => {
     setLoading(true);
-    try { setTrips(await api.getTrips()); }
+    try { setTrips(sortTripsByDeparture(await api.getTrips())); }
     finally { setLoading(false); }
   }, []);
 
