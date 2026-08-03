@@ -5778,6 +5778,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [showPreview, setShowPreview] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
 
   useEffect(() => {
@@ -5925,6 +5926,40 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     onBack();
   }
 
+  async function handleDownloadPdf() {
+    if (!confirm("Fotoboek als PDF downloaden?")) return;
+    setPdfProgress({ phase: "generating", percent: null });
+    try {
+      const resp = await fetch(`/api/photobooks/${bookId}/pdf`);
+      if (!resp.ok) throw new Error("Downloaden mislukt");
+      const total = Number(resp.headers.get("Content-Length")) || 0;
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let received = 0;
+      setPdfProgress({ phase: "downloading", percent: total ? 0 : null });
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        setPdfProgress({ phase: "downloading", percent: total ? Math.min(100, Math.round((received / total) * 100)) : null });
+      }
+      const blob = new Blob(chunks, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title || "Fotoboek"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message || "Downloaden mislukt");
+    } finally {
+      setPdfProgress(null);
+    }
+  }
+
   if (pages === null) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
   if (showPreview) {
@@ -5969,10 +6004,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
           <Icon name="eye" size={17} />
         </button>
-        <a href={`/api/photobooks/${bookId}/pdf`} download aria-label="Downloaden als PDF"
+        <button type="button" onClick={handleDownloadPdf} aria-label="Downloaden als PDF"
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
           <Icon name="doc" size={17} />
-        </a>
+        </button>
         <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
           <Icon name="trash" size={16} />
         </button>
@@ -6162,10 +6197,30 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   })}
                 </div>
               )}
-              <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
-                Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
-              </Button>
+              <div className="sticky bottom-0 -mx-6 px-6 pt-2 pb-1 bg-white">
+                <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
+                  Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
+                </Button>
+              </div>
             </>
+          )}
+        </Modal>
+      )}
+
+      {pdfProgress && (
+        <Modal title="Fotoboek downloaden" onClose={() => {}}>
+          <p className="text-sm text-gray-500 mb-4">
+            {pdfProgress.phase === "generating" ? "Bezig met samenstellen..." : "Downloaden..."}
+          </p>
+          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+            {pdfProgress.percent == null ? (
+              <div className="h-full w-1/3 rounded-full bg-sky-500 rp-pdf-indeterminate" />
+            ) : (
+              <div className="h-full rounded-full bg-sky-500 transition-[width] duration-200" style={{ width: `${pdfProgress.percent}%` }} />
+            )}
+          </div>
+          {pdfProgress.percent != null && (
+            <p className="text-xs text-gray-400 mt-2 text-right tnum">{pdfProgress.percent}%</p>
           )}
         </Modal>
       )}

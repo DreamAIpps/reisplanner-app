@@ -3434,13 +3434,13 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   }
 
   const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
-  res.writeHead(200, {
-    "Content-Type": "application/pdf",
-    "Content-Disposition": `attachment; filename="${filename}.pdf"`,
-  });
 
   const doc = new PDFDocument({ size: "A4", autoFirstPage: false, margin: 0 });
-  doc.pipe(res);
+  // Eerst volledig in het geheugen opbouwen (in plaats van doc.pipe(res)) zodat
+  // we een Content-Length kunnen meesturen — de client heeft dat nodig om een
+  // echte downloadpercentage-voortgangsbalk te kunnen tonen.
+  const chunks = [];
+  doc.on("data", (chunk) => chunks.push(chunk));
 
   for (const page of pages) {
     doc.addPage({ size: "A4", margin: 0 });
@@ -3493,7 +3493,14 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     }
   }
 
-  doc.end();
+  await new Promise((resolve) => { doc.on("end", resolve); doc.end(); });
+  const buffer = Buffer.concat(chunks);
+  res.writeHead(200, {
+    "Content-Type": "application/pdf",
+    "Content-Disposition": `attachment; filename="${filename}.pdf"`,
+    "Content-Length": buffer.length,
+  });
+  res.end(buffer);
 }, { tripScope: "photobooks", allowViewer: true });
 
 // ---------- Expenses ----------
