@@ -13,7 +13,7 @@ try { sharp = require("sharp"); }
 catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnails:", err.message); }
 const jpegJs = require("jpeg-js");
 const heicDecode = require("heic-decode");
-const { query, initDb } = require("./db");
+const { query, initDb, pool } = require("./db");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
@@ -561,7 +561,10 @@ function route(method, pattern, handler, opts) {
   const re = new RegExp("^" + pattern.replace(/:([^/]+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
   // allowViewer opts a write out of the viewer block — commenting on someone's
   // journal entry is the one thing a read-only member is allowed to do.
-  routes.push({ method, re, keys, handler, tripScope: opts?.tripScope, allowViewer: opts?.allowViewer === true });
+  // pattern zelf blijft bewaard (naast de gecompileerde regex) zodat de
+  // performance-cockpit metrics per routepatroon kan groeperen (bijv.
+  // "/api/trips/:id/photos") in plaats van per losse reis-/foto-id.
+  routes.push({ method, pattern, re, keys, handler, tripScope: opts?.tripScope, allowViewer: opts?.allowViewer === true });
 }
 
 function matchRoute(method, pathname) {
@@ -571,9 +574,62 @@ function matchRoute(method, pathname) {
     if (!m) continue;
     const params = {};
     r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
-    return { handler: r.handler, params, tripScope: r.tripScope, allowViewer: r.allowViewer };
+    return { handler: r.handler, pattern: r.pattern, params, tripScope: r.tripScope, allowViewer: r.allowViewer };
   }
   return null;
+}
+
+// ---------- Operationele metrics (in-memory) ----------
+// Bewust niet in de database: dat zou juist de tabel belasten die je wilt
+// monitoren, en een herstart van de Railway-dyno is toch al een moment
+// waarop je met een schone lei begint — dus geen reden om dit persistent te
+// maken. Alles hier leeft alleen zolang dit ene serverproces draait.
+const METRICS_WINDOW_MS = 60 * 60 * 1000; // laatste uur aan losse requests
+const METRICS_BUCKET_MS = 60 * 1000; // per-minuut voor de tijdlijn-grafiek
+const METRICS_SLOW_THRESHOLD_MS = 200;
+const metricsState = {
+  totalRequests: 0,
+  totalErrors: 0,
+  recent: [], // { t, method, route, status, durationMs } — rollend venster van het laatste uur
+  buckets: new Map(), // bucket-starttijd (ms) -> { count, errorCount, totalDuration }
+  byRoute: new Map(), // "METHODE patroon" -> { count, errorCount, totalDuration, maxDuration } sinds het opstarten
+  slowest: [], // traagste/foutieve requests uit het venster, voor de detailtabel
+};
+
+function recordMetric({ method, route, status, durationMs }) {
+  const now = Date.now();
+  const isError = status >= 500;
+  const cutoff = now - METRICS_WINDOW_MS;
+
+  metricsState.totalRequests++;
+  if (isError) metricsState.totalErrors++;
+
+  metricsState.recent.push({ t: now, method, route, status, durationMs });
+  while (metricsState.recent.length && metricsState.recent[0].t < cutoff) metricsState.recent.shift();
+
+  const bucketKey = Math.floor(now / METRICS_BUCKET_MS) * METRICS_BUCKET_MS;
+  let bucket = metricsState.buckets.get(bucketKey);
+  if (!bucket) { bucket = { count: 0, errorCount: 0, totalDuration: 0 }; metricsState.buckets.set(bucketKey, bucket); }
+  bucket.count++;
+  if (isError) bucket.errorCount++;
+  bucket.totalDuration += durationMs;
+  for (const key of metricsState.buckets.keys()) {
+    if (key < cutoff) metricsState.buckets.delete(key);
+  }
+
+  const routeKey = `${method} ${route || "?"}`;
+  let rs = metricsState.byRoute.get(routeKey);
+  if (!rs) { rs = { count: 0, errorCount: 0, totalDuration: 0, maxDuration: 0 }; metricsState.byRoute.set(routeKey, rs); }
+  rs.count++;
+  if (isError) rs.errorCount++;
+  rs.totalDuration += durationMs;
+  rs.maxDuration = Math.max(rs.maxDuration, durationMs);
+
+  if (durationMs > METRICS_SLOW_THRESHOLD_MS || isError) {
+    metricsState.slowest.push({ t: now, method, route, status, durationMs });
+    metricsState.slowest.sort((a, b) => b.durationMs - a.durationMs);
+    metricsState.slowest = metricsState.slowest.filter((s) => s.t >= cutoff).slice(0, 20);
+  }
 }
 
 // ---------- Trip role resolution (owner / editor / viewer / none) ----------
@@ -950,6 +1006,68 @@ route("GET", "/api/admin/storage", async (req, res) => {
     photosBytes: Number(rows[0].photos_bytes),
     thumbsBytes: Number(rows[0].thumbs_bytes),
     databaseBytes,
+  });
+});
+
+// Operationele cockpit: requestvolume/foutpercentage/responstijd van dit ene
+// serverproces sinds het opstarten (of het laatste uur voor de tijdlijn) —
+// zie de metricsState-sectie bovenaan voor hoe dit wordt bijgehouden.
+route("GET", "/api/admin/metrics", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const now = Date.now();
+  const cutoff = now - METRICS_WINDOW_MS;
+
+  // Tijdlijn van de laatste 60 minuten, ontbrekende minuten (geen verkeer)
+  // als nul-waarde — anders zou de grafiek gaten tonen als losse punten.
+  const timeline = [];
+  const firstBucket = Math.floor((now - 59 * METRICS_BUCKET_MS) / METRICS_BUCKET_MS) * METRICS_BUCKET_MS;
+  for (let t = firstBucket; t <= now; t += METRICS_BUCKET_MS) {
+    const b = metricsState.buckets.get(t);
+    timeline.push({
+      t: new Date(t).toISOString(),
+      count: b?.count || 0,
+      errorCount: b?.errorCount || 0,
+      avgDuration: b && b.count ? Math.round(b.totalDuration / b.count) : 0,
+    });
+  }
+
+  const recentWindow = metricsState.recent.filter((r) => r.t >= cutoff);
+  const totalInWindow = recentWindow.length;
+  const errorsInWindow = recentWindow.filter((r) => r.status >= 500).length;
+  const avgDurationWindow = totalInWindow ? Math.round(recentWindow.reduce((s, r) => s + r.durationMs, 0) / totalInWindow) : 0;
+  const sortedByDuration = [...recentWindow].sort((a, b) => a.durationMs - b.durationMs);
+  const p95DurationWindow = sortedByDuration.length ? Math.round(sortedByDuration[Math.floor(sortedByDuration.length * 0.95)].durationMs) : 0;
+
+  const byRoute = [...metricsState.byRoute.entries()]
+    .map(([key, s]) => ({
+      route: key, count: s.count, errorCount: s.errorCount,
+      avgDuration: Math.round(s.totalDuration / s.count), maxDuration: Math.round(s.maxDuration),
+    }))
+    .sort((a, b) => b.avgDuration - a.avgDuration)
+    .slice(0, 15);
+
+  const mem = process.memoryUsage();
+
+  sendJson(res, 200, {
+    startedAt: STARTED_AT.toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    totalRequests: metricsState.totalRequests,
+    totalErrors: metricsState.totalErrors,
+    windowMinutes: METRICS_WINDOW_MS / 60000,
+    requestsInWindow: totalInWindow,
+    errorsInWindow,
+    avgDurationWindow,
+    p95DurationWindow,
+    timeline,
+    byRoute,
+    slowest: metricsState.slowest.map((s) => ({ ...s, t: new Date(s.t).toISOString() })),
+    memory: {
+      rssMb: Math.round(mem.rss / 1024 / 1024),
+      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+    },
+    dbPool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount },
+    nodeVersion: process.version,
   });
 });
 
@@ -1559,11 +1677,30 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   // toevallig geüpload is — anders staat een later toegevoegde foto van
   // eerder op de dag alsnog achteraan. Foto's zonder EXIF-tijdstip (taken_at
   // NULL) vallen terug op de uploadvolgorde, onderaan.
+  // De LEFT JOINs zijn puur om `label` te kunnen vullen (waar de foto bij
+  // hoort) — handig als zoekterm bij het kiezen van foto's, bijv. in het
+  // fotoboek.
   const { rows } = await query(
-    "SELECT id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at FROM photos WHERE trip_id = $1 ORDER BY taken_at ASC NULLS LAST, created_at ASC",
+    `SELECT p.id, p.trip_id, p.day_id, p.activity_id, p.transport_id, p.accommodation_id, p.mime_type, p.caption, p.taken_at, p.latitude, p.longitude, p.created_at,
+            a.title AS activity_title, a.location AS activity_location,
+            tr.type AS transport_type, tr.from_location, tr.to_location,
+            ac.name AS accommodation_name,
+            d.title AS day_title, d.date AS day_date
+     FROM photos p
+     LEFT JOIN activities a ON a.id = p.activity_id
+     LEFT JOIN transports tr ON tr.id = p.transport_id
+     LEFT JOIN accommodations ac ON ac.id = p.accommodation_id
+     LEFT JOIN days d ON d.id = p.day_id
+     WHERE p.trip_id = $1
+     ORDER BY p.taken_at ASC NULLS LAST, p.created_at ASC`,
     [params.id]
   );
-  sendJson(res, 200, rows.map((r) => ({ ...r, url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb` })));
+  sendJson(res, 200, rows.map((r) => ({
+    id: r.id, trip_id: r.trip_id, day_id: r.day_id, activity_id: r.activity_id, transport_id: r.transport_id, accommodation_id: r.accommodation_id,
+    mime_type: r.mime_type, caption: r.caption, taken_at: r.taken_at, latitude: r.latitude, longitude: r.longitude, created_at: r.created_at,
+    label: photobookCaption(r),
+    url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb`,
+  })));
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
@@ -3425,6 +3562,18 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
   const pathname = url.pathname;
 
+  // Timing voor de performance-cockpit — bewust vóór elke branch, zodat ook
+  // een 401/404/statische respons meetelt. "finish" vuurt ongeacht welk
+  // codepad de respons daadwerkelijk verstuurde (sendJson, sendError, of een
+  // rechtstreekse res.writeHead), dus dit hoeft nergens anders aangeraakt te
+  // worden. req._routePattern wordt hieronder gezet zodra matchRoute iets
+  // vindt; zonder match valt het terug op het pad zelf.
+  const metricsStartNs = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - metricsStartNs) / 1e6;
+    recordMetric({ method: req.method, route: req._routePattern || pathname, status: res.statusCode, durationMs });
+  });
+
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/") || pathname.startsWith("/quiz/")) {
@@ -3434,6 +3583,7 @@ const server = http.createServer(async (req, res) => {
       // rejection from this async handler would terminate the process.
       const match = matchRoute(req.method, pathname);
       if (!match) { res.writeHead(404); res.end(); return; }
+      req._routePattern = match.pattern;
       let body = {};
       if (["POST", "PUT", "PATCH"].includes(req.method)) {
         const raw = await new Promise((resolve, reject) => {
@@ -3472,6 +3622,7 @@ const server = http.createServer(async (req, res) => {
       }
       const match = matchRoute(req.method, pathname);
       if (!match) { sendError(res, 404, "Not found"); return; }
+      req._routePattern = match.pattern;
       const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : {};
       req.user = user;
       if (match.tripScope) {

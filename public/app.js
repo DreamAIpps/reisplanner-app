@@ -457,6 +457,7 @@ const api = {
   deleteAdminUser: (userId) => apiFetch(`/api/admin/users/${userId}`, { method: "DELETE" }),
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   getStorageInfo: () => apiFetch("/api/admin/storage"),
+  getCockpitMetrics: () => apiFetch("/api/admin/metrics"),
   shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
   suggestPhoto: (destination) => apiFetch(`/api/photo-suggest?destination=${encodeURIComponent(destination)}`),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
@@ -5692,7 +5693,7 @@ function snapPhotobookValue(v) {
 // berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
 // niet via vaste pixelwaarden. Pointer Events (i.p.v. HTML5 drag-and-drop)
 // omdat die zowel met muis als met een vinger op de telefoon werken.
-function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap }) {
+function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages }) {
   const dragRef = useRef(null);
 
   function beginDrag(e, mode) {
@@ -5742,6 +5743,13 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
       style={{ left: `${photo.x * 100}%`, top: `${photo.y * 100}%`, width: `${photo.width * 100}%`, height: `${photo.height * 100}%` }}
     >
       <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover rounded-[2px] pointer-events-none" />
+      {/* Alleen een hint tijdens het bewerken — niet in het voorbeeld of de
+          uiteindelijke PDF, dus dit leeft puur hier in de editor-canvas. */}
+      {duplicatePages?.length > 0 && (
+        <div className="absolute top-1 left-1 right-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-medium leading-tight pointer-events-none truncate">
+          Ook op pag. {duplicatePages.join(", ")}
+        </div>
+      )}
       {selected && (
         <div
           onPointerDown={(e) => beginDrag(e, "resize")}
@@ -5763,6 +5771,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [allPhotos, setAllPhotos] = useState([]);
   const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
   const [pickerSelected, setPickerSelected] = useState(new Set());
+  const [pickerSearch, setPickerSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
@@ -5860,6 +5869,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   function openPicker(pageIndex) {
     setPickerForPage(pageIndex);
     setPickerSelected(new Set());
+    setPickerSearch("");
   }
   function togglePick(id) {
     setPickerSelected((s) => {
@@ -5921,11 +5931,27 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     return <PhotobookPreview title={title} pages={pages} onClose={() => setShowPreview(false)} />;
   }
 
-  const usedIds = new Set(pages.flatMap((p) => [
-    ...p.photos.map((ph) => ph.photoId),
-    ...(p.background?.type === "photo" ? [p.background.photoId] : []),
-  ]));
-  const pickable = allPhotos.filter((p) => !usedIds.has(p.id));
+  // Welke pagina's (1-based) elke foto gebruikt — voor het waarschuwings-
+  // label in de canvas ("Ook op pag. X") en het "Al in dit boek"-teken in de
+  // kiezer. Dubbel gebruik mag; dit is puur een hint, geen blokkade.
+  const photoPageNumbers = new Map();
+  pages.forEach((pg, idx) => {
+    const pageNum = idx + 1;
+    pg.photos.forEach((ph) => {
+      if (!photoPageNumbers.has(ph.photoId)) photoPageNumbers.set(ph.photoId, new Set());
+      photoPageNumbers.get(ph.photoId).add(pageNum);
+    });
+    if (pg.background?.type === "photo") {
+      if (!photoPageNumbers.has(pg.background.photoId)) photoPageNumbers.set(pg.background.photoId, new Set());
+      photoPageNumbers.get(pg.background.photoId).add(pageNum);
+    }
+  });
+
+  const pickerQuery = pickerSearch.trim().toLowerCase();
+  const pickable = !pickerQuery ? allPhotos : allPhotos.filter((p) => {
+    const haystack = `${p.label || ""} ${p.caption || ""}`.toLowerCase();
+    return haystack.includes(pickerQuery);
+  });
 
   return (
     <div className="max-w-md mx-auto">
@@ -6048,7 +6074,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   onSelect={() => setSelectedPhoto({ page: i, photo: j })}
                   onChangeRect={(patch) => updatePhotoRect(i, j, patch)}
                   getPageEl={() => canvasRefs.current[i]}
-                  snap={snapEnabled} />
+                  snap={snapEnabled}
+                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== i + 1)} />
               ))}
               {page.photos.length === 0 && !page.background && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
@@ -6098,28 +6125,43 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
 
       {pickerForPage != null && (
         <Modal title="Foto's toevoegen" onClose={() => setPickerForPage(null)}>
-          {pickable.length === 0 ? (
-            <div className="text-sm text-gray-400 text-center py-6">Alle foto's van deze reis staan al in het boek.</div>
+          {allPhotos.length === 0 ? (
+            <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's.</div>
           ) : (
             <>
-              <div className="grid grid-cols-3 gap-2 max-h-[55vh] overflow-y-auto mb-3">
-                {pickable.map((p) => {
-                  const picked = pickerSelected.has(p.id);
-                  return (
-                    <button key={p.id} type="button" onClick={() => togglePick(p.id)}
-                      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${picked ? "border-sky-500" : "border-gray-100"}`}>
-                      <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
-                      {picked && (
-                        <div className="absolute inset-0 bg-sky-600/20 flex items-center justify-center">
-                          <div className="w-6 h-6 rounded-full bg-sky-600 flex items-center justify-center">
-                            <Icon name="check" size={13} className="text-white" />
-                          </div>
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+              <div className="relative mb-3">
+                <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
+                <Input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)}
+                  placeholder="Zoek in je foto's..." className="!pl-9" />
               </div>
+              {pickable.length === 0 ? (
+                <div className="text-sm text-gray-400 text-center py-6">Geen foto's gevonden.</div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 max-h-[55vh] overflow-y-auto mb-3">
+                  {pickable.map((p) => {
+                    const picked = pickerSelected.has(p.id);
+                    const alreadyIn = photoPageNumbers.has(p.id);
+                    return (
+                      <button key={p.id} type="button" onClick={() => togglePick(p.id)}
+                        className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${picked ? "border-sky-500" : "border-gray-100"}`}>
+                        <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
+                        {alreadyIn && !picked && (
+                          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px] font-medium">
+                            In boek
+                          </div>
+                        )}
+                        {picked && (
+                          <div className="absolute inset-0 bg-sky-600/20 flex items-center justify-center">
+                            <div className="w-6 h-6 rounded-full bg-sky-600 flex items-center justify-center">
+                              <Icon name="check" size={13} className="text-white" />
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
                 Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
               </Button>
@@ -7726,6 +7768,181 @@ function fmtBytes(n) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}u`;
+  if (h > 0) return `${h}u ${m}m`;
+  return `${m}m`;
+}
+
+function StatTile({ label, value, tone }) {
+  const toneClass = tone === "critical" ? "text-red-600" : tone === "good" ? "text-green-600" : "text-gray-900";
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
+      <div className={`text-lg font-bold tnum ${toneClass}`}>{value}</div>
+      <div className="text-xs text-gray-400 mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+// Gestapelde staaf per minuut: totale hoogte = aantal requests, het rode
+// topsegment (indien aanwezig) = daarvan het aantal serverfouten (5xx) —
+// laat in één oogopslag zowel volume als foutmomenten zien, zonder een
+// tweede as nodig te hebben. <title> geeft een simpele hover-tooltip per
+// staaf (browsereigen, geen aparte tooltip-component nodig voor dit
+// interne beheerscherm).
+function CockpitBarChart({ timeline }) {
+  const max = Math.max(1, ...timeline.map((t) => t.count));
+  const w = 600, h = 90, gap = 1;
+  const barWidth = Math.max(0.5, w / timeline.length - gap);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-24">
+      {timeline.map((t, i) => {
+        const x = i * (barWidth + gap);
+        const errorH = t.count ? (t.errorCount / max) * h : 0;
+        const normalH = t.count ? ((t.count - t.errorCount) / max) * h : 0;
+        const time = new Date(t.t).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+        return (
+          <g key={i}>
+            <title>{`${time} — ${t.count} requests, ${t.errorCount} fouten, ${t.avgDuration}ms gem.`}</title>
+            <rect x={x} y={h - normalH - errorH} width={barWidth} height={normalH} fill="#463D38" fillOpacity="0.65" />
+            {errorH > 0 && <rect x={x} y={h - errorH} width={barWidth} height={errorH} fill="#EF4444" />}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Eén reeks (gemiddelde responstijd), dus geen legenda nodig — de titel van
+// de kaart erboven noemt de metriek al.
+function CockpitSparkline({ timeline }) {
+  const max = Math.max(1, ...timeline.map((t) => t.avgDuration));
+  const w = 600, h = 60;
+  const points = timeline.map((t, i) => {
+    const x = timeline.length > 1 ? (i / (timeline.length - 1)) * w : 0;
+    const y = h - (t.avgDuration / max) * h;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-16">
+      <polyline points={points} fill="none" stroke="#FF7A00" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// Operationele cockpit: alleen wat dit ene serverproces sinds het opstarten
+// heeft gezien (in-memory, zie METRICS_* op de server) — geen historie over
+// een herstart heen, en geen aparte tijdreeksdatabase nodig voor een simpel
+// beheerscherm.
+function CockpitPanel() {
+  const [metrics, setMetrics] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(() => {
+    api.getCockpitMetrics().then(setMetrics).catch((err) => setError(err.message || "Laden mislukt"));
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  if (error) return <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>;
+  if (!metrics) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+
+  const errorRate = metrics.requestsInWindow ? Math.round((metrics.errorsInWindow / metrics.requestsInWindow) * 1000) / 10 : 0;
+  const dbActive = metrics.dbPool.total - metrics.dbPool.idle;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatTile label="Uptime" value={formatUptime(metrics.uptimeSeconds)} />
+        <StatTile label={`Requests (${metrics.windowMinutes} min)`} value={metrics.requestsInWindow} />
+        <StatTile label="Foutpercentage" value={`${errorRate}%`} tone={errorRate > 1 ? "critical" : "good"} />
+        <StatTile label="Gem. responstijd" value={`${metrics.avgDurationWindow} ms`} />
+        <StatTile label="p95 responstijd" value={`${metrics.p95DurationWindow} ms`} />
+        <StatTile label="Geheugen (RSS)" value={`${metrics.memory.rssMb} MB`} />
+        <StatTile label="DB-pool" value={`${dbActive}/${metrics.dbPool.total} actief`} tone={metrics.dbPool.waiting > 0 ? "critical" : undefined} />
+        <StatTile label="Totaal sinds start" value={`${metrics.totalRequests} req`} />
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+          <div className="text-sm font-semibold text-gray-700">Requests per minuut (laatste uur)</div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 shrink-0">
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: "#463D38", opacity: 0.65 }} />Normaal</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block bg-red-500" />Fout</span>
+          </div>
+        </div>
+        <CockpitBarChart timeline={metrics.timeline} />
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+        <div className="text-sm font-semibold text-gray-700 mb-2">Gemiddelde responstijd per minuut</div>
+        <CockpitSparkline timeline={metrics.timeline} />
+      </div>
+
+      {metrics.byRoute.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 overflow-x-auto">
+          <div className="text-sm font-semibold text-gray-700 mb-2">Per route (sinds opstarten)</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-gray-400">
+                <th className="pb-1.5 font-medium">Route</th>
+                <th className="pb-1.5 font-medium text-right">Aantal</th>
+                <th className="pb-1.5 font-medium text-right">Fouten</th>
+                <th className="pb-1.5 font-medium text-right">Gem.</th>
+                <th className="pb-1.5 font-medium text-right">Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.byRoute.map((r) => (
+                <tr key={r.route} className="border-t border-gray-50">
+                  <td className="py-1.5 text-gray-700 font-mono text-[11px] whitespace-nowrap">{r.route}</td>
+                  <td className="py-1.5 text-right tnum text-gray-600">{r.count}</td>
+                  <td className={`py-1.5 text-right tnum ${r.errorCount > 0 ? "text-red-600 font-semibold" : "text-gray-300"}`}>{r.errorCount}</td>
+                  <td className="py-1.5 text-right tnum text-gray-600 whitespace-nowrap">{r.avgDuration} ms</td>
+                  <td className="py-1.5 text-right tnum text-gray-400 whitespace-nowrap">{r.maxDuration} ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {metrics.slowest.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 overflow-x-auto">
+          <div className="text-sm font-semibold text-gray-700 mb-2">Traagste/foutieve requests (laatste uur)</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-gray-400">
+                <th className="pb-1.5 font-medium whitespace-nowrap">Tijd</th>
+                <th className="pb-1.5 font-medium">Route</th>
+                <th className="pb-1.5 font-medium text-right">Status</th>
+                <th className="pb-1.5 font-medium text-right">Duur</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.slowest.map((s, i) => (
+                <tr key={i} className="border-t border-gray-50">
+                  <td className="py-1.5 text-gray-400 tnum whitespace-nowrap">{new Date(s.t).toLocaleTimeString("nl-NL")}</td>
+                  <td className="py-1.5 text-gray-700 font-mono text-[11px] whitespace-nowrap">{s.method} {s.route}</td>
+                  <td className={`py-1.5 text-right tnum whitespace-nowrap ${s.status >= 500 ? "text-red-600 font-semibold" : "text-gray-500"}`}>{s.status}</td>
+                  <td className="py-1.5 text-right tnum text-gray-600 whitespace-nowrap">{Math.round(s.durationMs)} ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminView({ onBack, currentUserId }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
@@ -7850,6 +8067,10 @@ function AdminView({ onBack, currentUserId }) {
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "users" ? "bg-white shadow text-[#B85800]" : "text-gray-500 hover:text-gray-700"}`}>
             <Icon name="users" size={15} className="mr-1.5" />Gebruikers ({users.length})
           </button>
+          <button onClick={() => setTab("cockpit")}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "cockpit" ? "bg-white shadow text-[#B85800]" : "text-gray-500 hover:text-gray-700"}`}>
+            <Icon name="clock" size={15} className="mr-1.5" />Cockpit
+          </button>
         </div>
       </div>
 
@@ -7953,7 +8174,7 @@ function AdminView({ onBack, currentUserId }) {
             </div>
           ))}
         </div>
-      ) : (
+      ) : tab === "users" ? (
         <div className="space-y-2">
           {users.map((u) => (
             <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
@@ -7993,6 +8214,8 @@ function AdminView({ onBack, currentUserId }) {
           ))}
           {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}
         </div>
+      ) : (
+        <CockpitPanel />
       )}
     </div>
   );
