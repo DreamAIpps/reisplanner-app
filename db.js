@@ -466,14 +466,51 @@ async function initDb() {
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
 
+    -- x/y/width/height zijn fracties van de pagina (0-1), niet pixels — zo
+    -- blijft een foto op dezelfde relatieve plek staan ongeacht schermgrootte
+    -- of (later) afdrukresolutie. Dit is wat vrij verslepen en met een
+    -- hoekgreep vergroten/verkleinen op de A4-pagina mogelijk maakt.
     CREATE TABLE IF NOT EXISTS photobook_page_photos (
       id SERIAL PRIMARY KEY,
       page_id INTEGER NOT NULL REFERENCES photobook_pages(id) ON DELETE CASCADE,
       photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
       position INTEGER NOT NULL,
-      caption TEXT
+      caption TEXT,
+      x REAL NOT NULL DEFAULT 0.1,
+      y REAL NOT NULL DEFAULT 0.1,
+      width REAL NOT NULL DEFAULT 0.4,
+      height REAL NOT NULL DEFAULT 0.4
     );
     CREATE INDEX IF NOT EXISTS photobook_page_photos_page_idx ON photobook_page_photos(page_id, position);
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS x REAL NOT NULL DEFAULT 0.1;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS y REAL NOT NULL DEFAULT 0.1;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS width REAL NOT NULL DEFAULT 0.4;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS height REAL NOT NULL DEFAULT 0.4;
+
+    -- Foto's van vóór het losse verslepen/schalen stonden allemaal op
+    -- dezelfde standaardplek — dit verspreidt ze eenmalig over een simpel
+    -- rooster per pagina, zodat ze niet allemaal op elkaar blijven liggen.
+    -- De WHERE-voorwaarde (nog op de verse standaardwaarde) maakt dit veilig
+    -- om bij elke herstart opnieuw te draaien.
+    WITH ranked AS (
+      SELECT id, page_id,
+             ROW_NUMBER() OVER (PARTITION BY page_id ORDER BY position ASC) - 1 AS idx,
+             COUNT(*) OVER (PARTITION BY page_id) AS total
+      FROM photobook_page_photos
+    )
+    -- Vergelijking met een kleine tolerantie, niet exacte gelijkheid: REAL
+    -- (float4) van de DEFAULT 0.1 kan als 0.100000001490116... zijn
+    -- opgeslagen, waardoor "pp.x = 0.1" nooit waar is en de spreiding
+    -- hieronder stil zou overslaan.
+    UPDATE photobook_page_photos pp
+    SET x = 0.06 + (r.idx % 2) * 0.47,
+        y = 0.06 + (r.idx / 2) * 0.47,
+        width = 0.44,
+        height = 0.44
+    FROM ranked r
+    WHERE pp.id = r.id AND r.total > 1
+      AND ABS(pp.x - 0.1) < 0.001 AND ABS(pp.y - 0.1) < 0.001
+      AND ABS(pp.width - 0.4) < 0.001 AND ABS(pp.height - 0.4) < 0.001;
 
     -- photobook_pages had oorspronkelijk zelf één foto + bijschrift per rij
     -- (photo_id/caption) — nu vervangen door photobook_page_photos hierboven,
