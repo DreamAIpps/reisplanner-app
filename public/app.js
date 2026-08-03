@@ -444,6 +444,12 @@ const api = {
   getQuizState: (sessionId) => apiFetch(`/api/quiz-sessions/${sessionId}/state`),
   answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
   getQuizStats: (tripId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/trips/${tripId}/quiz/stats`),
+  getPhotobooks: (tripId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/trips/${tripId}/photobooks`),
+  createPhotobook: (tripId, title) => _guestMode ? Promise.reject(new Error("Het fotoboek vereist een account.")) : apiFetch(`/api/trips/${tripId}/photobooks`, { method: "POST", body: JSON.stringify({ title }) }),
+  getPhotobook: (id) => apiFetch(`/api/photobooks/${id}`),
+  updatePhotobook: (id, d) => apiFetch(`/api/photobooks/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deletePhotobook: (id) => apiFetch(`/api/photobooks/${id}`, { method: "DELETE" }),
+  savePhotobookPages: (id, pages) => apiFetch(`/api/photobooks/${id}/pages`, { method: "PUT", body: JSON.stringify({ pages }) }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -5561,6 +5567,190 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly, cur
 // De sleutel staat als tekst in de database (packing_items.category), dus die
 // blijft ongewijzigd — inclusief de emoji, anders raken bestaande paklijsten hun
 // categorie kwijt. Alleen wat de gebruiker ziet is vervangen door label + icoon.
+// ---------- Fotoboek ----------
+function PhotobookTab({ trip }) {
+  const [books, setBooks] = useState(undefined); // undefined = laden
+  const [error, setError] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [openBookId, setOpenBookId] = useState(null);
+
+  const load = useCallback(async () => {
+    try { setBooks(await api.getPhotobooks(trip.id)); }
+    catch { setBooks([]); }
+  }, [trip.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleCreate() {
+    setCreating(true); setError(null);
+    try {
+      const book = await api.createPhotobook(trip.id);
+      setOpenBookId(book.id);
+      load();
+    } catch (err) { setError(err.message || "Kon geen fotoboek maken"); }
+    finally { setCreating(false); }
+  }
+
+  if (openBookId) {
+    return <PhotobookEditor tripId={trip.id} bookId={openBookId} onBack={() => { setOpenBookId(null); load(); }} />;
+  }
+
+  if (books === undefined) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+
+  return (
+    <div className="max-w-md mx-auto">
+      <div className="text-center py-6">
+        <Icon name="frame" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
+        <h3 className="font-display text-[21px] text-gray-800 mb-2">Fotoboek</h3>
+        <p className="text-sm text-gray-500 leading-relaxed mb-5">
+          Stel samen een fotoboek van deze reis samen — een voorgestelde selectie, volgorde en bijschrift om mee te beginnen, die je zelf verder aanpast.
+        </p>
+        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
+        <Button onClick={handleCreate} disabled={creating}>{creating ? "Fotoboek maken..." : "+ Nieuw fotoboek"}</Button>
+      </div>
+      {books.length > 0 && (
+        <div className="space-y-2">
+          {books.map((b) => (
+            <button key={b.id} type="button" onClick={() => setOpenBookId(b.id)}
+              className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-white shadow-sm hover:border-sky-200 transition-colors text-left">
+              {b.coverThumbUrl
+                ? <img src={b.coverThumbUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                : <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center shrink-0"><Icon name="frame" size={20} className="text-gray-300" /></div>}
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-gray-800 truncate">{b.title}</div>
+                <div className="text-xs text-gray-400">{b.pageCount} {b.pageCount === 1 ? "pagina" : "pagina's"}</div>
+              </div>
+              <Icon name="arrowRight" size={16} className="text-gray-300 shrink-0" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhotobookEditor({ tripId, bookId, onBack }) {
+  const [title, setTitle] = useState("");
+  const [pages, setPages] = useState(null); // null = laden
+  const [allPhotos, setAllPhotos] = useState([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
+    api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
+  }, [bookId, tripId]);
+
+  function move(i, dir) {
+    setPages((ps) => {
+      const j = i + dir;
+      if (j < 0 || j >= ps.length) return ps;
+      const copy = [...ps];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+    setDirty(true);
+  }
+  function remove(i) {
+    setPages((ps) => ps.filter((_, idx) => idx !== i));
+    setDirty(true);
+  }
+  function setCaption(i, text) {
+    setPages((ps) => ps.map((p, idx) => (idx === i ? { ...p, caption: text } : p)));
+    setDirty(true);
+  }
+  function addPhoto(photo) {
+    setPages((ps) => [...ps, { photoId: photo.id, caption: null, url: photo.url, thumbUrl: photo.thumb_url }]);
+    setDirty(true);
+    setShowPicker(false);
+  }
+
+  async function handleSaveTitle() {
+    if (!title.trim()) return;
+    await api.updatePhotobook(bookId, { title: title.trim() });
+  }
+
+  async function handleSavePages() {
+    setSaving(true); setError(null);
+    try {
+      await api.savePhotobookPages(bookId, pages.map((p) => ({ photo_id: p.photoId, caption: p.caption })));
+      setDirty(false);
+    } catch (err) { setError(err.message || "Opslaan mislukt"); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    if (!confirm("Dit fotoboek verwijderen?")) return;
+    await api.deletePhotobook(bookId);
+    onBack();
+  }
+
+  if (pages === null) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+
+  const usedIds = new Set(pages.map((p) => p.photoId));
+  const pickable = allPhotos.filter((p) => !usedIds.has(p.id));
+
+  return (
+    <div className="max-w-md mx-auto">
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors">
+        <Icon name="arrowLeft" size={15} />Alle fotoboeken
+      </button>
+      <div className="flex items-center gap-2 mb-4">
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
+          className="!text-lg !font-display flex-1" placeholder="Titel van het fotoboek" />
+        <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+          <Icon name="trash" size={16} />
+        </button>
+      </div>
+      {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
+      <div className="space-y-3 mb-4">
+        {pages.map((p, i) => (
+          <div key={`${p.photoId}-${i}`} className="flex gap-3 p-3 rounded-xl border border-gray-100 bg-white shadow-sm">
+            <img src={p.thumbUrl || p.url} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs text-gray-400 mb-1">Pagina {i + 1}</div>
+              <Input value={p.caption || ""} onChange={(e) => setCaption(i, e.target.value)} placeholder="Bijschrift (optioneel)" className="!text-sm" />
+            </div>
+            <div className="flex flex-col items-center gap-1 shrink-0">
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors">
+                <Icon name="arrowUp" size={14} />
+              </button>
+              <button type="button" onClick={() => remove(i)} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                <Icon name="close" size={14} />
+              </button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === pages.length - 1} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors" style={{ transform: "rotate(180deg)" }}>
+                <Icon name="arrowUp" size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {pages.length === 0 && <div className="text-center text-sm text-gray-400 py-8">Nog geen foto's in dit fotoboek.</div>}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="secondary" onClick={() => setShowPicker(true)}>+ Foto toevoegen</Button>
+        <Button onClick={handleSavePages} disabled={saving || !dirty}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+      </div>
+      {showPicker && (
+        <Modal title="Foto toevoegen" onClose={() => setShowPicker(false)}>
+          {pickable.length === 0 ? (
+            <div className="text-sm text-gray-400 text-center py-6">Alle foto's van deze reis staan al in het boek.</div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto">
+              {pickable.map((p) => (
+                <button key={p.id} type="button" onClick={() => addPhoto(p)} className="aspect-square rounded-lg overflow-hidden border border-gray-100">
+                  <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 const PACKING_CATEGORIES = [
   { key: "📄 Documenten", label: "Documenten", icon: "doc" },
   { key: "👕 Kleding", label: "Kleding", icon: "shirt" },
@@ -6806,6 +6996,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     { key: "packing", label: "Paklijst", icon: "suitcase" },
     { key: "map", label: "Kaart", icon: "map" },
     { key: "quiz", label: "Fotoquiz", icon: "sparkle" },
+    { key: "photobook", label: "Fotoboek", icon: "frame" },
   ];
 
   // Bottom nav tabs for mobile
@@ -6821,6 +7012,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     { key: "transport", icon: "plane", label: "Vervoer" },
     { key: "packing", icon: "suitcase", label: "Paklijst" },
     { key: "map", icon: "map", label: "Kaart" },
+    { key: "photobook", icon: "frame", label: "Fotoboek" },
     ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
@@ -7009,6 +7201,11 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>
       )}
+
+      {/* Zelfde reden als de fotoquiz hierboven: los van de readOnly-splitsing
+          zodat ook alleen-lezen reisleden (niet alleen eigenaar/editor) samen
+          een fotoboek kunnen samenstellen. */}
+      {tab === "photobook" && <PhotobookTab trip={viewTrip} />}
 
       {/* "Meer" dropdown — Verblijf, Vervoer, Paklijst live only here on mobile */}
       {!readOnly && showMoreMenu && (

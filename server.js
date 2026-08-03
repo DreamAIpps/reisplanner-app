@@ -553,7 +553,7 @@ const routes = [];
 // Only tables named here may be interpolated into resolveTripId's SQL.
 const TRIP_SCOPE_TABLES = new Set([
   "days", "activities", "accommodations", "transports",
-  "photos", "journal_entries", "journal_comments", "expenses", "packing_items",
+  "photos", "journal_entries", "journal_comments", "expenses", "packing_items", "photobooks",
 ]);
 function route(method, pattern, handler, opts) {
   const keys = [];
@@ -3058,6 +3058,126 @@ route("GET", "/api/trips/:id/quiz/stats", async (req, res, params) => {
     totalScore: r.total_score, gamesPlayed: r.games_played, avgScore: r.avg_score,
   })));
 }, { tripScope: "param", allowViewer: true });
+
+// ---------- Fotoboek ----------
+// Het gezin stelt zelf een fotoboek samen uit de foto's van de reis: bij het
+// aanmaken krijgen ze een voorgestelde selectie/volgorde/bijschrift (alle
+// foto's, chronologisch, bijschrift afgeleid uit activiteit/vervoer/verblijf/
+// dag), die ze daarna zelf verder aanpassen. Bestellen bij een drukkerij is
+// een latere stap — dit is puur het samenstellen.
+
+function photobookCaption(p) {
+  if (p.activity_title) return p.activity_location ? `${p.activity_title} — ${p.activity_location}` : p.activity_title;
+  if (p.transport_type) return p.from_location && p.to_location ? `${p.transport_type}: ${p.from_location} → ${p.to_location}` : p.transport_type;
+  if (p.accommodation_name) return p.accommodation_name;
+  if (p.day_title) return p.day_title;
+  if (p.day_date) return new Date(p.day_date).toLocaleDateString("nl-NL", { day: "numeric", month: "long" });
+  return null;
+}
+
+route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
+  const { rows } = await query(
+    `SELECT b.id, b.title, b.status, b.created_at,
+            (SELECT COUNT(*) FROM photobook_pages pp WHERE pp.photobook_id = b.id) AS page_count,
+            (SELECT pp.photo_id FROM photobook_pages pp WHERE pp.photobook_id = b.id ORDER BY pp.position ASC LIMIT 1) AS cover_photo_id
+     FROM photobooks b WHERE b.trip_id = $1 ORDER BY b.created_at DESC`,
+    [params.id]
+  );
+  sendJson(res, 200, rows.map((r) => ({
+    id: r.id, title: r.title, status: r.status, pageCount: Number(r.page_count),
+    coverThumbUrl: r.cover_photo_id ? `/api/photos/${r.cover_photo_id}/thumb` : null,
+  })));
+}, { tripScope: "param", allowViewer: true });
+
+route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
+  const title = (body?.title && String(body.title).trim()) || "Fotoboek";
+  const { rows: bookRows } = await query(
+    "INSERT INTO photobooks (trip_id, title, created_by) VALUES ($1,$2,$3) RETURNING id",
+    [params.id, title, req.user.id]
+  );
+  const bookId = bookRows[0].id;
+
+  const { rows: photos } = await query(
+    `SELECT p.id,
+            a.title AS activity_title, a.location AS activity_location,
+            tr.type AS transport_type, tr.from_location, tr.to_location,
+            ac.name AS accommodation_name,
+            d.title AS day_title, d.date AS day_date
+     FROM photos p
+     LEFT JOIN activities a ON a.id = p.activity_id
+     LEFT JOIN transports tr ON tr.id = p.transport_id
+     LEFT JOIN accommodations ac ON ac.id = p.accommodation_id
+     LEFT JOIN days d ON d.id = p.day_id
+     WHERE p.trip_id = $1
+     ORDER BY p.taken_at ASC NULLS LAST, p.created_at ASC`,
+    [params.id]
+  );
+
+  for (let i = 0; i < photos.length; i++) {
+    await query(
+      "INSERT INTO photobook_pages (photobook_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
+      [bookId, photos[i].id, i, photobookCaption(photos[i])]
+    );
+  }
+
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: photos.length });
+}, { tripScope: "param", allowViewer: true });
+
+route("GET", "/api/photobooks/:id", async (req, res, params) => {
+  const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
+  if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
+  const { rows: pages } = await query(
+    `SELECT pp.id, pp.photo_id, pp.position, pp.caption
+     FROM photobook_pages pp WHERE pp.photobook_id = $1 ORDER BY pp.position ASC`,
+    [params.id]
+  );
+  sendJson(res, 200, {
+    id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
+    pages: pages.map((p) => ({
+      id: p.id, photoId: p.photo_id, caption: p.caption,
+      url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
+    })),
+  });
+}, { tripScope: "photobooks", allowViewer: true });
+
+route("PUT", "/api/photobooks/:id", async (req, res, params, body) => {
+  const title = body?.title && String(body.title).trim();
+  if (!title) return sendError(res, 400, "Titel is verplicht");
+  await query("UPDATE photobooks SET title = $1 WHERE id = $2", [title, params.id]);
+  sendJson(res, 200, { ok: true });
+}, { tripScope: "photobooks", allowViewer: true });
+
+route("DELETE", "/api/photobooks/:id", async (req, res, params) => {
+  await query("DELETE FROM photobooks WHERE id = $1", [params.id]);
+  res.writeHead(204); res.end();
+}, { tripScope: "photobooks", allowViewer: true });
+
+// Eén bulk-vervanging van de hele paginalijst (foto + bijschrift, in de
+// gewenste volgorde) — simpeler dan losse routes voor toevoegen/verwijderen/
+// herordenen/bijschrift-bewerken, en de client stuurt toch altijd de complete
+// actuele lijst na elke wijziging.
+route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
+  const items = Array.isArray(body?.pages) ? body.pages : null;
+  if (!items) return sendError(res, 400, "Ongeldige paginalijst");
+  const photoIds = items.map((it) => Number(it.photo_id)).filter(Number.isInteger);
+  if (photoIds.length !== items.length) return sendError(res, 400, "Ongeldige foto in paginalijst");
+  const { rows: bookRows } = await query("SELECT trip_id FROM photobooks WHERE id = $1", [params.id]);
+  if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
+  const tripId = bookRows[0].trip_id;
+  for (const id of photoIds) {
+    const { rows } = await query("SELECT 1 FROM photos WHERE id = $1 AND trip_id = $2", [id, tripId]);
+    if (!rows.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
+  }
+  await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
+  for (let i = 0; i < items.length; i++) {
+    const caption = typeof items[i].caption === "string" ? items[i].caption.trim() || null : null;
+    await query(
+      "INSERT INTO photobook_pages (photobook_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
+      [params.id, photoIds[i], i, caption]
+    );
+  }
+  sendJson(res, 200, { ok: true, pageCount: items.length });
+}, { tripScope: "photobooks", allowViewer: true });
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
