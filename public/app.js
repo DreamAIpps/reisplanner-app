@@ -8065,6 +8065,7 @@ function CockpitPanel() {
         <StatTile label="Geheugen (RSS)" value={`${metrics.memory.rssMb} MB`} />
         <StatTile label="DB-pool" value={`${dbActive}/${metrics.dbPool.total} actief`} tone={metrics.dbPool.waiting > 0 ? "critical" : undefined} />
         <StatTile label="Totaal sinds start" value={`${metrics.totalRequests} req`} />
+        <StatTile label="Database-grootte" value={metrics.databaseBytes != null ? fmtBytes(metrics.databaseBytes) : "—"} />
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">

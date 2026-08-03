@@ -1048,6 +1048,14 @@ route("GET", "/api/admin/metrics", async (req, res) => {
 
   const mem = process.memoryUsage();
 
+  let databaseBytes = null;
+  try {
+    const dbSize = await query("SELECT pg_database_size(current_database()) AS bytes");
+    databaseBytes = Number(dbSize.rows[0].bytes);
+  } catch (err) {
+    console.error("pg_database_size niet beschikbaar:", err.message);
+  }
+
   sendJson(res, 200, {
     startedAt: STARTED_AT.toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
@@ -1067,6 +1075,7 @@ route("GET", "/api/admin/metrics", async (req, res) => {
       heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
     },
     dbPool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount },
+    databaseBytes,
     nodeVersion: process.version,
   });
 });
