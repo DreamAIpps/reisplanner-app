@@ -3079,7 +3079,9 @@ route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
   const { rows } = await query(
     `SELECT b.id, b.title, b.status, b.created_at,
             (SELECT COUNT(*) FROM photobook_pages pp WHERE pp.photobook_id = b.id) AS page_count,
-            (SELECT pp.photo_id FROM photobook_pages pp WHERE pp.photobook_id = b.id ORDER BY pp.position ASC LIMIT 1) AS cover_photo_id
+            (SELECT pgp.photo_id FROM photobook_page_photos pgp
+             JOIN photobook_pages pp2 ON pp2.id = pgp.page_id
+             WHERE pp2.photobook_id = b.id ORDER BY pp2.position ASC, pgp.position ASC LIMIT 1) AS cover_photo_id
      FROM photobooks b WHERE b.trip_id = $1 ORDER BY b.created_at DESC`,
     [params.id]
   );
@@ -3113,29 +3115,59 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     [params.id]
   );
 
+  // Voorgesteld: één foto per pagina, met de afgeleide bijschrift-tekst als
+  // paginatitel — een simpele, veilige start die de gebruiker daarna zelf
+  // verder samenvoegt tot pagina's met meerdere foto's, beschrijvingen en
+  // een eigen achtergrond.
   for (let i = 0; i < photos.length; i++) {
+    const { rows: pageRows } = await query(
+      "INSERT INTO photobook_pages (photobook_id, position, title) VALUES ($1,$2,$3) RETURNING id",
+      [bookId, i, photobookCaption(photos[i])]
+    );
     await query(
-      "INSERT INTO photobook_pages (photobook_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
-      [bookId, photos[i].id, i, photobookCaption(photos[i])]
+      "INSERT INTO photobook_page_photos (page_id, photo_id, position) VALUES ($1,$2,0)",
+      [pageRows[0].id, photos[i].id]
     );
   }
 
   sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: photos.length });
 }, { tripScope: "param", allowViewer: true });
 
+function photobookBackground(page) {
+  if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
+  if (page.background_type === "photo" && page.background_photo_id) {
+    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw` };
+  }
+  return null;
+}
+
 route("GET", "/api/photobooks/:id", async (req, res, params) => {
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
   const { rows: pages } = await query(
-    `SELECT pp.id, pp.photo_id, pp.position, pp.caption
-     FROM photobook_pages pp WHERE pp.photobook_id = $1 ORDER BY pp.position ASC`,
+    "SELECT * FROM photobook_pages WHERE photobook_id = $1 ORDER BY position ASC",
     [params.id]
   );
-  sendJson(res, 200, {
-    id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
-    pages: pages.map((p) => ({
+  const { rows: pagePhotos } = await query(
+    `SELECT pgp.* FROM photobook_page_photos pgp
+     JOIN photobook_pages pp ON pp.id = pgp.page_id
+     WHERE pp.photobook_id = $1 ORDER BY pgp.page_id ASC, pgp.position ASC`,
+    [params.id]
+  );
+  const photosByPage = new Map();
+  for (const p of pagePhotos) {
+    if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
+    photosByPage.get(p.page_id).push({
       id: p.id, photoId: p.photo_id, caption: p.caption,
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
+    });
+  }
+  sendJson(res, 200, {
+    id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
+    pages: pages.map((pg) => ({
+      id: pg.id, title: pg.title, description: pg.description,
+      background: photobookBackground(pg),
+      photos: photosByPage.get(pg.id) || [],
     })),
   });
 }, { tripScope: "photobooks", allowViewer: true });
@@ -3152,29 +3184,61 @@ route("DELETE", "/api/photobooks/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 }, { tripScope: "photobooks", allowViewer: true });
 
-// Eén bulk-vervanging van de hele paginalijst (foto + bijschrift, in de
-// gewenste volgorde) — simpeler dan losse routes voor toevoegen/verwijderen/
-// herordenen/bijschrift-bewerken, en de client stuurt toch altijd de complete
-// actuele lijst na elke wijziging.
+// Eén bulk-vervanging van de hele paginalijst — simpeler dan losse routes
+// voor toevoegen/verwijderen/herordenen/bewerken van pagina's, foto's en
+// achtergronden, en de client stuurt toch altijd de complete actuele
+// structuur na elke wijziging.
 route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   const items = Array.isArray(body?.pages) ? body.pages : null;
   if (!items) return sendError(res, 400, "Ongeldige paginalijst");
-  const photoIds = items.map((it) => Number(it.photo_id)).filter(Number.isInteger);
-  if (photoIds.length !== items.length) return sendError(res, 400, "Ongeldige foto in paginalijst");
+
   const { rows: bookRows } = await query("SELECT trip_id FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
   const tripId = bookRows[0].trip_id;
-  for (const id of photoIds) {
+
+  const allPhotoIds = new Set();
+  for (const page of items) {
+    if (!Array.isArray(page.photos)) return sendError(res, 400, "Ongeldige pagina");
+    for (const p of page.photos) {
+      const id = Number(p.photo_id);
+      if (!Number.isInteger(id)) return sendError(res, 400, "Ongeldige foto in paginalijst");
+      allPhotoIds.add(id);
+    }
+    if (page.background?.type === "photo") {
+      const id = Number(page.background.photo_id);
+      if (!Number.isInteger(id)) return sendError(res, 400, "Ongeldige achtergrondfoto");
+      allPhotoIds.add(id);
+    }
+  }
+  for (const id of allPhotoIds) {
     const { rows } = await query("SELECT 1 FROM photos WHERE id = $1 AND trip_id = $2", [id, tripId]);
     if (!rows.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
   }
+
   await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
   for (let i = 0; i < items.length; i++) {
-    const caption = typeof items[i].caption === "string" ? items[i].caption.trim() || null : null;
-    await query(
-      "INSERT INTO photobook_pages (photobook_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
-      [params.id, photoIds[i], i, caption]
+    const page = items[i];
+    const title = typeof page.title === "string" ? page.title.trim() || null : null;
+    const description = typeof page.description === "string" ? page.description.trim() || null : null;
+    let bgType = null, bgColor = null, bgPhotoId = null;
+    if (page.background?.type === "color" && typeof page.background.value === "string") {
+      bgType = "color"; bgColor = page.background.value;
+    } else if (page.background?.type === "photo") {
+      bgType = "photo"; bgPhotoId = Number(page.background.photo_id);
+    }
+    const { rows: pageRows } = await query(
+      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [params.id, i, title, description, bgType, bgColor, bgPhotoId]
     );
+    const pageId = pageRows[0].id;
+    for (let j = 0; j < page.photos.length; j++) {
+      const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
+      await query(
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption) VALUES ($1,$2,$3,$4)",
+        [pageId, Number(page.photos[j].photo_id), j, caption]
+      );
+    }
   }
   sendJson(res, 200, { ok: true, pageCount: items.length });
 }, { tripScope: "photobooks", allowViewer: true });

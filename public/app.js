@@ -5629,21 +5629,29 @@ function PhotobookTab({ trip }) {
   );
 }
 
+const PHOTOBOOK_BG_SWATCHES = ["#FDF5F0", "#F4F2EF", "#E6E0DA", "#241D19", "#FF7A00", "#3D5A80"];
+
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [pages, setPages] = useState(null); // null = laden
   const [allPhotos, setAllPhotos] = useState([]);
-  const [showPicker, setShowPicker] = useState(false);
+  const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
+  const [pickerSelected, setPickerSelected] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
     api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
   }, [bookId, tripId]);
 
-  function move(i, dir) {
+  function updatePage(i, patch) {
+    setPages((ps) => ps.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+    setDirty(true);
+  }
+  function movePage(i, dir) {
     setPages((ps) => {
       const j = i + dir;
       if (j < 0 || j >= ps.length) return ps;
@@ -5653,18 +5661,70 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     });
     setDirty(true);
   }
-  function remove(i) {
+  function removePage(i) {
     setPages((ps) => ps.filter((_, idx) => idx !== i));
     setDirty(true);
   }
-  function setCaption(i, text) {
-    setPages((ps) => ps.map((p, idx) => (idx === i ? { ...p, caption: text } : p)));
+  function addPage() {
+    setPages((ps) => [...ps, { title: null, description: null, background: null, photos: [] }]);
     setDirty(true);
   }
-  function addPhoto(photo) {
-    setPages((ps) => [...ps, { photoId: photo.id, caption: null, url: photo.url, thumbUrl: photo.thumb_url }]);
+  function setPhotoCaption(pageIndex, photoIndex, text) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, photos: p.photos.map((ph, j) => (j === photoIndex ? { ...ph, caption: text } : ph)),
+    })));
     setDirty(true);
-    setShowPicker(false);
+  }
+  function removePhoto(pageIndex, photoIndex) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, photos: p.photos.filter((_, j) => j !== photoIndex) })));
+    setDirty(true);
+  }
+  function movePhoto(pageIndex, photoIndex, dir) {
+    setPages((ps) => ps.map((p, i) => {
+      if (i !== pageIndex) return p;
+      const j = photoIndex + dir;
+      if (j < 0 || j >= p.photos.length) return p;
+      const copy = [...p.photos];
+      [copy[photoIndex], copy[j]] = [copy[j], copy[photoIndex]];
+      return { ...p, photos: copy };
+    }));
+    setDirty(true);
+  }
+  function setBackgroundColor(pageIndex, color) {
+    updatePage(pageIndex, { background: { type: "color", value: color } });
+  }
+  function setBackgroundNone(pageIndex) {
+    updatePage(pageIndex, { background: null });
+  }
+  // De foto verhuist van de gewone foto-rij naar de achtergrond — niet
+  // dubbel getoond.
+  function useAsBackground(pageIndex, photo) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p,
+      photos: p.photos.filter((ph) => ph.photoId !== photo.photoId),
+      background: { type: "photo", photoId: photo.photoId, url: photo.url },
+    })));
+    setDirty(true);
+  }
+
+  function openPicker(pageIndex) {
+    setPickerForPage(pageIndex);
+    setPickerSelected(new Set());
+  }
+  function togglePick(id) {
+    setPickerSelected((s) => {
+      const copy = new Set(s);
+      if (copy.has(id)) copy.delete(id); else copy.add(id);
+      return copy;
+    });
+  }
+  function confirmPicker() {
+    const chosen = allPhotos.filter((p) => pickerSelected.has(p.id));
+    setPages((ps) => ps.map((p, i) => (i !== pickerForPage ? p : {
+      ...p, photos: [...p.photos, ...chosen.map((c) => ({ photoId: c.id, caption: null, url: c.url, thumbUrl: c.thumb_url }))],
+    })));
+    setDirty(true);
+    setPickerForPage(null);
   }
 
   async function handleSaveTitle() {
@@ -5675,7 +5735,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   async function handleSavePages() {
     setSaving(true); setError(null);
     try {
-      await api.savePhotobookPages(bookId, pages.map((p) => ({ photo_id: p.photoId, caption: p.caption })));
+      await api.savePhotobookPages(bookId, pages.map((p) => ({
+        title: p.title, description: p.description,
+        background: !p.background ? null
+          : p.background.type === "color" ? { type: "color", value: p.background.value }
+          : { type: "photo", photo_id: p.background.photoId },
+        photos: p.photos.map((ph) => ({ photo_id: ph.photoId, caption: ph.caption })),
+      })));
       setDirty(false);
     } catch (err) { setError(err.message || "Opslaan mislukt"); }
     finally { setSaving(false); }
@@ -5689,7 +5755,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
 
   if (pages === null) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
-  const usedIds = new Set(pages.map((p) => p.photoId));
+  if (showPreview) {
+    return <PhotobookPreview title={title} pages={pages} onClose={() => setShowPreview(false)} />;
+  }
+
+  const usedIds = new Set(pages.flatMap((p) => [
+    ...p.photos.map((ph) => ph.photoId),
+    ...(p.background?.type === "photo" ? [p.background.photoId] : []),
+  ]));
   const pickable = allPhotos.filter((p) => !usedIds.has(p.id));
 
   return (
@@ -5700,53 +5773,191 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       <div className="flex items-center gap-2 mb-4">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
           className="!text-lg !font-display flex-1" placeholder="Titel van het fotoboek" />
+        <button type="button" onClick={() => setShowPreview(true)} aria-label="Voorbeeld bekijken"
+          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+          <Icon name="eye" size={17} />
+        </button>
         <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
           <Icon name="trash" size={16} />
         </button>
       </div>
       {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
-      <div className="space-y-3 mb-4">
-        {pages.map((p, i) => (
-          <div key={`${p.photoId}-${i}`} className="flex gap-3 p-3 rounded-xl border border-gray-100 bg-white shadow-sm">
-            <img src={p.thumbUrl || p.url} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="text-xs text-gray-400 mb-1">Pagina {i + 1}</div>
-              <Input value={p.caption || ""} onChange={(e) => setCaption(i, e.target.value)} placeholder="Bijschrift (optioneel)" className="!text-sm" />
+
+      <div className="space-y-4 mb-4">
+        {pages.map((page, i) => (
+          <div key={i} className="p-3 rounded-xl border border-gray-100 bg-white shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400">Pagina {i + 1}</span>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => movePage(i, -1)} disabled={i === 0}
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors">
+                  <Icon name="arrowUp" size={13} />
+                </button>
+                <button type="button" onClick={() => movePage(i, 1)} disabled={i === pages.length - 1}
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors" style={{ transform: "rotate(180deg)" }}>
+                  <Icon name="arrowUp" size={13} />
+                </button>
+                <button type="button" onClick={() => removePage(i)}
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                  <Icon name="close" size={13} />
+                </button>
+              </div>
             </div>
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors">
-                <Icon name="arrowUp" size={14} />
-              </button>
-              <button type="button" onClick={() => remove(i)} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
-                <Icon name="close" size={14} />
-              </button>
-              <button type="button" onClick={() => move(i, 1)} disabled={i === pages.length - 1} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors" style={{ transform: "rotate(180deg)" }}>
-                <Icon name="arrowUp" size={14} />
-              </button>
+
+            <Input value={page.title || ""} onChange={(e) => updatePage(i, { title: e.target.value })}
+              placeholder="Titel van deze pagina" className="!text-sm !font-semibold mb-2" />
+            <Textarea rows={2} value={page.description || ""} onChange={(e) => updatePage(i, { description: e.target.value })}
+              placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
+
+            <div className="mb-3">
+              <div className="text-xs text-gray-400 mb-1.5">Achtergrond</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button type="button" onClick={() => setBackgroundNone(i)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${!page.background ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                  Geen
+                </button>
+                <button type="button" onClick={() => setBackgroundColor(i, page.background?.type === "color" ? page.background.value : "#FDF5F0")}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${page.background?.type === "color" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                  Kleur
+                </button>
+                {page.background?.type === "color" && (
+                  <>
+                    <input type="color" value={page.background.value} onChange={(e) => setBackgroundColor(i, e.target.value)}
+                      className="w-7 h-7 rounded-full border border-gray-200 p-0 overflow-hidden cursor-pointer" />
+                    {PHOTOBOOK_BG_SWATCHES.map((c) => (
+                      <button key={c} type="button" onClick={() => setBackgroundColor(i, c)} aria-label={c}
+                        className="w-5 h-5 rounded-full border border-gray-200" style={{ background: c }} />
+                    ))}
+                  </>
+                )}
+              </div>
+              {page.background?.type === "photo" && (
+                <div className="mt-2 flex items-center gap-2">
+                  <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                  <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
+                </div>
+              )}
             </div>
+
+            <div className="space-y-2">
+              {page.photos.map((ph, j) => (
+                <div key={`${ph.photoId}-${j}`} className="flex gap-2 items-start">
+                  <img src={ph.thumbUrl || ph.url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                  <Input value={ph.caption || ""} onChange={(e) => setPhotoCaption(i, j, e.target.value)}
+                    placeholder="Bijschrift (optioneel)" className="!text-sm flex-1" />
+                  <div className="flex flex-col gap-0.5 shrink-0">
+                    <button type="button" onClick={() => useAsBackground(i, ph)} title="Als achtergrond gebruiken"
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+                      <Icon name="frame" size={12} />
+                    </button>
+                    <button type="button" onClick={() => movePhoto(i, j, -1)} disabled={j === 0}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-gray-600 disabled:opacity-30 transition-colors">
+                      <Icon name="arrowUp" size={11} />
+                    </button>
+                    <button type="button" onClick={() => removePhoto(i, j)}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors">
+                      <Icon name="close" size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {page.photos.length === 0 && !page.background && (
+                <div className="text-xs text-gray-400 py-2">Nog geen foto's op deze pagina.</div>
+              )}
+            </div>
+            <button type="button" onClick={() => openPicker(i)}
+              className="mt-3 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+              + Foto's toevoegen
+            </button>
           </div>
         ))}
-        {pages.length === 0 && <div className="text-center text-sm text-gray-400 py-8">Nog geen foto's in dit fotoboek.</div>}
+        {pages.length === 0 && <div className="text-center text-sm text-gray-400 py-8">Nog geen pagina's in dit fotoboek.</div>}
       </div>
+
       <div className="flex gap-2">
-        <Button variant="secondary" onClick={() => setShowPicker(true)}>+ Foto toevoegen</Button>
+        <Button variant="secondary" onClick={addPage}>+ Nieuwe pagina</Button>
         <Button onClick={handleSavePages} disabled={saving || !dirty}>{saving ? "Opslaan..." : "Opslaan"}</Button>
       </div>
-      {showPicker && (
-        <Modal title="Foto toevoegen" onClose={() => setShowPicker(false)}>
+
+      {pickerForPage != null && (
+        <Modal title="Foto's toevoegen" onClose={() => setPickerForPage(null)}>
           {pickable.length === 0 ? (
             <div className="text-sm text-gray-400 text-center py-6">Alle foto's van deze reis staan al in het boek.</div>
           ) : (
-            <div className="grid grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto">
-              {pickable.map((p) => (
-                <button key={p.id} type="button" onClick={() => addPhoto(p)} className="aspect-square rounded-lg overflow-hidden border border-gray-100">
-                  <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-3 gap-2 max-h-[55vh] overflow-y-auto mb-3">
+                {pickable.map((p) => {
+                  const picked = pickerSelected.has(p.id);
+                  return (
+                    <button key={p.id} type="button" onClick={() => togglePick(p.id)}
+                      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${picked ? "border-sky-500" : "border-gray-100"}`}>
+                      <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
+                      {picked && (
+                        <div className="absolute inset-0 bg-sky-600/20 flex items-center justify-center">
+                          <div className="w-6 h-6 rounded-full bg-sky-600 flex items-center justify-center">
+                            <Icon name="check" size={13} className="text-white" />
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
+                Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
+              </Button>
+            </>
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+function PhotobookPreview({ title, pages, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[70] bg-gray-900 overflow-y-auto">
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
+        <span className="text-white text-sm font-medium truncate">{title}</span>
+        <button onClick={onClose} aria-label="Voorbeeld sluiten"
+          className="shrink-0 w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-white hover:bg-white/25 transition-colors">
+          <Icon name="close" size={18} />
+        </button>
+      </div>
+      <div className="px-4 pb-10 space-y-4" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>
+        {pages.map((page, i) => (
+          <div key={i} className="rounded-2xl overflow-hidden shadow-2xl min-h-[70vh] relative flex flex-col"
+            style={{
+              background: page.background?.type === "color" ? page.background.value
+                : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
+                : "#FAF9F7",
+            }}>
+            <div className="p-5 flex-1 flex flex-col">
+              {(page.title || page.description) && (
+                <div className={`mb-4 ${page.background ? "bg-white/85 backdrop-blur-sm rounded-xl p-3" : ""}`}>
+                  {page.title && <h3 className="font-display text-xl text-gray-800 mb-1">{page.title}</h3>}
+                  {page.description && <p className="text-sm text-gray-600 leading-relaxed">{page.description}</p>}
+                </div>
+              )}
+              {page.photos.length > 0 && (
+                <div className={`grid gap-2 ${page.photos.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {page.photos.map((ph, j) => (
+                    <div key={j} className="rounded-xl overflow-hidden bg-black/5">
+                      <img src={ph.url} alt="" className="w-full aspect-square object-cover" />
+                      {ph.caption && <div className="text-xs px-2 py-1.5 bg-white/85">{ph.caption}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {page.photos.length === 0 && !page.title && !page.description && (
+                <div className="flex-1 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
+              )}
+            </div>
+            <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
+          </div>
+        ))}
+        {pages.length === 0 && <div className="text-center text-white/50 py-20">Nog geen pagina's.</div>}
+      </div>
     </div>
   );
 }
