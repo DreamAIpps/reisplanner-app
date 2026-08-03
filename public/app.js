@@ -445,7 +445,7 @@ const api = {
   answerQuizQuestion: (sessionId, questionIndex, choice) => apiFetch(`/api/quiz-sessions/${sessionId}/answer`, { method: "POST", body: JSON.stringify({ questionIndex, choice }) }),
   getQuizStats: (tripId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/trips/${tripId}/quiz/stats`),
   getPhotobooks: (tripId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/trips/${tripId}/photobooks`),
-  createPhotobook: (tripId, title) => _guestMode ? Promise.reject(new Error("Het fotoboek vereist een account.")) : apiFetch(`/api/trips/${tripId}/photobooks`, { method: "POST", body: JSON.stringify({ title }) }),
+  createPhotobook: (tripId, opts) => _guestMode ? Promise.reject(new Error("Het fotoboek vereist een account.")) : apiFetch(`/api/trips/${tripId}/photobooks`, { method: "POST", body: JSON.stringify(opts || {}) }),
   getPhotobook: (id) => apiFetch(`/api/photobooks/${id}`),
   updatePhotobook: (id, d) => apiFetch(`/api/photobooks/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deletePhotobook: (id) => apiFetch(`/api/photobooks/${id}`, { method: "DELETE" }),
@@ -5653,6 +5653,8 @@ function PhotobookTab({ trip }) {
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
   const [openBookId, setOpenBookId] = useState(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1); // 1 = automatisch vullen?, 2 = hoeveel foto's per pagina?
 
   const load = useCallback(async () => {
     try { setBooks(await api.getPhotobooks(trip.id)); }
@@ -5661,10 +5663,11 @@ function PhotobookTab({ trip }) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleCreate() {
+  async function handleCreate(opts) {
     setCreating(true); setError(null);
     try {
-      const book = await api.createPhotobook(trip.id);
+      const book = await api.createPhotobook(trip.id, opts);
+      setWizardOpen(false);
       setOpenBookId(book.id);
       load();
     } catch (err) { setError(err.message || "Kon geen fotoboek maken"); }
@@ -5677,6 +5680,15 @@ function PhotobookTab({ trip }) {
 
   if (books === undefined) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
+  // Elke keuze toont meteen het bijpassende paginasjabloon (zelfde indelingen
+  // als de "Pagina sjablonen" in de editor), zodat je ziet wat je kiest.
+  const PHOTOBOOK_AUTOFILL_CHOICES = [
+    { n: 1, layout: PHOTOBOOK_LAYOUTS[0] },
+    { n: 2, layout: PHOTOBOOK_LAYOUTS[1] },
+    { n: 3, layout: PHOTOBOOK_LAYOUTS[3] },
+    { n: 4, layout: PHOTOBOOK_LAYOUTS[4] },
+  ];
+
   return (
     <div className="max-w-md mx-auto">
       <div className="text-center py-6">
@@ -5685,9 +5697,51 @@ function PhotobookTab({ trip }) {
         <p className="text-sm text-gray-500 leading-relaxed mb-5">
           Stel samen een fotoboek van deze reis samen — een voorgestelde selectie, volgorde en bijschrift om mee te beginnen, die je zelf verder aanpast.
         </p>
-        {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
-        <Button onClick={handleCreate} disabled={creating}>{creating ? "Fotoboek maken..." : "+ Nieuw fotoboek"}</Button>
+        {error && !wizardOpen && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
+        <Button onClick={() => { setWizardStep(1); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
       </div>
+
+      {wizardOpen && (
+        <Modal title="Nieuw fotoboek" onClose={() => !creating && setWizardOpen(false)}>
+          {wizardStep === 1 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-4">
+                Wil je een automatisch voorgevuld fotoboek maken, met de foto's van deze reis alvast verdeeld over de pagina's?
+              </p>
+              <div className="space-y-2">
+                <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
+                  className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Ja, vul automatisch</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Alle foto's van de reis worden verdeeld over pagina's, die je daarna zelf verder aanpast.</div>
+                </button>
+                <button type="button" onClick={() => handleCreate({ autofill: false })} disabled={creating}
+                  className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Nee, ik begin leeg</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Een leeg fotoboek waar je zelf pagina's en foto's aan toevoegt.</div>
+                </button>
+              </div>
+            </div>
+          )}
+          {wizardStep === 2 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-4">Hoeveel foto's per pagina?</p>
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
+                  <button key={n} type="button" onClick={() => handleCreate({ autofill: true, photosPerPage: n })} disabled={creating}
+                    className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                    <PhotobookLayoutThumb slots={layout.slots} />
+                    <span className="text-sm font-medium text-gray-800">{n}</span>
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setWizardStep(1)} disabled={creating}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
+            </div>
+          )}
+          {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mt-4">{error}</div>}
+          {creating && <div className="text-sm text-gray-400 mt-4">Fotoboek maken...</div>}
+        </Modal>
+      )}
       {books.length > 0 && (
         <div className="space-y-2">
           {books.map((b) => (
