@@ -5631,12 +5631,68 @@ function PhotobookTab({ trip }) {
 
 const PHOTOBOOK_BG_SWATCHES = ["#FDF5F0", "#F4F2EF", "#E6E0DA", "#241D19", "#FF7A00", "#3D5A80"];
 
+// Kant-en-klare paginaindelingen, zoals "Pagina sjablonen" bij professionele
+// fotoboek-editors (Albelli e.d.) — één tik legt de al aanwezige foto's op
+// deze pagina in een verzorgde verhouding neer, in plaats van dat je zelf
+// vanaf een stapel begint te schuiven. Vrij verslepen blijft daarna gewoon
+// mogelijk om het naar smaak bij te stellen.
+const PHOTOBOOK_LAYOUTS = [
+  { key: "1", label: "1 foto", slots: [
+    { x: 0.05, y: 0.05, width: 0.9, height: 0.9 },
+  ] },
+  { key: "2h", label: "2 naast elkaar", slots: [
+    { x: 0.05, y: 0.05, width: 0.44, height: 0.9 },
+    { x: 0.51, y: 0.05, width: 0.44, height: 0.9 },
+  ] },
+  { key: "2v", label: "2 boven-onder", slots: [
+    { x: 0.05, y: 0.05, width: 0.9, height: 0.44 },
+    { x: 0.05, y: 0.51, width: 0.9, height: 0.44 },
+  ] },
+  { key: "3", label: "1 groot + 2 klein", slots: [
+    { x: 0.05, y: 0.05, width: 0.56, height: 0.9 },
+    { x: 0.64, y: 0.05, width: 0.31, height: 0.43 },
+    { x: 0.64, y: 0.52, width: 0.31, height: 0.43 },
+  ] },
+  { key: "4", label: "4 in raster", slots: [
+    { x: 0.05, y: 0.05, width: 0.44, height: 0.44 },
+    { x: 0.51, y: 0.05, width: 0.44, height: 0.44 },
+    { x: 0.05, y: 0.51, width: 0.44, height: 0.44 },
+    { x: 0.51, y: 0.51, width: 0.44, height: 0.44 },
+  ] },
+];
+
+// Klein diagram van de indeling zelf (geen foto-inhoud) — zodat je in één
+// oogopslag ziet wat je kiest.
+function PhotobookLayoutThumb({ slots }) {
+  return (
+    <div className="relative w-9 h-11 rounded border border-gray-300 bg-gray-50 overflow-hidden shrink-0">
+      {slots.map((s, i) => (
+        <div key={i} className="absolute bg-gray-400 rounded-[1px]"
+          style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }} />
+      ))}
+    </div>
+  );
+}
+
+// Rooster/magneetpunten voor het verslepen en schalen — dezelfde gedachte
+// als "Raster aan/uit" bij professionele fotoboek-editors: makkelijk precies
+// tegen de marge/het midden aan leggen, zonder te moeten pixelen.
+const PHOTOBOOK_SNAP_GUIDES = [0, 0.05, 0.5, 0.95, 1];
+const PHOTOBOOK_SNAP_THRESHOLD = 0.015;
+const PHOTOBOOK_SNAP_STEP = 0.02;
+function snapPhotobookValue(v) {
+  for (const g of PHOTOBOOK_SNAP_GUIDES) {
+    if (Math.abs(v - g) < PHOTOBOOK_SNAP_THRESHOLD) return g;
+  }
+  return Math.round(v / PHOTOBOOK_SNAP_STEP) * PHOTOBOOK_SNAP_STEP;
+}
+
 // Vrij verslepen (heel het element) en met de hoekgreep vergroten/verkleinen
 // op de A4-canvas — x/y/width/height zijn fracties van de pagina, dus de
 // berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
 // niet via vaste pixelwaarden. Pointer Events (i.p.v. HTML5 drag-and-drop)
 // omdat die zowel met muis als met een vinger op de telefoon werken.
-function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl }) {
+function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap }) {
   const dragRef = useRef(null);
 
   function beginDrag(e, mode) {
@@ -5658,15 +5714,18 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
     const fx = (e.clientX - d.startX) / rect.width;
     const fy = (e.clientY - d.startY) / rect.height;
     if (d.mode === "move") {
-      onChangeRect({
-        x: Math.min(1 - d.startRect.width, Math.max(0, d.startRect.x + fx)),
-        y: Math.min(1 - d.startRect.height, Math.max(0, d.startRect.y + fy)),
-      });
+      let x = Math.min(1 - d.startRect.width, Math.max(0, d.startRect.x + fx));
+      let y = Math.min(1 - d.startRect.height, Math.max(0, d.startRect.y + fy));
+      if (snap) { x = snapPhotobookValue(x); y = snapPhotobookValue(y); }
+      onChangeRect({ x, y });
     } else {
-      onChangeRect({
-        width: Math.min(1 - d.startRect.x, Math.max(0.05, d.startRect.width + fx)),
-        height: Math.min(1 - d.startRect.y, Math.max(0.05, d.startRect.height + fy)),
-      });
+      let width = Math.min(1 - d.startRect.x, Math.max(0.05, d.startRect.width + fx));
+      let height = Math.min(1 - d.startRect.y, Math.max(0.05, d.startRect.height + fy));
+      if (snap) {
+        width = Math.max(0.05, snapPhotobookValue(d.startRect.x + width) - d.startRect.x);
+        height = Math.max(0.05, snapPhotobookValue(d.startRect.y + height) - d.startRect.y);
+      }
+      onChangeRect({ width, height });
     }
   }
   function endDrag(e) {
@@ -5709,6 +5768,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [error, setError] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
 
   useEffect(() => {
@@ -5736,6 +5796,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function addPage() {
     setPages((ps) => [...ps, { title: null, description: null, background: null, photos: [] }]);
+    setDirty(true);
+  }
+  // Legt de eerste N foto's (N = aantal vakken in de indeling) in de gekozen
+  // verhouding neer; extra foto's boven dat aantal blijven ongemoeid staan.
+  function applyLayout(pageIndex, layout) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, photos: p.photos.map((ph, j) => (j < layout.slots.length ? { ...ph, ...layout.slots[j] } : ph)),
+    })));
     setDirty(true);
   }
   function setPhotoCaption(pageIndex, photoIndex, text) {
@@ -5867,6 +5935,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       <div className="flex items-center gap-2 mb-4">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
           className="!text-lg !font-display flex-1" placeholder="Titel van het fotoboek" />
+        <button type="button" onClick={() => setSnapEnabled((s) => !s)} title="Uitlijnen op raster/marges tijdens verslepen"
+          className={`shrink-0 px-2.5 h-9 rounded-full text-xs font-medium border transition-colors ${snapEnabled ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-400 hover:border-gray-300"}`}>
+          Raster
+        </button>
         <button type="button" onClick={() => setShowPreview(true)} aria-label="Voorbeeld bekijken"
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
           <Icon name="eye" size={17} />
@@ -5937,6 +6009,19 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               )}
             </div>
 
+            {/* Indeling: één tik legt de al aanwezige foto's op deze pagina
+                in een verzorgde verhouding neer — daarna nog steeds vrij te
+                verslepen/schalen. */}
+            <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+              {PHOTOBOOK_LAYOUTS.map((layout) => (
+                <button key={layout.key} type="button" onClick={() => applyLayout(i, layout)} title={layout.label}
+                  disabled={page.photos.length === 0}
+                  className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
+                  <PhotobookLayoutThumb slots={layout.slots} />
+                </button>
+              ))}
+            </div>
+
             {/* Echte A4-verhouding (210:297) — wat je hier ziet is de pagina.
                 Tik een foto aan om 'm te verslepen (sleep de hele foto) of te
                 schalen (sleep de blauwe greep rechtsonder). */}
@@ -5962,7 +6047,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
                   onSelect={() => setSelectedPhoto({ page: i, photo: j })}
                   onChangeRect={(patch) => updatePhotoRect(i, j, patch)}
-                  getPageEl={() => canvasRefs.current[i]} />
+                  getPageEl={() => canvasRefs.current[i]}
+                  snap={snapEnabled} />
               ))}
               {page.photos.length === 0 && !page.background && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
