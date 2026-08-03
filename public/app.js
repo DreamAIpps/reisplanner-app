@@ -536,17 +536,21 @@ function daysUntilDeparture(startDate) {
 // Reizen-overzicht: aankomende reizen bovenaan, oplopend naar vertrek (dus de
 // eerstvolgende reis staat als eerste). Afgelopen reizen komen daarna, met de
 // meest recente bovenaan. Reizen zonder datum sluiten de rij.
+// 0 = nu bezig (vandaag valt tussen start en eind), 1 = aankomend, 2 =
+// afgelopen, 3 = geen datum bekend.
+function tripCategory(startDate, endDate) {
+  if (!startDate) return 3;
+  const untilStart = daysUntilDeparture(startDate);
+  if (endDate && untilStart <= 0 && daysUntilDeparture(endDate) >= 0) return 0;
+  return untilStart >= 0 ? 1 : 2;
+}
 function sortTripsByDeparture(trips) {
   return [...trips].sort((a, b) => {
-    const da = a.start_date ? daysUntilDeparture(a.start_date) : null;
-    const db = b.start_date ? daysUntilDeparture(b.start_date) : null;
-    if (da === null && db === null) return 0;
-    if (da === null) return 1;
-    if (db === null) return -1;
-    const aUpcoming = da >= 0, bUpcoming = db >= 0;
-    if (aUpcoming && bUpcoming) return da - db;
-    if (!aUpcoming && !bUpcoming) return db - da;
-    return aUpcoming ? -1 : 1;
+    const ca = tripCategory(a.start_date, a.end_date), cb = tripCategory(b.start_date, b.end_date);
+    if (ca !== cb) return ca - cb;
+    if (ca === 3) return 0;
+    const da = daysUntilDeparture(a.start_date), db = daysUntilDeparture(b.start_date);
+    return ca === 2 ? db - da : da - db; // afgelopen: meest recent eerst, anders oplopend
   });
 }
 // Guards the journal payload: on an array response `.entries` resolves to
