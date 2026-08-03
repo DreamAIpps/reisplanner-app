@@ -6172,14 +6172,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               {pickable.length === 0 ? (
                 <div className="text-sm text-gray-400 text-center py-6">Geen foto's gevonden.</div>
               ) : (
-                <div className="grid grid-cols-3 gap-2 max-h-[55vh] overflow-y-auto mb-3">
+                <div className="grid grid-cols-3 gap-2 mb-3">
                   {pickable.map((p) => {
                     const picked = pickerSelected.has(p.id);
                     const alreadyIn = photoPageNumbers.has(p.id);
                     return (
                       <button key={p.id} type="button" onClick={() => togglePick(p.id)}
                         className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${picked ? "border-sky-500" : "border-gray-100"}`}>
-                        <img src={p.thumb_url || p.url} alt="" className="w-full h-full object-cover" />
+                        <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                         {alreadyIn && !picked && (
                           <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px] font-medium">
                             In boek
