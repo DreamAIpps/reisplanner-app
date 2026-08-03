@@ -1048,6 +1048,14 @@ route("GET", "/api/admin/metrics", async (req, res) => {
 
   const mem = process.memoryUsage();
 
+  let databaseBytes = null;
+  try {
+    const dbSize = await query("SELECT pg_database_size(current_database()) AS bytes");
+    databaseBytes = Number(dbSize.rows[0].bytes);
+  } catch (err) {
+    console.error("pg_database_size niet beschikbaar:", err.message);
+  }
+
   sendJson(res, 200, {
     startedAt: STARTED_AT.toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
@@ -1067,6 +1075,7 @@ route("GET", "/api/admin/metrics", async (req, res) => {
       heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
     },
     dbPool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount },
+    databaseBytes,
     nodeVersion: process.version,
   });
 });
@@ -2504,25 +2513,6 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   catch { sendError(res, 500, "Kon tips niet verwerken"); }
 });
 
-// ---------- Photo suggestion via Unsplash ----------
-route("GET", "/api/photo-suggest", async (req, res, params, body) => {
-  const url = new URL(req.url, "http://localhost");
-  const destination = url.searchParams.get("destination") || "";
-  if (!destination) return sendError(res, 400, "Geen bestemming opgegeven");
-  if (!process.env.UNSPLASH_ACCESS_KEY) return sendError(res, 503, "UNSPLASH_ACCESS_KEY niet geconfigureerd");
-
-  const apiUrl = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(destination + " travel landscape")}&orientation=landscape&content_filter=high&client_id=${process.env.UNSPLASH_ACCESS_KEY}`;
-  const resp = await fetch(apiUrl);
-  if (!resp.ok) return sendError(res, 502, "Unsplash API fout");
-  const data = await resp.json();
-  sendJson(res, 200, {
-    url: data.urls.regular,
-    thumb: data.urls.small,
-    author: data.user.name,
-    author_link: data.user.links.html,
-  });
-});
-
 // ---------- Import (email parsing via Claude) ----------
 route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   const { text, image } = body;
@@ -3229,13 +3219,42 @@ route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
   })));
 }, { tripScope: "param", allowViewer: true });
 
+// Zelfde indelingen als de "Pagina sjablonen" in de editor (public/app.js,
+// PHOTOBOOK_LAYOUTS) — bij het automatisch vullen krijgt elke pagina meteen
+// dezelfde verzorgde indeling die je er later ook zelf op zou kunnen zetten.
+const PHOTOBOOK_AUTOFILL_LAYOUTS = {
+  1: [{ x: 0.05, y: 0.05, width: 0.9, height: 0.9 }],
+  2: [
+    { x: 0.05, y: 0.05, width: 0.44, height: 0.9 },
+    { x: 0.51, y: 0.05, width: 0.44, height: 0.9 },
+  ],
+  3: [
+    { x: 0.05, y: 0.05, width: 0.56, height: 0.9 },
+    { x: 0.64, y: 0.05, width: 0.31, height: 0.43 },
+    { x: 0.64, y: 0.52, width: 0.31, height: 0.43 },
+  ],
+  4: [
+    { x: 0.05, y: 0.05, width: 0.44, height: 0.44 },
+    { x: 0.51, y: 0.05, width: 0.44, height: 0.44 },
+    { x: 0.05, y: 0.51, width: 0.44, height: 0.44 },
+    { x: 0.51, y: 0.51, width: 0.44, height: 0.44 },
+  ],
+};
+
 route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const title = (body?.title && String(body.title).trim()) || "Fotoboek";
+  const autofill = body?.autofill !== false;
+  const photosPerPage = Math.min(4, Math.max(1, parseInt(body?.photosPerPage, 10) || 1));
+
   const { rows: bookRows } = await query(
     "INSERT INTO photobooks (trip_id, title, created_by) VALUES ($1,$2,$3) RETURNING id",
     [params.id, title, req.user.id]
   );
   const bookId = bookRows[0].id;
+
+  if (!autofill) {
+    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0 });
+  }
 
   const { rows: photos } = await query(
     `SELECT p.id,
@@ -3253,22 +3272,32 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     [params.id]
   );
 
-  // Voorgesteld: één foto per pagina, met de afgeleide bijschrift-tekst als
-  // paginatitel — een simpele, veilige start die de gebruiker daarna zelf
-  // verder samenvoegt tot pagina's met meerdere foto's, beschrijvingen en
-  // een eigen achtergrond.
-  for (let i = 0; i < photos.length; i++) {
+  // Voorgesteld: `photosPerPage` foto's per pagina, in de bijpassende
+  // indeling; bij precies één foto per pagina krijgt de pagina ook meteen de
+  // afgeleide bijschrift-tekst als titel — een simpele, veilige start die de
+  // gebruiker daarna zelf verder aanpast (samenvoegen, beschrijvingen, een
+  // eigen achtergrond).
+  let pageCount = 0;
+  for (let i = 0; i < photos.length; i += photosPerPage) {
+    const group = photos.slice(i, i + photosPerPage);
+    const pageTitle = group.length === 1 ? photobookCaption(group[0]) : null;
     const { rows: pageRows } = await query(
       "INSERT INTO photobook_pages (photobook_id, position, title) VALUES ($1,$2,$3) RETURNING id",
-      [bookId, i, photobookCaption(photos[i])]
+      [bookId, pageCount, pageTitle]
     );
-    await query(
-      "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height) VALUES ($1,$2,0,$3,$4,$5,$6)",
-      [pageRows[0].id, photos[i].id, 0.1, 0.1, 0.8, 0.8]
-    );
+    const pageId = pageRows[0].id;
+    const rects = PHOTOBOOK_AUTOFILL_LAYOUTS[group.length];
+    for (let j = 0; j < group.length; j++) {
+      const r = rects[j];
+      await query(
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        [pageId, group[j].id, j, r.x, r.y, r.width, r.height]
+      );
+    }
+    pageCount++;
   }
 
-  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: photos.length });
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount });
 }, { tripScope: "param", allowViewer: true });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
