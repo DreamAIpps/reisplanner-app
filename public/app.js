@@ -6178,12 +6178,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   : "#FAF9F7",
               }}
             >
-              {(page.title || page.description) && (
-                <div className={`absolute top-0 left-0 right-0 p-3 pointer-events-none ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
-                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate"><FormattedText text={page.title} /></h3>}
-                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2"><FormattedText text={page.description} /></p>}
-                </div>
-              )}
               {page.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
                   selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
@@ -6195,6 +6189,15 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               ))}
               {page.photos.length === 0 && !page.background && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
+              )}
+              {/* Altijd bovenop de foto's getekend (en met eigen achtergrond),
+                  anders verdwijnt de titel achter een foto die er bovenop ligt
+                  — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
+              {(page.title || page.description) && (
+                <div className="absolute top-0 left-0 right-0 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
+                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate"><FormattedText text={page.title} /></h3>}
+                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2"><FormattedText text={page.description} /></p>}
+                </div>
               )}
             </div>
 
@@ -6332,12 +6335,6 @@ function PhotobookPreview({ title, pages, onClose }) {
                 : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                 : "#FAF9F7",
             }}>
-            {(page.title || page.description) && (
-              <div className={`absolute top-0 left-0 right-0 p-4 ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
-                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1"><FormattedText text={page.title} /></h3>}
-                {page.description && <p className="text-sm text-gray-600 leading-relaxed"><FormattedText text={page.description} /></p>}
-              </div>
-            )}
             {page.photos.map((ph, j) => (
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
@@ -6347,6 +6344,12 @@ function PhotobookPreview({ title, pages, onClose }) {
             ))}
             {page.photos.length === 0 && !page.title && !page.description && (
               <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
+            )}
+            {(page.title || page.description) && (
+              <div className="absolute top-0 left-0 right-0 p-4 bg-white/85 backdrop-blur-sm">
+                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1"><FormattedText text={page.title} /></h3>}
+                {page.description && <p className="text-sm text-gray-600 leading-relaxed"><FormattedText text={page.description} /></p>}
+              </div>
             )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
           </div>

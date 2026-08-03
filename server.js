@@ -3553,10 +3553,11 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     }
 
     if (page.title || page.description) {
+      // Altijd een leesbare achtergrondband, ook zonder page.background — een
+      // foto kan tot in dit gebied reiken (bijv. bij één foto per pagina die
+      // bijna de hele pagina vult), en dan moet de titel er nog boven staan.
       const bandH = 70;
-      if (page.background_type) {
-        doc.rect(0, 0, PDF_PAGE_WIDTH, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      }
+      doc.rect(0, 0, PDF_PAGE_WIDTH, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
       let ty = 18;
       if (page.title) {
         drawFormattedText(doc, page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, fontSize: 18, color: "#241D19", ellipsis: true });
