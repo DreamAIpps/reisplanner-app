@@ -3401,6 +3401,52 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
 const PDF_PAGE_WIDTH = 595.28;
 const PDF_PAGE_HEIGHT = 841.89;
 
+// Titel, beschrijving en bijschriften ondersteunen dezelfde lichte opmaak als
+// de editor: **vet** en *cursief*. Splitst een regel op in runs met hun eigen
+// stijl, in volgorde — geen geneste combinaties (***vet+cursief*** wordt niet
+// apart herkend, dat is bewust simpel gehouden).
+function pdfParseFormatted(line) {
+  const runs = [];
+  const re = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+  let last = 0, m;
+  while ((m = re.exec(line))) {
+    if (m.index > last) runs.push({ text: line.slice(last, m.index), bold: false, italic: false });
+    if (m[1] !== undefined) runs.push({ text: m[1], bold: true, italic: false });
+    else runs.push({ text: m[2], bold: false, italic: true });
+    last = re.lastIndex;
+  }
+  if (last < line.length) runs.push({ text: line.slice(last), bold: false, italic: false });
+  if (runs.length === 0) runs.push({ text: "", bold: false, italic: false });
+  return runs;
+}
+function pdfFontFor(bold, italic) {
+  if (bold && italic) return "Helvetica-BoldOblique";
+  if (bold) return "Helvetica-Bold";
+  if (italic) return "Helvetica-Oblique";
+  return "Helvetica";
+}
+// pdfkit's "continued" runs laten losse stukken tekst met een eigen font achter
+// elkaar doorlopen (en samen netjes binnen `width` afbreken) alsof het één
+// paragraaf is — zo blijft **vet**/*cursief* binnen dezelfde alinea werken.
+function drawFormattedText(doc, text, x, y, opts = {}) {
+  const { width, height, fontSize = 10, color = "#241D19", ellipsis } = opts;
+  doc.fillColor(color).fontSize(fontSize);
+  const lines = String(text || "").split("\n");
+  let first = true;
+  lines.forEach((line, li) => {
+    const runs = pdfParseFormatted(line);
+    runs.forEach((run, ri) => {
+      const lastRunOfLine = ri === runs.length - 1;
+      const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
+      doc.font(pdfFontFor(run.bold, run.italic));
+      const textOpts = { continued: !lastRunOfLine, width, ellipsis: lastRunOverall ? ellipsis : undefined };
+      if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
+      else doc.text(run.text, textOpts);
+    });
+  });
+  doc.font("Helvetica");
+}
+
 route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
@@ -3472,8 +3518,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       if (ph.caption) {
         const capH = Math.min(24, h * 0.3);
         doc.rect(x, y + h - capH, w, capH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-        doc.fontSize(8).fillColor("#463D38")
-          .text(ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2), { width: Math.max(1, w - 8), height: capH, ellipsis: true });
+        drawFormattedText(doc, ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2),
+          { width: Math.max(1, w - 8), height: capH, fontSize: 8, color: "#463D38", ellipsis: true });
       }
     }
 
@@ -3484,11 +3530,11 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       }
       let ty = 18;
       if (page.title) {
-        doc.fontSize(18).fillColor("#241D19").text(page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, ellipsis: true });
+        drawFormattedText(doc, page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, fontSize: 18, color: "#241D19", ellipsis: true });
         ty += 26;
       }
       if (page.description) {
-        doc.fontSize(10).fillColor("#5E534D").text(page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, ellipsis: true });
+        drawFormattedText(doc, page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", ellipsis: true });
       }
     }
   }

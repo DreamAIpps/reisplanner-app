@@ -614,6 +614,69 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
+// Lichte opmaak voor fotoboek-tekst: **vet** en *cursief*, net als in de
+// editor getypt. Geen geneste combinaties (bewust simpel gehouden).
+function parseFormatted(line) {
+  const runs = [];
+  const re = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+  let last = 0, m;
+  while ((m = re.exec(line))) {
+    if (m.index > last) runs.push({ text: line.slice(last, m.index) });
+    if (m[1] !== undefined) runs.push({ text: m[1], bold: true });
+    else runs.push({ text: m[2], italic: true });
+    last = re.lastIndex;
+  }
+  if (last < line.length) runs.push({ text: line.slice(last) });
+  return runs;
+}
+function FormattedText({ text, className }) {
+  if (!text) return null;
+  const lines = String(text).split("\n");
+  return (
+    <span className={className}>
+      {lines.map((line, li) => (
+        <React.Fragment key={li}>
+          {li > 0 && <br />}
+          {parseFormatted(line).map((run, ri) => {
+            if (run.bold) return <b key={ri}>{run.text}</b>;
+            if (run.italic) return <em key={ri}>{run.text}</em>;
+            return <React.Fragment key={ri}>{run.text}</React.Fragment>;
+          })}
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+// Zet de selectie in een input/textarea tussen **/* markers (of voegt een
+// plaatshouder in als er niets geselecteerd is), zoals de opmaakknoppen bij
+// veel tekstvelden werken.
+function wrapSelectionMarker(getEl, value, onChange, marker) {
+  const el = getEl();
+  if (!el) return;
+  const start = el.selectionStart ?? value.length;
+  const end = el.selectionEnd ?? value.length;
+  const before = value.slice(0, start), selected = value.slice(start, end), after = value.slice(end);
+  const inserted = selected || (marker === "**" ? "vet" : "cursief");
+  onChange(`${before}${marker}${inserted}${marker}${after}`);
+  requestAnimationFrame(() => {
+    el.focus();
+    const newStart = start + marker.length;
+    el.setSelectionRange(newStart, newStart + inserted.length);
+  });
+}
+function FormatToolbar({ getEl, value, onChange }) {
+  return (
+    <div className="flex items-center gap-1 mb-1">
+      <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
+        onClick={() => wrapSelectionMarker(getEl, value, onChange, "**")} title="Vet (**tekst**)"
+        className="w-6 h-5 rounded flex items-center justify-center text-[11px] font-bold text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">B</button>
+      <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
+        onClick={() => wrapSelectionMarker(getEl, value, onChange, "*")} title="Cursief (*tekst*)"
+        className="w-6 h-5 rounded flex items-center justify-center text-[11px] italic text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">I</button>
+    </div>
+  );
+}
+
 function Field({ label, hint, children }) {
   return (
     <div>
@@ -625,13 +688,13 @@ function Field({ label, hint, children }) {
   );
 }
 
-function Input({ className = "", ...props }) {
-  return <input className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent ${className}`} {...props} />;
-}
+const Input = React.forwardRef(function Input({ className = "", ...props }, ref) {
+  return <input ref={ref} className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent ${className}`} {...props} />;
+});
 
-function Textarea({ className = "", ...props }) {
-  return <textarea className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent resize-none ${className}`} {...props} />;
-}
+const Textarea = React.forwardRef(function Textarea({ className = "", ...props }, ref) {
+  return <textarea ref={ref} className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent resize-none ${className}`} {...props} />;
+});
 
 function Select({ className = "", children, ...props }) {
   return <select className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white ${className}`} {...props}>{children}</select>;
@@ -5796,6 +5859,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
+  const titleRefs = useRef({}); // pageIndex -> titel-input, voor de opmaakknoppen (vet/cursief)
+  const descRefs = useRef({}); // pageIndex -> beschrijving-textarea, idem
+  const captionRef = useRef(null); // bijschrift-input van de geselecteerde foto, idem
 
   useEffect(() => {
     api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
@@ -6051,9 +6117,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               </div>
             </div>
 
-            <Input value={page.title || ""} onChange={(e) => updatePage(i, { title: e.target.value })}
+            <FormatToolbar getEl={() => titleRefs.current[i]} value={page.title || ""} onChange={(v) => updatePage(i, { title: v })} />
+            <Input ref={(el) => { titleRefs.current[i] = el; }} value={page.title || ""} onChange={(e) => updatePage(i, { title: e.target.value })}
               placeholder="Titel van deze pagina" className="!text-sm !font-semibold mb-2" />
-            <Textarea rows={2} value={page.description || ""} onChange={(e) => updatePage(i, { description: e.target.value })}
+            <FormatToolbar getEl={() => descRefs.current[i]} value={page.description || ""} onChange={(v) => updatePage(i, { description: v })} />
+            <Textarea ref={(el) => { descRefs.current[i] = el; }} rows={2} value={page.description || ""} onChange={(e) => updatePage(i, { description: e.target.value })}
               placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
 
             <div className="mb-3">
@@ -6115,8 +6183,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
             >
               {(page.title || page.description) && (
                 <div className={`absolute top-0 left-0 right-0 p-3 pointer-events-none ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
-                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate">{page.title}</h3>}
-                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2">{page.description}</p>}
+                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate"><FormattedText text={page.title} /></h3>}
+                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2"><FormattedText text={page.description} /></p>}
                 </div>
               )}
               {page.photos.map((ph, j) => (
@@ -6137,8 +6205,12 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-sky-50 border border-sky-100">
                 <img src={page.photos[selectedPhoto.photo].thumbUrl || page.photos[selectedPhoto.photo].url} alt=""
                   className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                <Input value={page.photos[selectedPhoto.photo].caption || ""} onChange={(e) => setPhotoCaption(i, selectedPhoto.photo, e.target.value)}
-                  placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white flex-1" />
+                <div className="flex-1">
+                  <FormatToolbar getEl={() => captionRef.current} value={page.photos[selectedPhoto.photo].caption || ""}
+                    onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)} />
+                  <Input ref={captionRef} value={page.photos[selectedPhoto.photo].caption || ""} onChange={(e) => setPhotoCaption(i, selectedPhoto.photo, e.target.value)}
+                    placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
+                </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
                     className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
@@ -6265,15 +6337,15 @@ function PhotobookPreview({ title, pages, onClose }) {
             }}>
             {(page.title || page.description) && (
               <div className={`absolute top-0 left-0 right-0 p-4 ${page.background ? "bg-white/85 backdrop-blur-sm" : ""}`}>
-                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1">{page.title}</h3>}
-                {page.description && <p className="text-sm text-gray-600 leading-relaxed">{page.description}</p>}
+                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1"><FormattedText text={page.title} /></h3>}
+                {page.description && <p className="text-sm text-gray-600 leading-relaxed"><FormattedText text={page.description} /></p>}
               </div>
             )}
             {page.photos.map((ph, j) => (
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
                 <img src={ph.url} alt="" className="w-full h-full object-cover" />
-                {ph.caption && <div className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate">{ph.caption}</div>}
+                {ph.caption && <div className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate"><FormattedText text={ph.caption} /></div>}
               </div>
             ))}
             {page.photos.length === 0 && !page.title && !page.description && (
