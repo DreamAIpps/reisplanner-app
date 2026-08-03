@@ -5871,6 +5871,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
           <Icon name="eye" size={17} />
         </button>
+        <a href={`/api/photobooks/${bookId}/pdf`} download aria-label="Downloaden als PDF"
+          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+          <Icon name="doc" size={17} />
+        </a>
         <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
           <Icon name="trash" size={16} />
         </button>
