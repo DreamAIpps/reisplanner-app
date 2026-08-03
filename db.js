@@ -446,14 +446,50 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS photobooks_trip_idx ON photobooks(trip_id);
 
+    -- Eén pagina kan meerdere foto's bevatten (zie photobook_page_photos
+    -- hieronder), een titel/beschrijving, en een optionele achtergrond (een
+    -- kleur, of één van de eigen foto's van de pagina full-bleed).
     CREATE TABLE IF NOT EXISTS photobook_pages (
       id SERIAL PRIMARY KEY,
       photobook_id INTEGER NOT NULL REFERENCES photobooks(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      title TEXT,
+      description TEXT,
+      background_type TEXT,
+      background_color TEXT,
+      background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS photobook_pages_book_idx ON photobook_pages(photobook_id, position);
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title TEXT;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_type TEXT;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
+
+    CREATE TABLE IF NOT EXISTS photobook_page_photos (
+      id SERIAL PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES photobook_pages(id) ON DELETE CASCADE,
       photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
       position INTEGER NOT NULL,
       caption TEXT
     );
-    CREATE INDEX IF NOT EXISTS photobook_pages_book_idx ON photobook_pages(photobook_id, position);
+    CREATE INDEX IF NOT EXISTS photobook_page_photos_page_idx ON photobook_page_photos(page_id, position);
+
+    -- photobook_pages had oorspronkelijk zelf één foto + bijschrift per rij
+    -- (photo_id/caption) — nu vervangen door photobook_page_photos hierboven,
+    -- zodat een pagina meerdere foto's kan bevatten. Bestaande pagina's worden
+    -- hier eenmalig overgezet vóór de oude kolommen verdwijnen; de
+    -- kolom-check maakt dit veilig om bij elke herstart opnieuw te draaien.
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'photobook_pages' AND column_name = 'photo_id') THEN
+        INSERT INTO photobook_page_photos (page_id, photo_id, position, caption)
+        SELECT id, photo_id, 0, caption FROM photobook_pages WHERE photo_id IS NOT NULL;
+        UPDATE photobook_pages SET title = caption WHERE title IS NULL;
+        ALTER TABLE photobook_pages DROP COLUMN photo_id;
+        ALTER TABLE photobook_pages DROP COLUMN caption;
+      END IF;
+    END $$;
   `);
 
   // Trips created before the "fris oranje" redesign still carry a cover_color
