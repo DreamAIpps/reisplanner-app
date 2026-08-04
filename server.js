@@ -3273,15 +3273,16 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const title = (body?.title && String(body.title).trim()) || "Fotoboek";
   const autofill = body?.autofill !== false;
   const photosPerPage = Math.min(4, Math.max(1, parseInt(body?.photosPerPage, 10) || 1));
+  const orientation = body?.orientation === "landscape" ? "landscape" : "portrait";
 
   const { rows: bookRows } = await query(
-    "INSERT INTO photobooks (trip_id, title, created_by) VALUES ($1,$2,$3) RETURNING id",
-    [params.id, title, req.user.id]
+    "INSERT INTO photobooks (trip_id, title, created_by, orientation) VALUES ($1,$2,$3,$4) RETURNING id",
+    [params.id, title, req.user.id, orientation]
   );
   const bookId = bookRows[0].id;
 
   if (!autofill) {
-    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0 });
+    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation });
   }
 
   const { rows: photos } = await query(
@@ -3325,7 +3326,7 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     pageCount++;
   }
 
-  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount });
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation });
 }, { tripScope: "param", allowViewer: true });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
@@ -3408,7 +3409,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     });
   }
   sendJson(res, 200, {
-    id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
+    id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status, orientation: bookRows[0].orientation,
     pages: pages.map((pg) => ({
       id: pg.id, title: pg.title, description: pg.description,
       titleAlign: pg.title_align, descriptionAlign: pg.description_align,
@@ -3517,7 +3518,7 @@ const PDF_PAGE_HEIGHT = 841.89;
 // regeleinde behandeld.
 function pdfParseRichHtml(html) {
   const lines = [[]];
-  const styleStack = [{ bold: false, italic: false, font: null, color: null }];
+  const styleStack = [{ bold: false, italic: false, font: null, color: null, size: null }];
   // "br" vóór "b" — regex-alternatie kiest de eerste match, niet de langste,
   // dus "b" zou anders <br> al aftappen (met de "r" als restjunk-attribuut)
   // en het als een (nooit gesloten) <b>-tag behandelen.
@@ -3544,6 +3545,8 @@ function pdfParseRichHtml(html) {
         if (faceMatch) next.font = faceMatch[1];
         const colorMatch = /color="([^"]*)"/i.exec(m[3] || "");
         if (colorMatch) next.color = colorMatch[1];
+        const sizeMatch = /size="([^"]*)"/i.exec(m[3] || "");
+        if (sizeMatch) next.size = Number(sizeMatch[1]);
       }
       styleStack.push(next);
     }
@@ -3579,26 +3582,31 @@ function pdfFontFor(run) {
   if (base === "Courier") return run.bold && run.italic ? "Courier-BoldOblique" : run.bold ? "Courier-Bold" : run.italic ? "Courier-Oblique" : "Courier";
   return run.bold && run.italic ? "Helvetica-BoldOblique" : run.bold ? "Helvetica-Bold" : run.italic ? "Helvetica-Oblique" : "Helvetica";
 }
+// De oude HTML-schaal (<font size="N">, 1 t/m 7, 3 = standaard) omgerekend
+// naar een factor t.o.v. de basisgrootte — dezelfde verhoudingen die
+// browsers zelf gebruiken voor size 1..7 bij een 16px-basis.
+const HTML_FONT_SIZE_RATIOS = { 1: 10 / 16, 2: 13 / 16, 3: 1, 4: 18 / 16, 5: 24 / 16, 6: 32 / 16, 7: 48 / 16 };
 // pdfkit's "continued" runs laten losse stukken tekst met een eigen font achter
 // elkaar doorlopen (en samen netjes binnen `width` afbreken) alsof het één
-// paragraaf is — zo blijft vet/cursief/lettertype binnen dezelfde alinea werken.
+// paragraaf is — zo blijft vet/cursief/lettertype/grootte binnen dezelfde
+// alinea werken.
 function drawFormattedText(doc, html, x, y, opts = {}) {
   const { width, height, fontSize = 10, color = "#241D19", ellipsis, align } = opts;
   doc.fontSize(fontSize);
   const lines = pdfParseRichHtml(String(html || ""));
   let first = true;
   lines.forEach((lineRuns, li) => {
-    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null }];
+    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null, size: null }];
     runs.forEach((run, ri) => {
       const lastRunOfLine = ri === runs.length - 1;
       const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
-      doc.font(pdfFontFor(run)).fillColor(run.color || color);
+      doc.font(pdfFontFor(run)).fontSize(fontSize * (HTML_FONT_SIZE_RATIOS[run.size] || 1)).fillColor(run.color || color);
       const textOpts = { continued: !lastRunOfLine, width, align, ellipsis: lastRunOverall ? ellipsis : undefined };
       if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
       else doc.text(run.text, textOpts);
     });
   });
-  doc.font("Helvetica");
+  doc.font("Helvetica").fontSize(fontSize);
 }
 
 // Zelfde crop-wiskunde als de CSS object-position/transform in de editor:
@@ -3659,8 +3667,13 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   }
 
   const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
+  // Liggend wisselt gewoon breedte/hoogte om — pdfkit's "layout"-optie doet
+  // dat zelf ook zo voor de paginagrootte (zie doc/addPage hieronder).
+  const landscape = book.orientation === "landscape";
+  const pageW = landscape ? PDF_PAGE_HEIGHT : PDF_PAGE_WIDTH;
+  const pageH = landscape ? PDF_PAGE_WIDTH : PDF_PAGE_HEIGHT;
 
-  const doc = new PDFDocument({ size: "A4", autoFirstPage: false, margin: 0 });
+  const doc = new PDFDocument({ size: "A4", layout: landscape ? "landscape" : "portrait", autoFirstPage: false, margin: 0 });
   // Eerst volledig in het geheugen opbouwen (in plaats van doc.pipe(res)) zodat
   // we een Content-Length kunnen meesturen — de client heeft dat nodig om een
   // echte downloadpercentage-voortgangsbalk te kunnen tonen.
@@ -3668,17 +3681,17 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   doc.on("data", (chunk) => chunks.push(chunk));
 
   for (const page of pages) {
-    doc.addPage({ size: "A4", margin: 0 });
+    doc.addPage({ size: "A4", layout: landscape ? "landscape" : "portrait", margin: 0 });
 
     if (page.background_type === "color" && page.background_color) {
-      doc.rect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT).fill(page.background_color);
+      doc.rect(0, 0, pageW, pageH).fill(page.background_color);
     } else if (page.background_type === "photo" && page.background_photo_id) {
       const bgData = bgPhotosById.get(page.background_photo_id);
       if (bgData) {
         try {
-          doc.image(bgData, 0, 0, { cover: [PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT] });
+          doc.image(bgData, 0, 0, { cover: [pageW, pageH] });
           if (page.background_overlay > 0) {
-            doc.rect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
+            doc.rect(0, 0, pageW, pageH).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
           }
         } catch (err) {
           console.error("Fotoboek-PDF: achtergrondfoto kon niet worden ingevoegd:", err?.message || err);
@@ -3687,8 +3700,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     }
 
     for (const ph of (photosByPage.get(page.id) || [])) {
-      const x = ph.x * PDF_PAGE_WIDTH, y = ph.y * PDF_PAGE_HEIGHT;
-      const w = ph.width * PDF_PAGE_WIDTH, h = ph.height * PDF_PAGE_HEIGHT;
+      const x = ph.x * pageW, y = ph.y * pageH;
+      const w = ph.width * pageW, h = ph.height * pageH;
       try {
         doc.save();
         // cornerRadius 0.5 == volledig rond/pil-vorm (radius = halve kortste
@@ -3719,8 +3732,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
 
     for (const tb of (textBoxesByPage.get(page.id) || [])) {
       if (!tb.html) continue;
-      const x = tb.x * PDF_PAGE_WIDTH, y = tb.y * PDF_PAGE_HEIGHT;
-      const w = tb.width * PDF_PAGE_WIDTH, h = tb.height * PDF_PAGE_HEIGHT;
+      const x = tb.x * pageW, y = tb.y * pageH;
+      const w = tb.width * pageW, h = tb.height * pageH;
       if (tb.background_color && tb.background_color !== "transparent") {
         const { color, alpha } = parseRgbaColor(tb.background_color);
         try { doc.rect(x, y, w, h).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
@@ -3733,14 +3746,14 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       // foto kan tot in dit gebied reiken (bijv. bij één foto per pagina die
       // bijna de hele pagina vult), en dan moet de titel er nog boven staan.
       const bandH = 70;
-      doc.rect(0, 0, PDF_PAGE_WIDTH, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
+      doc.rect(0, 0, pageW, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
       let ty = 18;
       if (page.title) {
-        drawFormattedText(doc, page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, fontSize: 18, color: "#241D19", align: page.title_align, ellipsis: true });
+        drawFormattedText(doc, page.title, 20, ty, { width: pageW - 40, fontSize: 18, color: "#241D19", align: page.title_align, ellipsis: true });
         ty += 26;
       }
       if (page.description) {
-        drawFormattedText(doc, page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", align: page.description_align, ellipsis: true });
+        drawFormattedText(doc, page.description, 20, ty, { width: pageW - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", align: page.description_align, ellipsis: true });
       }
     }
   }
