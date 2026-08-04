@@ -6083,14 +6083,77 @@ function usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect 
 
 function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages, cropActive, onToggleCrop, orientation }) {
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: photo, onChangeRect, getPageEl, snap, onSelect });
+  const photoElRef = useRef(null);
+  // Bijsnijden gaat via slepen (verschuift het brandpunt) en knijpen
+  // (inzoomen) direct op de foto zelf — net zo'n gebaar als in Foto's/
+  // Instagram, in plaats van losse pijltjes-/zoomknoppen. cropDragRef houdt
+  // alle actieve vingers bij (Map van pointerId->positie): één vinger =
+  // verschuiven, twee vingers = knijpen; loslaten van één tijdens knijpen
+  // valt terug op verschuiven met de overblijvende vinger, met een nieuwe
+  // startpositie zodat de foto niet met een sprong verspringt.
+  const cropDragRef = useRef(null);
+  function onCropPointerDown(e) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const state = cropDragRef.current || { pointers: new Map() };
+    state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (state.pointers.size >= 2) {
+      const pts = [...state.pointers.values()].slice(-2);
+      state.mode = "pinch";
+      state.startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      state.startZoom = photo.cropZoom ?? 1;
+    } else {
+      state.mode = "pan";
+      state.startCropX = photo.cropX ?? 0.5;
+      state.startCropY = photo.cropY ?? 0.5;
+      state.startX = e.clientX;
+      state.startY = e.clientY;
+    }
+    cropDragRef.current = state;
+  }
+  function onCropPointerMove(e) {
+    const state = cropDragRef.current;
+    if (!state || !state.pointers.has(e.pointerId)) return;
+    state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const rect = photoElRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    if (state.mode === "pinch" && state.pointers.size >= 2) {
+      const pts = [...state.pointers.values()].slice(-2);
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      const zoom = Math.min(2.5, Math.max(1, state.startZoom * (dist / state.startDist)));
+      onChangeRect({ cropZoom: Math.round(zoom * 100) / 100 });
+    } else if (state.mode === "pan") {
+      // Min-teken: de foto "volgt" je vinger (sleep naar rechts = beeld
+      // schuift mee naar rechts, dus het brandpunt schuift naar links).
+      const dx = (e.clientX - state.startX) / rect.width;
+      const dy = (e.clientY - state.startY) / rect.height;
+      onChangeRect({
+        cropX: Math.min(1, Math.max(0, state.startCropX - dx)),
+        cropY: Math.min(1, Math.max(0, state.startCropY - dy)),
+      });
+    }
+  }
+  function onCropPointerUp(e) {
+    const state = cropDragRef.current;
+    if (!state) return;
+    state.pointers.delete(e.pointerId);
+    if (state.pointers.size === 0) { cropDragRef.current = null; return; }
+    const [[, pt]] = state.pointers;
+    state.mode = "pan";
+    state.startCropX = photo.cropX ?? 0.5;
+    state.startCropY = photo.cropY ?? 0.5;
+    state.startX = pt.x;
+    state.startY = pt.y;
+  }
 
   return (
     <div
-      onPointerDown={(e) => beginDrag(e, "move")}
-      onPointerMove={onDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      className={`absolute select-none touch-none ${selected ? "cursor-move ring-2 ring-sky-500 ring-offset-1" : "cursor-pointer"}`}
+      ref={photoElRef}
+      onPointerDown={cropActive ? onCropPointerDown : (e) => beginDrag(e, "move")}
+      onPointerMove={cropActive ? onCropPointerMove : onDrag}
+      onPointerUp={cropActive ? onCropPointerUp : endDrag}
+      onPointerCancel={cropActive ? onCropPointerUp : endDrag}
+      className={`absolute select-none touch-none ${cropActive ? "cursor-move ring-2 ring-sky-600 ring-offset-1" : selected ? "cursor-move ring-2 ring-sky-500 ring-offset-1" : "cursor-pointer"}`}
       style={{ left: `${photo.x * 100}%`, top: `${photo.y * 100}%`, width: `${photo.width * 100}%`, height: `${photo.height * 100}%` }}
     >
       {/* Aparte clip-laag (i.p.v. afronding/overflow direct op de foto) omdat
@@ -6119,7 +6182,10 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
           <Icon name="alert" size={12} strokeWidth={2.2} />
         </div>
       )}
-      {selected && (
+      {/* Tijdens bijsnijden doet slepen op de foto iets anders (verschuiven/
+          zoomen in plaats van het kader vergroten), dus de hoekgreep zou
+          verwarrend zijn en verdwijnt zolang cropActive aan staat. */}
+      {selected && !cropActive && (
         <div
           onPointerDown={(e) => beginDrag(e, "resize")}
           onPointerMove={onDrag}
@@ -6292,7 +6358,18 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // op dat moment nog gelden (via closure) — zo kan "Ongedaan maken" terug
   // naar de staat vóór die actie, zonder dat elke aanroeper dit zelf hoeft
   // te doen. Cap op 20 stappen, anders groeit dit onbeperkt binnen één sessie.
+  // Een sleep- of knijpgebaar (of gewoon typen) roept dit tientallen keren
+  // per seconde aan — zonder de debounce hieronder zou zo'n gebaar in z'n
+  // eentje de hele geschiedenis vullen, waardoor "Ongedaan maken" nooit
+  // verder terug kan dan een fractie van diezelfde beweging. Binnen 400ms
+  // van de vorige push telt het als dezelfde actie en wordt niets nieuws
+  // weggeschreven — de eerste push van de reeks (de staat van vóórdat de
+  // actie begon) blijft dan gewoon de enige stap terug.
+  const lastHistoryPushRef = useRef(0);
   function pushHistory() {
+    const now = Date.now();
+    if (now - lastHistoryPushRef.current < 400) return;
+    lastHistoryPushRef.current = now;
     setHistory((h) => [...h.slice(-19), pages]);
   }
   function undo() {
@@ -6884,35 +6961,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 </div>
                 {cropMode && (() => {
                   const cur = photoSel;
-                  const nudge = (dx, dy) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
-                    cropX: Math.min(1, Math.max(0, (cur.cropX ?? 0.5) + dx)),
-                    cropY: Math.min(1, Math.max(0, (cur.cropY ?? 0.5) + dy)),
-                  });
                   const zoomBy = (delta) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
                     cropZoom: Math.min(2.5, Math.max(1, Math.round(((cur.cropZoom ?? 1) + delta) * 100) / 100)),
                   });
                   const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
                   return (
-                    <div className="flex items-center gap-3 flex-wrap px-0.5">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[11px] text-gray-400 mr-0.5">Bijsnijden</span>
-                        <button type="button" onClick={() => nudge(-0.15, 0)} title="Naar links"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(-90deg)" }} />
-                        </button>
-                        <button type="button" onClick={() => nudge(0.15, 0)} title="Naar rechts"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(90deg)" }} />
-                        </button>
-                        <button type="button" onClick={() => nudge(0, -0.15)} title="Naar boven"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                          <Icon name="arrowUp" size={11} />
-                        </button>
-                        <button type="button" onClick={() => nudge(0, 0.15)} title="Naar onder"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(180deg)" }} />
-                        </button>
-                      </div>
+                    <div className="space-y-1.5 px-0.5">
+                      <div className="text-[11px] text-gray-400">Sleep de foto hierboven om te verschuiven, knijp om te zoomen.</div>
                       <div className="flex items-center gap-1">
                         <span className="text-[11px] text-gray-400 mr-0.5">Zoom</span>
                         <button type="button" onClick={() => zoomBy(-0.15)} disabled={zoomPct <= 100} title="Uitzoomen"
