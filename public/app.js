@@ -2317,6 +2317,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [addingAccommodation, setAddingAccommodation] = useState(false);
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
+  const didAutoScroll = useRef(false);
   const accent = trip.cover_color || "#FF7A00";
 
   const loadJournal = useCallback(async () => {
@@ -2340,6 +2341,19 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     if (!todayDay) return;
     document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  // Land op vandaag zodra de dagplanning opent — net als bij het dagboek is
+  // dat de dag waar je tijdens de reis voor komt kijken. Eenmalig per reis,
+  // anders trekt een refresh (bijv. na het toevoegen van een activiteit) je
+  // terug naar vandaag terwijl je net ergens anders aan het scrollen was.
+  useEffect(() => { didAutoScroll.current = false; }, [trip.id]);
+  useEffect(() => {
+    if (didAutoScroll.current || !todayDay) return;
+    didAutoScroll.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ block: "start" });
+    });
+  }, [todayDay, trip.id]);
 
   // Alleen zinvol terwijl de reis loopt — vóór vertrek of ná thuiskomst is er
   // geen "hierna" om te tonen.
@@ -2624,6 +2638,15 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
       {tipsLocation && (
         <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
+
+      {/* Altijd bereikbaar, ongeacht hoever je bent doorgescrold — snel terug
+          naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
+      <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        title="Naar boven"
+        className="fixed right-4 z-40 w-11 h-11 rounded-full flex items-center justify-center text-white shadow-xl active:scale-95 transition-all"
+        style={{ background: "linear-gradient(135deg,#FF7A00,#E8630A)", boxShadow: "0 8px 20px rgba(255,122,0,0.4)", bottom: "calc(68px + env(safe-area-inset-bottom) + 16px)" }}>
+        <Icon name="arrowUp" size={19} />
+      </button>
     </div>
   );
 }
