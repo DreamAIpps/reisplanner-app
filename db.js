@@ -463,7 +463,9 @@ async function initDb() {
       description TEXT,
       background_type TEXT,
       background_color TEXT,
-      background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
+      background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+      title_align TEXT NOT NULL DEFAULT 'left',
+      description_align TEXT NOT NULL DEFAULT 'left'
     );
     CREATE INDEX IF NOT EXISTS photobook_pages_book_idx ON photobook_pages(photobook_id, position);
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title TEXT;
@@ -471,6 +473,9 @@ async function initDb() {
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_type TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
+    -- Uitlijning van titel/beschrijving (CEWE-achtige stijlopties).
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description_align TEXT NOT NULL DEFAULT 'left';
 
     -- x/y/width/height zijn fracties van de pagina (0-1), niet pixels — zo
     -- blijft een foto op dezelfde relatieve plek staan ongeacht schermgrootte

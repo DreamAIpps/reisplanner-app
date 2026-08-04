@@ -66,6 +66,9 @@ const ICONS = {
   share: <><circle cx="17.5" cy="6" r="2.5" /><circle cx="6.5" cy="12" r="2.5" /><circle cx="17.5" cy="18" r="2.5" /><path d="M8.8 10.8 15.3 7.3" /><path d="m8.8 13.2 6.5 3.5" /></>,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m3.6 6.7 7.3 5.2a2 2 0 0 0 2.2 0l7.3-5.2" /></>,
   search: <><circle cx="11" cy="11" r="6.5" /><path d="m15.8 15.8 4.2 4.2" /></>,
+  alignLeft: <><path d="M4 6h16" /><path d="M4 12h10" /><path d="M4 18h13" /></>,
+  alignCenter: <><path d="M4 6h16" /><path d="M7 12h10" /><path d="M5.5 18h13" /></>,
+  alignRight: <><path d="M4 6h16" /><path d="M10 12h10" /><path d="M7 18h13" /></>,
   check: <><path d="m5 12.8 4.4 4.2L19 6.5" /></>,
   chat: <><path d="M20 12.5c0 3.9-3.6 6.9-8 6.9a9.4 9.4 0 0 1-2.7-.4L4 21l1.2-3.4A6.6 6.6 0 0 1 4 12.5C4 8.6 7.6 5.6 12 5.6s8 3 8 6.9z" /></>,
   thumb: <><path d="M7 10.5 11 3a2.4 2.4 0 0 1 2.4 2.4V9.5h4.3a2 2 0 0 1 2 2.4l-1.3 6.2a2.4 2.4 0 0 1-2.3 1.9H7" /><rect x="3" y="10.5" width="4" height="9.5" rx="1.4" /></>,
@@ -621,7 +624,7 @@ function Modal({ title, onClose, children, wide }) {
 // direct zichtbaar terwijl je typt. DOMPurify is de enige plek die bepaalt
 // wat er ooit gerenderd wordt, dus dat is waar de echte veiligheidsgrens zit.
 const RICH_TEXT_ALLOWED_TAGS = ["b", "i", "font", "br", "div"];
-const RICH_TEXT_ALLOWED_ATTR = ["face"];
+const RICH_TEXT_ALLOWED_ATTR = ["face", "color"];
 function sanitizeRichText(html) {
   return window.DOMPurify
     ? window.DOMPurify.sanitize(html || "", { ALLOWED_TAGS: RICH_TEXT_ALLOWED_TAGS, ALLOWED_ATTR: RICH_TEXT_ALLOWED_ATTR })
@@ -635,18 +638,29 @@ const RICH_TEXT_FONTS = [
   { key: "elegant", label: "Sierlijk", family: '"Big Caslon", Didot, serif' },
   { key: "script", label: "Script", family: '"Bradley Hand", "Segoe Script", "Comic Sans MS", cursive' },
 ];
+// Kleine, verzorgde tekstkleur-set — de app-inkt plus een paar duidelijk van
+// elkaar te onderscheiden tinten, geen volledige kleurenkiezer nodig.
+const RICH_TEXT_COLORS = ["#241D19", "#463D38", "#B8400A", "#3D5A80", "#5E7A4F", "#ffffff"];
+// Uitlijning geldt voor het hele tekstveld (titel/beschrijving/bijschrift),
+// niet per selectie zoals vet/cursief/kleur — daarom apart bijgehouden i.p.v.
+// als HTML-opmaak, en gewoon via CSS text-align toegepast.
+const RICH_TEXT_ALIGNMENTS = [
+  { key: "left", icon: "alignLeft" },
+  { key: "center", icon: "alignCenter" },
+  { key: "right", icon: "alignRight" },
+];
 // Alleen-lezen weergave van opgeslagen fotoboek-tekst — altijd door de
 // sanitizer heen, ook al is er clientside al gesaneerd vóór het opslaan (de
 // databasewaarde is niet per se te vertrouwen als enige bron).
-function RichTextView({ html, className }) {
+function RichTextView({ html, align, className }) {
   if (!html) return null;
-  return <div className={className} dangerouslySetInnerHTML={{ __html: sanitizeRichText(html) }} />;
+  return <div className={className} style={{ textAlign: align || "left" }} dangerouslySetInnerHTML={{ __html: sanitizeRichText(html) }} />;
 }
 // contentEditable in plaats van een input/textarea, zodat vet/cursief/
 // lettertype meteen zichtbaar zijn terwijl je typt — geen **markers** die je
 // zelf moet interpreteren. `singleLine` voorkomt regeleinden (titel,
 // bijschrift); de beschrijving mag wel meerdere regels hebben.
-const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, singleLine }, ref) {
+const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, singleLine, align }, ref) {
   const innerRef = useRef(null);
   const lastValue = useRef(value);
   React.useImperativeHandle(ref, () => innerRef.current);
@@ -683,10 +697,11 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
   return (
     <div className="relative">
       {isEmpty && placeholder && (
-        <div className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none truncate">{placeholder}</div>
+        <div className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none truncate" style={{ textAlign: align || "left" }}>{placeholder}</div>
       )}
       <div ref={innerRef} contentEditable suppressContentEditableWarning
         onFocus={handleFocus} onInput={sync} onBlur={sync} onKeyDown={handleKeyDown}
+        style={{ textAlign: align || "left" }}
         className={`w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
     </div>
   );
@@ -695,7 +710,7 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
 // document.execCommand is verouderd maar nog altijd de simpelste manier om
 // vet/cursief/lettertype op een selectie toe te passen zonder een hele
 // rich-text-library toe te voegen.
-function RichTextToolbar({ getEl, onChange }) {
+function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
   function run(cmd, value) {
     const el = getEl();
     if (!el) return;
@@ -709,6 +724,18 @@ function RichTextToolbar({ getEl, onChange }) {
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center italic text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">I</button>
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
+      {onAlignChange && RICH_TEXT_ALIGNMENTS.map((a) => (
+        <button key={a.key} type="button" onClick={() => onAlignChange(a.key)} title={`Uitlijnen: ${a.key}`}
+          className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors ${(align || "left") === a.key ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400"}`}>
+          <Icon name={a.icon} size={15} />
+        </button>
+      ))}
+      {onAlignChange && <div className="w-px h-6 bg-gray-200 mx-0.5" />}
+      {RICH_TEXT_COLORS.map((c) => (
+        <button key={c} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("foreColor", c)} title="Tekstkleur"
+          className="w-6 h-6 rounded-full border border-gray-300 shrink-0" style={{ background: c }} />
+      ))}
       <div className="w-px h-6 bg-gray-200 mx-0.5" />
       {RICH_TEXT_FONTS.map((f) => (
         <button key={f.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fontName", f.family)}
@@ -6194,12 +6221,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               </div>
             </div>
 
-            <RichTextToolbar getEl={() => titleRefs.current[i]} onChange={(v) => updatePage(i, { title: v })} />
+            <RichTextToolbar getEl={() => titleRefs.current[i]} onChange={(v) => updatePage(i, { title: v })}
+              align={page.titleAlign} onAlignChange={(a) => updatePage(i, { titleAlign: a })} />
             <RichTextEditable ref={(el) => { titleRefs.current[i] = el; }} value={page.title || ""} onChange={(v) => updatePage(i, { title: v })}
-              singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
-            <RichTextToolbar getEl={() => descRefs.current[i]} onChange={(v) => updatePage(i, { description: v })} />
+              align={page.titleAlign} singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
+            <RichTextToolbar getEl={() => descRefs.current[i]} onChange={(v) => updatePage(i, { description: v })}
+              align={page.descriptionAlign} onAlignChange={(a) => updatePage(i, { descriptionAlign: a })} />
             <RichTextEditable ref={(el) => { descRefs.current[i] = el; }} value={page.description || ""} onChange={(v) => updatePage(i, { description: v })}
-              placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
+              align={page.descriptionAlign} placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
 
             <div className="mb-3">
               <div className="text-xs text-gray-400 mb-1.5">Achtergrond</div>
@@ -6275,8 +6304,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
               {(page.title || page.description) && (
                 <div className="absolute top-0 left-0 right-0 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
-                  {page.title && <RichTextView html={page.title} className="font-display text-base text-gray-800 mb-0.5 truncate" />}
-                  {page.description && <RichTextView html={page.description} className="text-xs text-gray-600 leading-snug line-clamp-2" />}
+                  {page.title && <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800 mb-0.5 truncate" />}
+                  {page.description && <RichTextView html={page.description} align={page.descriptionAlign} className="text-xs text-gray-600 leading-snug line-clamp-2" />}
                 </div>
               )}
             </div>
@@ -6449,8 +6478,8 @@ function PhotobookPreview({ title, pages, onClose }) {
             )}
             {(page.title || page.description) && (
               <div className="absolute top-0 left-0 right-0 p-4 bg-white/85 backdrop-blur-sm">
-                {page.title && <RichTextView html={page.title} className="font-display text-xl text-gray-800 mb-1" />}
-                {page.description && <RichTextView html={page.description} className="text-sm text-gray-600 leading-relaxed" />}
+                {page.title && <RichTextView html={page.title} align={page.titleAlign} className="font-display text-xl text-gray-800 mb-1" />}
+                {page.description && <RichTextView html={page.description} align={page.descriptionAlign} className="text-sm text-gray-600 leading-relaxed" />}
               </div>
             )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>

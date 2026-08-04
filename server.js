@@ -3382,6 +3382,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
     pages: pages.map((pg) => ({
       id: pg.id, title: pg.title, description: pg.description,
+      titleAlign: pg.title_align, descriptionAlign: pg.description_align,
       background: photobookBackground(pg),
       photos: photosByPage.get(pg.id) || [],
     })),
@@ -3431,6 +3432,8 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     if (!rows.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
   }
 
+  const validAlign = (v) => (["left", "center", "right"].includes(v) ? v : "left");
+
   await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
   for (let i = 0; i < items.length; i++) {
     const page = items[i];
@@ -3443,9 +3446,9 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       bgType = "photo"; bgPhotoId = Number(page.background.photo_id);
     }
     const { rows: pageRows } = await query(
-      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [params.id, i, title, description, bgType, bgColor, bgPhotoId]
+      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, title_align, description_align)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [params.id, i, title, description, bgType, bgColor, bgPhotoId, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
     );
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
@@ -3472,7 +3475,7 @@ const PDF_PAGE_HEIGHT = 841.89;
 // regeleinde behandeld.
 function pdfParseRichHtml(html) {
   const lines = [[]];
-  const styleStack = [{ bold: false, italic: false, font: null }];
+  const styleStack = [{ bold: false, italic: false, font: null, color: null }];
   // "br" vóór "b" — regex-alternatie kiest de eerste match, niet de langste,
   // dus "b" zou anders <br> al aftappen (met de "r" als restjunk-attribuut)
   // en het als een (nooit gesloten) <b>-tag behandelen.
@@ -3497,6 +3500,8 @@ function pdfParseRichHtml(html) {
       else if (tag === "font") {
         const faceMatch = /face="([^"]*)"/i.exec(m[3] || "");
         if (faceMatch) next.font = faceMatch[1];
+        const colorMatch = /color="([^"]*)"/i.exec(m[3] || "");
+        if (colorMatch) next.color = colorMatch[1];
       }
       styleStack.push(next);
     }
@@ -3525,17 +3530,17 @@ function pdfFontFor(run) {
 // elkaar doorlopen (en samen netjes binnen `width` afbreken) alsof het één
 // paragraaf is — zo blijft vet/cursief/lettertype binnen dezelfde alinea werken.
 function drawFormattedText(doc, html, x, y, opts = {}) {
-  const { width, height, fontSize = 10, color = "#241D19", ellipsis } = opts;
-  doc.fillColor(color).fontSize(fontSize);
+  const { width, height, fontSize = 10, color = "#241D19", ellipsis, align } = opts;
+  doc.fontSize(fontSize);
   const lines = pdfParseRichHtml(String(html || ""));
   let first = true;
   lines.forEach((lineRuns, li) => {
-    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null }];
+    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null }];
     runs.forEach((run, ri) => {
       const lastRunOfLine = ri === runs.length - 1;
       const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
-      doc.font(pdfFontFor(run));
-      const textOpts = { continued: !lastRunOfLine, width, ellipsis: lastRunOverall ? ellipsis : undefined };
+      doc.font(pdfFontFor(run)).fillColor(run.color || color);
+      const textOpts = { continued: !lastRunOfLine, width, align, ellipsis: lastRunOverall ? ellipsis : undefined };
       if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
       else doc.text(run.text, textOpts);
     });
@@ -3632,11 +3637,11 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       doc.rect(0, 0, PDF_PAGE_WIDTH, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
       let ty = 18;
       if (page.title) {
-        drawFormattedText(doc, page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, fontSize: 18, color: "#241D19", ellipsis: true });
+        drawFormattedText(doc, page.title, 20, ty, { width: PDF_PAGE_WIDTH - 40, fontSize: 18, color: "#241D19", align: page.title_align, ellipsis: true });
         ty += 26;
       }
       if (page.description) {
-        drawFormattedText(doc, page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", ellipsis: true });
+        drawFormattedText(doc, page.description, 20, ty, { width: PDF_PAGE_WIDTH - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", align: page.description_align, ellipsis: true });
       }
     }
   }
