@@ -5750,6 +5750,21 @@ function PhotobookTab({ trip }) {
 
 const PHOTOBOOK_BG_SWATCHES = ["#FDF5F0", "#F4F2EF", "#E6E0DA", "#241D19", "#FF7A00", "#3D5A80"];
 
+// Doorzicht en hoekafronding per foto — net als bij professionele
+// fotoboek-editors. cornerRadius is een fractie van de kortste zijde van de
+// foto (0 = vierkante hoeken, 0.5 = volledig rond/pil-vorm).
+const PHOTOBOOK_OPACITY_PRESETS = [
+  { value: 1, label: "100%" },
+  { value: 0.75, label: "75%" },
+  { value: 0.5, label: "50%" },
+];
+const PHOTOBOOK_CORNER_PRESETS = [
+  { value: 0, label: "Geen" },
+  { value: 0.1, label: "Rond" },
+  { value: 0.25, label: "Sterk" },
+  { value: 0.5, label: "Rondje" },
+];
+
 // Kant-en-klare paginaindelingen, zoals "Pagina sjablonen" bij professionele
 // fotoboek-editors (Albelli e.d.) — één tik legt de al aanwezige foto's op
 // deze pagina in een verzorgde verhouding neer, in plaats van dat je zelf
@@ -5806,6 +5821,21 @@ function snapPhotobookValue(v) {
   return Math.round(v / PHOTOBOOK_SNAP_STEP) * PHOTOBOOK_SNAP_STEP;
 }
 
+// Waarschuwt als een foto te weinig pixels heeft om scherp afgedrukt te
+// worden op het formaat waarin 'm nu op de A4-pagina staat (net als de
+// resolutie-check bij professionele fotoboek-editors). Alleen te bepalen
+// voor foto's met bekende pixelafmetingen (nativeWidth/nativeHeight) — die
+// ontbreken bij foto's die vóór deze functie zijn geüpload.
+const PHOTOBOOK_A4_WIDTH_MM = 210, PHOTOBOOK_A4_HEIGHT_MM = 297;
+const PHOTOBOOK_MIN_PRINT_DPI = 150;
+function isPhotoLowRes(photo) {
+  if (!photo.nativeWidth || !photo.nativeHeight) return false;
+  const targetWidthIn = (photo.width * PHOTOBOOK_A4_WIDTH_MM) / 25.4;
+  const targetHeightIn = (photo.height * PHOTOBOOK_A4_HEIGHT_MM) / 25.4;
+  return photo.nativeWidth < targetWidthIn * PHOTOBOOK_MIN_PRINT_DPI
+    || photo.nativeHeight < targetHeightIn * PHOTOBOOK_MIN_PRINT_DPI;
+}
+
 // Vrij verslepen (heel het element) en met de hoekgreep vergroten/verkleinen
 // op de A4-canvas — x/y/width/height zijn fracties van de pagina, dus de
 // berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
@@ -5860,12 +5890,19 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
       className={`absolute select-none touch-none ${selected ? "cursor-move ring-2 ring-sky-500 ring-offset-1" : "cursor-pointer"}`}
       style={{ left: `${photo.x * 100}%`, top: `${photo.y * 100}%`, width: `${photo.width * 100}%`, height: `${photo.height * 100}%` }}
     >
-      <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover rounded-[2px] pointer-events-none" />
+      <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none"
+        style={{ opacity: photo.opacity ?? 1, borderRadius: `${(photo.cornerRadius ?? 0) * 100}%` }} />
       {/* Alleen een hint tijdens het bewerken — niet in het voorbeeld of de
           uiteindelijke PDF, dus dit leeft puur hier in de editor-canvas. */}
       {duplicatePages?.length > 0 && (
         <div className="absolute top-1 left-1 right-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-medium leading-tight pointer-events-none truncate">
           Ook op pag. {duplicatePages.join(", ")}
+        </div>
+      )}
+      {isPhotoLowRes(photo) && (
+        <div title="Deze foto heeft weinig pixels voor dit formaat en kan er wazig uitzien op papier"
+          className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center pointer-events-none shadow">
+          <Icon name="alert" size={12} strokeWidth={2.2} />
         </div>
       )}
       {selected && (
@@ -6012,6 +6049,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         const cascade = (startCount + k) % 6;
         return {
           photoId: c.id, caption: null, url: c.url, thumbUrl: c.thumb_url,
+          nativeWidth: c.width, nativeHeight: c.height,
           x: 0.08 + cascade * 0.05, y: 0.08 + cascade * 0.05, width: 0.38, height: 0.3,
         };
       });
@@ -6272,6 +6310,28 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 </div>
               </div>
             )}
+            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (
+              <div className="mt-1.5 flex items-center gap-3 flex-wrap px-1">
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400 mr-0.5">Doorzicht</span>
+                  {PHOTOBOOK_OPACITY_PRESETS.map((p) => (
+                    <button key={p.value} type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { opacity: p.value })}
+                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.photos[selectedPhoto.photo].opacity ?? 1) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
+                  {PHOTOBOOK_CORNER_PRESETS.map((p) => (
+                    <button key={p.value} type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { cornerRadius: p.value })}
+                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.photos[selectedPhoto.photo].cornerRadius ?? 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <button type="button" onClick={() => openPicker(i)}
               className="mt-2 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
@@ -6379,7 +6439,8 @@ function PhotobookPreview({ title, pages, onClose }) {
             {page.photos.map((ph, j) => (
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
-                <img src={ph.url} alt="" className="w-full h-full object-cover" />
+                <img src={ph.url} alt="" className="w-full h-full object-cover"
+                  style={{ opacity: ph.opacity ?? 1, borderRadius: `${(ph.cornerRadius ?? 0) * 100}%` }} />
                 {ph.caption && <RichTextView html={ph.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate" />}
               </div>
             ))}

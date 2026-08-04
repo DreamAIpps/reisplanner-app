@@ -1681,6 +1681,30 @@ async function resizeFullPhoto(buffer, mediaType) {
   }
 }
 
+// Pixelafmetingen van de uiteindelijk opgeslagen foto (ná resizeFullPhoto) —
+// voor de lage-resolutie-waarschuwing in het fotoboek. Faalt stil (null/null)
+// als geen van beide decoders overweg kan met het formaat; dat is dan gewoon
+// een foto waarvoor de waarschuwing niet getoond kan worden, geen harde fout.
+async function getImageDimensions(buffer, mediaType) {
+  if (sharp) {
+    try {
+      const meta = await sharp(buffer).metadata();
+      return { width: meta.width || null, height: meta.height || null };
+    } catch (err) {
+      console.error("Kon foto-afmetingen niet bepalen (sharp):", err.message);
+    }
+  }
+  if (/jpe?g/i.test(mediaType)) {
+    try {
+      const decoded = jpegJs.decode(buffer, { useTArray: true });
+      return { width: decoded.width || null, height: decoded.height || null };
+    } catch (err) {
+      console.error("Kon foto-afmetingen niet bepalen (jpeg-js):", err.message);
+    }
+  }
+  return { width: null, height: null };
+}
+
 route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   // Op wanneer de foto daadwerkelijk genomen is (EXIF), niet op wanneer 'm
   // toevallig geüpload is — anders staat een later toegevoegde foto van
@@ -1690,7 +1714,7 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   // hoort) — handig als zoekterm bij het kiezen van foto's, bijv. in het
   // fotoboek.
   const { rows } = await query(
-    `SELECT p.id, p.trip_id, p.day_id, p.activity_id, p.transport_id, p.accommodation_id, p.mime_type, p.caption, p.taken_at, p.latitude, p.longitude, p.created_at,
+    `SELECT p.id, p.trip_id, p.day_id, p.activity_id, p.transport_id, p.accommodation_id, p.mime_type, p.caption, p.taken_at, p.latitude, p.longitude, p.created_at, p.width, p.height,
             a.title AS activity_title, a.location AS activity_location,
             tr.type AS transport_type, tr.from_location, tr.to_location,
             ac.name AS accommodation_name,
@@ -1707,6 +1731,7 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
   sendJson(res, 200, rows.map((r) => ({
     id: r.id, trip_id: r.trip_id, day_id: r.day_id, activity_id: r.activity_id, transport_id: r.transport_id, accommodation_id: r.accommodation_id,
     mime_type: r.mime_type, caption: r.caption, taken_at: r.taken_at, latitude: r.latitude, longitude: r.longitude, created_at: r.created_at,
+    width: r.width, height: r.height,
     label: photobookCaption(r),
     url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb`,
   })));
@@ -1749,11 +1774,12 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   // its current assignment (day/activity/transport/accommodation) if it has one.
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const thumb = await makeThumbnail(buffer);
+  const { width: imgWidth, height: imgHeight } = await getImageDimensions(buffer, mimeType);
   let rows;
   try {
     ({ rows } = await query(
-      `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev, width, height)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
          day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
          activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
@@ -1764,9 +1790,11 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
          latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
          longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
          thumb_data = COALESCE(EXCLUDED.thumb_data, photos.thumb_data),
-         thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END
-       RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, (xmax = 0) AS inserted`,
-      [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0]
+         thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END,
+         width = COALESCE(photos.width, EXCLUDED.width),
+         height = COALESCE(photos.height, EXCLUDED.height)
+       RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, width, height, (xmax = 0) AS inserted`,
+      [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0, imgWidth, imgHeight]
     ));
   } catch (err) {
     // Postgres geeft hier een letterlijke bestandssysteemfout terug ("could not
@@ -3311,6 +3339,8 @@ function clampPhotoRect(p) {
     y: Math.min(1, Math.max(0, n(p.y, 0.1))),
     width: Math.min(1, Math.max(0.03, n(p.width, 0.4))),
     height: Math.min(1, Math.max(0.03, n(p.height, 0.4))),
+    opacity: Math.min(1, Math.max(0, n(p.opacity, 1))),
+    cornerRadius: Math.min(0.5, Math.max(0, n(p.cornerRadius, 0))),
   };
 }
 
@@ -3330,8 +3360,10 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     [params.id]
   );
   const { rows: pagePhotos } = await query(
-    `SELECT pgp.* FROM photobook_page_photos pgp
+    `SELECT pgp.*, ph.width AS native_width, ph.height AS native_height
+     FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
+     JOIN photos ph ON ph.id = pgp.photo_id
      WHERE pp.photobook_id = $1 ORDER BY pgp.page_id ASC, pgp.position ASC`,
     [params.id]
   );
@@ -3341,6 +3373,8 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     photosByPage.get(p.page_id).push({
       id: p.id, photoId: p.photo_id, caption: p.caption,
       x: p.x, y: p.y, width: p.width, height: p.height,
+      opacity: p.opacity, cornerRadius: p.corner_radius,
+      nativeWidth: p.native_width, nativeHeight: p.native_height,
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
     });
   }
@@ -3418,8 +3452,8 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
       const rect = clampPhotoRect(page.photos[j]);
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius]
       );
     }
   }
@@ -3519,7 +3553,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     [params.id]
   );
   const { rows: pagePhotoRows } = await query(
-    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, p.data
+    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius, p.data
      FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
      JOIN photos p ON p.id = pgp.photo_id
@@ -3571,7 +3605,12 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const w = ph.width * PDF_PAGE_WIDTH, h = ph.height * PDF_PAGE_HEIGHT;
       try {
         doc.save();
-        doc.rect(x, y, w, h).clip();
+        // cornerRadius 0.5 == volledig rond/pil-vorm (radius = halve kortste
+        // zijde), zelfde interpretatie als de CSS border-radius:% in de editor.
+        const radius = (ph.corner_radius || 0) * Math.min(w, h);
+        if (radius > 0) doc.roundedRect(x, y, w, h, radius).clip();
+        else doc.rect(x, y, w, h).clip();
+        doc.opacity(ph.opacity ?? 1);
         doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
         doc.restore();
       } catch (err) {
