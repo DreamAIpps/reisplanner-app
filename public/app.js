@@ -6168,12 +6168,6 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
             transform: `scale(${photo.cropZoom ?? 1})`,
             transformOrigin: `${(photo.cropX ?? 0.5) * 100}% ${(photo.cropY ?? 0.5) * 100}%`,
           }} />
-        {/* Zelfde plek/stijl als in het voorbeeld en de PDF, zodat een
-            bijschrift meteen zichtbaar is terwijl je 'm typt, niet pas na
-            "Voorbeeld" openen. */}
-        {photo.caption && (
-          <RichTextView html={photo.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate pointer-events-none" />
-        )}
       </div>
       {/* Alleen een hint tijdens het bewerken — niet in het voorbeeld of de
           uiteindelijke PDF, dus dit leeft puur hier in de editor-canvas. */}
@@ -6321,7 +6315,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
   const titleRef = useRef(null); // titel-input, voor de opmaakknoppen (vet/cursief)
   const descRef = useRef(null); // beschrijving-textarea, idem
-  const captionRef = useRef(null); // bijschrift-input van de geselecteerde foto, idem
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
   const pagePanelDrag = usePhotobookPanelDrag(pagePanelOffset, setPagePanelOffset);
   const selPanelDrag = usePhotobookPanelDrag(selPanelOffset, setSelPanelOffset);
@@ -6427,13 +6420,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, background: preset.background,
       photos: p.photos.map((ph, j) => (j < preset.layout.slots.length ? { ...ph, ...preset.layout.slots[j] } : ph)),
-    })));
-    setDirty(true);
-  }
-  function setPhotoCaption(pageIndex, photoIndex, text) {
-    pushHistory();
-    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
-      ...p, photos: p.photos.map((ph, j) => (j === photoIndex ? { ...ph, caption: text } : ph)),
     })));
     setDirty(true);
   }
@@ -6543,7 +6529,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       const added = chosen.map((c, k) => {
         const cascade = (startCount + k) % 6;
         return {
-          photoId: c.id, caption: null, url: c.url, thumbUrl: c.thumb_url,
+          photoId: c.id, url: c.url, thumbUrl: c.thumb_url,
           nativeWidth: c.width, nativeHeight: c.height,
           x: 0.08 + cascade * 0.05, y: 0.08 + cascade * 0.05, width: 0.38, height: 0.3,
         };
@@ -6569,7 +6555,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           : p.background.type === "color" ? { type: "color", value: p.background.value }
           : { type: "photo", photo_id: p.background.photoId, overlay: p.background.overlay },
         photos: p.photos.map((ph) => ({
-          photo_id: ph.photoId, caption: ph.caption, x: ph.x, y: ph.y, width: ph.width, height: ph.height,
+          photo_id: ph.photoId, x: ph.x, y: ph.y, width: ph.width, height: ph.height,
           opacity: ph.opacity, cornerRadius: ph.cornerRadius, cropX: ph.cropX, cropY: ph.cropY, cropZoom: ph.cropZoom,
         })),
         textBoxes: (p.textBoxes || []).map((b) => ({
@@ -6930,26 +6916,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     <Icon name="dragHandle" size={14} />
                   </button>
                   {/* Tijdens bijsnijden alleen het sleepgreepje en een label
-                      — bijschrift/volgorde/achtergrond/verwijderen leiden
-                      alleen maar af terwijl je met de foto zelf bezig bent. */}
+                      — volgorde/achtergrond/verwijderen leiden alleen maar af
+                      terwijl je met de foto zelf bezig bent. */}
                   {cropMode ? (
                     <span className="text-xs font-semibold text-gray-500">Bijsnijden</span>
                   ) : (
                     <>
                       <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                      <div className="flex-1">
-                        <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)} />
-                        <div className="relative">
-                          <RichTextEditable ref={captionRef} value={photoSel.caption || ""} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)}
-                            singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white !pr-8" />
-                          {photoSel.caption && (
-                            <button type="button" onClick={() => setPhotoCaption(currentPageIndex, selectedPhoto.photo, "")} title="Bijschrift verwijderen"
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-500 transition-colors">
-                              <Icon name="close" size={13} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                      <div className="flex-1" />
                       <div className="flex items-center gap-1 shrink-0">
                         <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
                           className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
@@ -7168,7 +7142,6 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
                     transform: `scale(${ph.cropZoom ?? 1})`,
                     transformOrigin: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
                   }} />
-                {ph.caption && <RichTextView html={ph.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate" />}
               </div>
             ))}
             {(page.textBoxes || []).map((box, k) => (
