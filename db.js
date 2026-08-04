@@ -235,6 +235,12 @@ async function initDb() {
     -- Bumped when the thumbnail generator changes so existing thumbnails are
     -- regenerated lazily on next view, rather than needing a migration pass.
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_rev SMALLINT NOT NULL DEFAULT 0;
+    -- Pixelafmetingen van de opgeslagen (al verkleinde) foto, alleen gevuld bij
+    -- nieuwe uploads — gebruikt door het fotoboek om te waarschuwen als een
+    -- foto te weinig pixels heeft voor scherpe afdruk op het gekozen formaat.
+    -- Bestaande foto's blijven NULL tot ze opnieuw geüpload worden.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS width INTEGER;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS height INTEGER;
     CREATE INDEX IF NOT EXISTS photos_trip_idx ON photos(trip_id);
     CREATE INDEX IF NOT EXISTS days_trip_idx ON days(trip_id);
     CREATE INDEX IF NOT EXISTS activities_trip_idx ON activities(trip_id);
@@ -457,7 +463,9 @@ async function initDb() {
       description TEXT,
       background_type TEXT,
       background_color TEXT,
-      background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
+      background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+      title_align TEXT NOT NULL DEFAULT 'left',
+      description_align TEXT NOT NULL DEFAULT 'left'
     );
     CREATE INDEX IF NOT EXISTS photobook_pages_book_idx ON photobook_pages(photobook_id, position);
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title TEXT;
@@ -465,6 +473,9 @@ async function initDb() {
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_type TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
+    -- Uitlijning van titel/beschrijving (CEWE-achtige stijlopties).
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description_align TEXT NOT NULL DEFAULT 'left';
 
     -- x/y/width/height zijn fracties van de pagina (0-1), niet pixels — zo
     -- blijft een foto op dezelfde relatieve plek staan ongeacht schermgrootte
@@ -479,13 +490,18 @@ async function initDb() {
       x REAL NOT NULL DEFAULT 0.1,
       y REAL NOT NULL DEFAULT 0.1,
       width REAL NOT NULL DEFAULT 0.4,
-      height REAL NOT NULL DEFAULT 0.4
+      height REAL NOT NULL DEFAULT 0.4,
+      opacity REAL NOT NULL DEFAULT 1,
+      corner_radius REAL NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS photobook_page_photos_page_idx ON photobook_page_photos(page_id, position);
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS x REAL NOT NULL DEFAULT 0.1;
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS y REAL NOT NULL DEFAULT 0.1;
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS width REAL NOT NULL DEFAULT 0.4;
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS height REAL NOT NULL DEFAULT 0.4;
+    -- Doorzicht en hoekafronding per foto (CEWE-achtige stijlopties).
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS opacity REAL NOT NULL DEFAULT 1;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS corner_radius REAL NOT NULL DEFAULT 0;
 
     -- Foto's van vóór het losse verslepen/schalen stonden allemaal op
     -- dezelfde standaardplek — dit verspreidt ze eenmalig over een simpel
