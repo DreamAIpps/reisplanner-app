@@ -451,6 +451,10 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS photobooks_trip_idx ON photobooks(trip_id);
+    -- Staand (portrait, standaard) of liggend (landscape) paginaformaat —
+    -- gekozen bij het aanmaken, geldt voor het hele boek (canvas-verhouding
+    -- in de editor/preview en het PDF-paginaformaat).
+    ALTER TABLE photobooks ADD COLUMN IF NOT EXISTS orientation TEXT NOT NULL DEFAULT 'portrait';
 
     -- Eén pagina kan meerdere foto's bevatten (zie photobook_page_photos
     -- hieronder), een titel/beschrijving, en een optionele achtergrond (een

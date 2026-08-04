@@ -41,6 +41,9 @@ const ICONS = {
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
   dragHandle: <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></>,
   sliders: <><path d="M4 7h9" /><path d="M17 7h3" /><circle cx="14.5" cy="7" r="2" /><path d="M4 12h3" /><path d="M9.5 12h10.5" /><circle cx="7" cy="12" r="2" /><path d="M4 17h9" /><path d="M17 17h3" /><circle cx="14.5" cy="17" r="2" /></>,
+  undo: <><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 1 1 0 12h-3" /></>,
+  crop: <><path d="M6 1v15a2 2 0 0 0 2 2h15" /><path d="M1 6h15a2 2 0 0 1 2 2v15" /></>,
+  chevronDown: <><path d="m5.5 9 6.5 6.5L18.5 9" /></>,
 
   // vervoer
   plane: <><path d="M3 13.5 21 7l-4.5 12-3.2-5.1z" /><path d="M13.3 13.9 21 7" /></>,
@@ -626,7 +629,7 @@ function Modal({ title, onClose, children, wide }) {
 // direct zichtbaar terwijl je typt. DOMPurify is de enige plek die bepaalt
 // wat er ooit gerenderd wordt, dus dat is waar de echte veiligheidsgrens zit.
 const RICH_TEXT_ALLOWED_TAGS = ["b", "i", "font", "br", "div"];
-const RICH_TEXT_ALLOWED_ATTR = ["face", "color"];
+const RICH_TEXT_ALLOWED_ATTR = ["face", "color", "size"];
 function sanitizeRichText(html) {
   return window.DOMPurify
     ? window.DOMPurify.sanitize(html || "", { ALLOWED_TAGS: RICH_TEXT_ALLOWED_TAGS, ALLOWED_ATTR: RICH_TEXT_ALLOWED_ATTR })
@@ -650,6 +653,16 @@ const RICH_TEXT_ALIGNMENTS = [
   { key: "left", icon: "alignLeft" },
   { key: "center", icon: "alignCenter" },
   { key: "right", icon: "alignRight" },
+];
+// document.execCommand("fontSize", ...) gebruikt de oude HTML-schaal van 1
+// t/m 7 (3 = standaard) en wikkelt de selectie in <font size="N">, dezelfde
+// aanpak als de lettertype- en kleurknoppen hierboven — de browser (en de
+// PDF-export, zie pdfParseRichHtml op de server) kennen dat attribuut al.
+const RICH_TEXT_SIZES = [
+  { key: "1", label: "Klein" },
+  { key: "3", label: "Normaal" },
+  { key: "5", label: "Groot" },
+  { key: "7", label: "Extra groot" },
 ];
 // Alleen-lezen weergave van opgeslagen fotoboek-tekst — altijd door de
 // sanitizer heen, ook al is er clientside al gesaneerd vóór het opslaan (de
@@ -770,6 +783,14 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
           style={{ fontFamily: f.family }} title={f.label}
           className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">
           {f.label}
+        </button>
+      ))}
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
+      {RICH_TEXT_SIZES.map((s) => (
+        <button key={s.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fontSize", s.key)} title={s.label}
+          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors"
+          style={{ fontSize: `${10 + Number(s.key)}px` }}>
+          A
         </button>
       ))}
     </div>
@@ -5735,7 +5756,8 @@ function PhotobookTab({ trip }) {
   const [creating, setCreating] = useState(false);
   const [openBookId, setOpenBookId] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardStep, setWizardStep] = useState(1); // 1 = automatisch vullen?, 2 = hoeveel foto's per pagina?
+  const [wizardStep, setWizardStep] = useState(1); // 1 = staand/liggend, 2 = automatisch vullen?, 3 = hoeveel foto's per pagina?
+  const [wizardOrientation, setWizardOrientation] = useState("portrait");
 
   const load = useCallback(async () => {
     try { setBooks(await api.getPhotobooks(trip.id)); }
@@ -5779,43 +5801,62 @@ function PhotobookTab({ trip }) {
           Stel samen een fotoboek van deze reis samen — een voorgestelde selectie, volgorde en bijschrift om mee te beginnen, die je zelf verder aanpast.
         </p>
         {error && !wizardOpen && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
-        <Button onClick={() => { setWizardStep(1); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
+        <Button onClick={() => { setWizardStep(1); setWizardOrientation("portrait"); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
       </div>
 
       {wizardOpen && (
         <Modal title="Nieuw fotoboek" onClose={() => !creating && setWizardOpen(false)}>
           {wizardStep === 1 && (
             <div>
-              <p className="text-sm text-gray-600 mb-4">
-                Wil je een automatisch voorgevuld fotoboek maken, met de foto's van deze reis alvast verdeeld over de pagina's?
-              </p>
-              <div className="space-y-2">
-                <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
-                  className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
-                  <div className="font-medium text-gray-800">Ja, vul automatisch</div>
-                  <div className="text-xs text-gray-500 mt-0.5">Alle foto's van de reis worden verdeeld over pagina's, die je daarna zelf verder aanpast.</div>
+              <p className="text-sm text-gray-600 mb-4">Staand of liggend formaat?</p>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <button type="button" onClick={() => { setWizardOrientation("portrait"); setWizardStep(2); }} disabled={creating}
+                  className="flex flex-col items-center gap-2 p-3 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                  <div className="w-12 h-16 rounded border-2 border-gray-300 bg-gray-50" />
+                  <span className="text-sm font-medium text-gray-800">Staand</span>
                 </button>
-                <button type="button" onClick={() => handleCreate({ autofill: false })} disabled={creating}
-                  className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
-                  <div className="font-medium text-gray-800">Nee, ik begin leeg</div>
-                  <div className="text-xs text-gray-500 mt-0.5">Een leeg fotoboek waar je zelf pagina's en foto's aan toevoegt.</div>
+                <button type="button" onClick={() => { setWizardOrientation("landscape"); setWizardStep(2); }} disabled={creating}
+                  className="flex flex-col items-center gap-2 p-3 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                  <div className="w-16 h-12 rounded border-2 border-gray-300 bg-gray-50" />
+                  <span className="text-sm font-medium text-gray-800">Liggend</span>
                 </button>
               </div>
             </div>
           )}
           {wizardStep === 2 && (
             <div>
+              <p className="text-sm text-gray-600 mb-4">
+                Wil je een automatisch voorgevuld fotoboek maken, met de foto's van deze reis alvast verdeeld over de pagina's?
+              </p>
+              <div className="space-y-2">
+                <button type="button" onClick={() => setWizardStep(3)} disabled={creating}
+                  className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Ja, vul automatisch</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Alle foto's van de reis worden verdeeld over pagina's, die je daarna zelf verder aanpast.</div>
+                </button>
+                <button type="button" onClick={() => handleCreate({ autofill: false, orientation: wizardOrientation })} disabled={creating}
+                  className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Nee, ik begin leeg</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Een leeg fotoboek waar je zelf pagina's en foto's aan toevoegt.</div>
+                </button>
+              </div>
+              <button type="button" onClick={() => setWizardStep(1)} disabled={creating}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors mt-3">← Terug</button>
+            </div>
+          )}
+          {wizardStep === 3 && (
+            <div>
               <p className="text-sm text-gray-600 mb-4">Hoeveel foto's per pagina?</p>
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
-                  <button key={n} type="button" onClick={() => handleCreate({ autofill: true, photosPerPage: n })} disabled={creating}
+                  <button key={n} type="button" onClick={() => handleCreate({ autofill: true, photosPerPage: n, orientation: wizardOrientation })} disabled={creating}
                     className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
                     <PhotobookLayoutThumb slots={layout.slots} />
                     <span className="text-sm font-medium text-gray-800">{n}</span>
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={() => setWizardStep(1)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
             </div>
           )}
@@ -5957,10 +5998,12 @@ function snapPhotobookValue(v) {
 // ontbreken bij foto's die vóór deze functie zijn geüpload.
 const PHOTOBOOK_A4_WIDTH_MM = 210, PHOTOBOOK_A4_HEIGHT_MM = 297;
 const PHOTOBOOK_MIN_PRINT_DPI = 150;
-function isPhotoLowRes(photo) {
+function isPhotoLowRes(photo, orientation) {
   if (!photo.nativeWidth || !photo.nativeHeight) return false;
-  const targetWidthIn = (photo.width * PHOTOBOOK_A4_WIDTH_MM) / 25.4;
-  const targetHeightIn = (photo.height * PHOTOBOOK_A4_HEIGHT_MM) / 25.4;
+  const pageWidthMm = orientation === "landscape" ? PHOTOBOOK_A4_HEIGHT_MM : PHOTOBOOK_A4_WIDTH_MM;
+  const pageHeightMm = orientation === "landscape" ? PHOTOBOOK_A4_WIDTH_MM : PHOTOBOOK_A4_HEIGHT_MM;
+  const targetWidthIn = (photo.width * pageWidthMm) / 25.4;
+  const targetHeightIn = (photo.height * pageHeightMm) / 25.4;
   return photo.nativeWidth < targetWidthIn * PHOTOBOOK_MIN_PRINT_DPI
     || photo.nativeHeight < targetHeightIn * PHOTOBOOK_MIN_PRINT_DPI;
 }
@@ -6014,7 +6057,7 @@ function usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect 
   return { beginDrag, onDrag, endDrag };
 }
 
-function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages }) {
+function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages, cropActive, onToggleCrop, orientation }) {
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: photo, onChangeRect, getPageEl, snap, onSelect });
 
   return (
@@ -6046,7 +6089,7 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
           Ook op pag. {duplicatePages.join(", ")}
         </div>
       )}
-      {isPhotoLowRes(photo) && (
+      {isPhotoLowRes(photo, orientation) && (
         <div title="Deze foto heeft weinig pixels voor dit formaat en kan er wazig uitzien op papier"
           className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center pointer-events-none shadow">
           <Icon name="alert" size={12} strokeWidth={2.2} />
@@ -6062,6 +6105,17 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
         >
           <div className="w-2 h-2 border-b-2 border-r-2 border-white" />
         </div>
+      )}
+      {/* Bijsnijden zit hierachter i.p.v. altijd in het paneel eronder — dat
+          hield het paneel onnodig groot voor iets dat je niet elke keer
+          gebruikt. onToggleCrop is alleen gezet als deze foto geselecteerd is
+          (zie de canvas-render hieronder), dus verschijnt niet op elke foto. */}
+      {selected && onToggleCrop && (
+        <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onToggleCrop(); }}
+          title="Bijsnijden"
+          className={`absolute -left-2 -top-2 w-6 h-6 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-colors ${cropActive ? "bg-sky-600 text-white" : "bg-white text-gray-500 hover:text-sky-600"}`}>
+          <Icon name="crop" size={11} />
+        </button>
       )}
     </div>
   );
@@ -6124,6 +6178,7 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
 
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
+  const [orientation, setOrientation] = useState("portrait"); // bij aanmaken gekozen, geldt voor heel het boek
   const [pages, setPages] = useState(null); // null = laden
   const [allPhotos, setAllPhotos] = useState([]);
   const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
@@ -6139,6 +6194,19 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // welke pagina fullscreen in beeld staat
   const [showPagePanel, setShowPagePanel] = useState(false); // zwevend paneel: titel/beschrijving/achtergrond/indeling
+  // Het paneel voor een geselecteerde foto/tekstvak kan de canvas eronder
+  // (incl. de sleepgreep) aan het zicht onttrekken — bijv. bij een foto die
+  // al bijna de hele pagina vult. Een verbergknop laat 'm even wegklappen
+  // zonder de selectie te verliezen, zodat verslepen/vergroten vrij blijft.
+  const [showSelPanel, setShowSelPanel] = useState(true);
+  // Bijsnijden (verschuiven/inzoomen) staat niet meer altijd in het paneel —
+  // pas zichtbaar nadat het crop-icoontje op de foto zelf is aangetikt.
+  const [cropMode, setCropMode] = useState(false);
+  // History van eerdere `pages`-snapshots, voor de "Ongedaan maken"-knop.
+  // Elke muterende functie roept pushHistory() aan vóórdat 'ie zelf iets
+  // wijzigt, met de op dat moment geldende `pages` (via closure) — zo hoeft
+  // er niets omgebouwd te worden naar functionele setState-vorm.
+  const [history, setHistory] = useState([]);
   // Steeds maar één pagina tegelijk in beeld (fullscreen), dus geen array
   // meer nodig zoals toen alle pagina's onder elkaar stonden — telkens één
   // canvas/titel/beschrijving-veld gemonteerd.
@@ -6160,17 +6228,48 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setSelectedPhoto(null);
     setSelectedTextBox(null);
   }, [currentPageIndex]);
+  // Een nieuwe selectie toont het paneel weer fris open, en verlaat bijsnij-
+  // modus — anders blijft bijv. de zoomrij van de vorige foto zichtbaar op
+  // een net geselecteerde andere foto.
+  useEffect(() => {
+    setShowSelPanel(true);
+    setCropMode(false);
+  }, [selectedPhoto?.page, selectedPhoto?.photo, selectedTextBox?.page, selectedTextBox?.box]);
+  function toggleCropMode() {
+    setCropMode((m) => {
+      const next = !m;
+      if (next) setShowSelPanel(true);
+      return next;
+    });
+  }
 
   useEffect(() => {
-    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
+    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); });
     api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
   }, [bookId, tripId]);
 
+  // Elke muterende functie hieronder roept dit eerst aan, met de `pages` die
+  // op dat moment nog gelden (via closure) — zo kan "Ongedaan maken" terug
+  // naar de staat vóór die actie, zonder dat elke aanroeper dit zelf hoeft
+  // te doen. Cap op 20 stappen, anders groeit dit onbeperkt binnen één sessie.
+  function pushHistory() {
+    setHistory((h) => [...h.slice(-19), pages]);
+  }
+  function undo() {
+    if (!history.length) return;
+    setPages(history[history.length - 1]);
+    setHistory((h) => h.slice(0, -1));
+    setSelectedPhoto(null);
+    setSelectedTextBox(null);
+    setDirty(true);
+  }
   function updatePage(i, patch) {
+    pushHistory();
     setPages((ps) => ps.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
     setDirty(true);
   }
   function movePage(i, dir) {
+    pushHistory();
     setPages((ps) => {
       const j = i + dir;
       if (j < 0 || j >= ps.length) return ps;
@@ -6181,22 +6280,27 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function removePage(i) {
+    if (!confirm("Pagina verwijderen? Foto's en tekstvakken op deze pagina gaan mee verloren.")) return;
+    pushHistory();
     setPages((ps) => ps.filter((_, idx) => idx !== i));
     setDirty(true);
   }
   function addPage() {
+    pushHistory();
     setPages((ps) => [...ps, { title: null, description: null, background: null, photos: [] }]);
     setDirty(true);
   }
   // Legt de eerste N foto's (N = aantal vakken in de indeling) in de gekozen
   // verhouding neer; extra foto's boven dat aantal blijven ongemoeid staan.
   function applyLayout(pageIndex, layout) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, photos: p.photos.map((ph, j) => (j < layout.slots.length ? { ...ph, ...layout.slots[j] } : ph)),
     })));
     setDirty(true);
   }
   function applyDesignPreset(pageIndex, preset) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, background: preset.background,
       photos: p.photos.map((ph, j) => (j < preset.layout.slots.length ? { ...ph, ...preset.layout.slots[j] } : ph)),
@@ -6204,6 +6308,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function setPhotoCaption(pageIndex, photoIndex, text) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, photos: p.photos.map((ph, j) => (j === photoIndex ? { ...ph, caption: text } : ph)),
     })));
@@ -6211,6 +6316,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function removePhoto(pageIndex, photoIndex) {
     if (!confirm("Foto van deze pagina verwijderen?")) return;
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, photos: p.photos.filter((_, j) => j !== photoIndex) })));
     setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? null : sel));
     setDirty(true);
@@ -6222,6 +6328,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     const page = pages[pageIndex];
     const j = photoIndex + dir;
     if (!page || j < 0 || j >= page.photos.length) return;
+    pushHistory();
     setPages((ps) => ps.map((p, i) => {
       if (i !== pageIndex) return p;
       const copy = [...p.photos];
@@ -6232,12 +6339,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function updatePhotoRect(pageIndex, photoIndex, patch) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, photos: p.photos.map((ph, j) => (j === photoIndex ? { ...ph, ...patch } : ph)),
     })));
     setDirty(true);
   }
   function addTextBox(pageIndex) {
+    pushHistory();
     const box = {
       id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       html: "", x: 0.15, y: 0.4, width: 0.7, height: 0.15, align: "center", backgroundColor: "rgba(255,255,255,0.85)",
@@ -6248,12 +6357,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function updateTextBoxRect(pageIndex, boxIndex, patch) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, textBoxes: (p.textBoxes || []).map((b, j) => (j === boxIndex ? { ...b, ...patch } : b)),
     })));
     setDirty(true);
   }
   function removeTextBox(pageIndex, boxIndex) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, textBoxes: (p.textBoxes || []).filter((_, j) => j !== boxIndex),
     })));
@@ -6273,10 +6384,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // De foto verhuist van de gewone foto-rij naar de achtergrond — niet
   // dubbel getoond.
   function useAsBackground(pageIndex, photo) {
+    pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p,
       photos: p.photos.filter((ph) => ph.photoId !== photo.photoId),
-      background: { type: "photo", photoId: photo.photoId, url: photo.url },
+      // 50% witte sluier als vertrekpunt — een foto direct als achtergrond
+      // zetten resulteert anders vaak in onleesbare tekst/foto's erboven,
+      // en de gebruiker kan dit zelf nog aanpassen via de Witte-sluier-rij.
+      background: { type: "photo", photoId: photo.photoId, url: photo.url, overlay: 0.5 },
     })));
     setSelectedPhoto((sel) => (sel && sel.page === pageIndex ? null : sel));
     setDirty(true);
@@ -6386,7 +6501,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   if (pages === null) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
   if (showPreview) {
-    return <PhotobookPreview title={title} pages={pages} onClose={() => setShowPreview(false)} />;
+    return <PhotobookPreview title={title} pages={pages} orientation={orientation} onClose={() => setShowPreview(false)} />;
   }
 
   // Welke pagina's (1-based) elke foto gebruikt — voor het waarschuwings-
@@ -6426,6 +6541,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         </button>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
           className="!text-sm !bg-white/10 !border-white/20 !text-white flex-1" placeholder="Titel van het fotoboek" />
+        <button type="button" onClick={undo} disabled={history.length === 0} title="Ongedaan maken"
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
+          <Icon name="undo" size={16} />
+        </button>
         <button type="button" onClick={() => setSnapEnabled((s) => !s)} title="Uitlijnen op raster/marges tijdens verslepen"
           className={`shrink-0 px-2.5 h-8 rounded-full text-xs font-medium border transition-colors ${snapEnabled ? "border-sky-400 bg-sky-500/20 text-sky-300" : "border-white/20 text-white/50 hover:border-white/40"}`}>
           Raster
@@ -6460,7 +6579,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); }}
               className="relative rounded-lg overflow-hidden shadow-2xl"
               style={{
-                aspectRatio: "210 / 297", height: "100%", maxWidth: "100%",
+                aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
+                // Liggend vult breedte-eerst (anders zou height:100% op een
+                // smal mobiel scherm een veel te brede, dus geknelde, pagina
+                // opleveren); staand vult zoals voorheen hoogte-eerst.
+                ...(orientation === "landscape" ? { width: "100%", maxHeight: "100%" } : { height: "100%", maxWidth: "100%" }),
                 background: page.background?.type === "color" ? page.background.value
                   : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                   : "#FAF9F7",
@@ -6476,7 +6599,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   onChangeRect={(patch) => updatePhotoRect(currentPageIndex, j, patch)}
                   getPageEl={() => canvasRef.current}
                   snap={snapEnabled}
-                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== currentPageIndex + 1)} />
+                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== currentPageIndex + 1)}
+                  cropActive={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j && cropMode}
+                  onToggleCrop={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j ? toggleCropMode : null}
+                  orientation={orientation} />
               ))}
               {(page.textBoxes || []).map((box, k) => (
                 <PhotobookCanvasTextBox key={box.id ?? k} box={box}
@@ -6495,20 +6621,31 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   anders verdwijnt de titel achter een foto die er bovenop ligt
                   — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
               {(page.title || page.description) && (
-                <div className="absolute top-0 left-0 right-0 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
+                // pl-14/pr-14 houden de tekst uit de buurt van de twee
+                // zwevende knoppen hieronder (die als kind van dit canvas-
+                // element in de linker/rechter bovenhoek staan) — anders zou
+                // een titel die tot aan de rand loopt er zo onder verdwijnen.
+                <div className="absolute top-0 left-0 right-0 pl-14 pr-14 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
                   {page.title && <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800 mb-0.5 truncate" />}
                   {page.description && <RichTextView html={page.description} align={page.descriptionAlign} className="text-xs text-gray-600 leading-snug line-clamp-2" />}
                 </div>
               )}
-            </div>
 
-            {/* Zwevende knop: opent/sluit het paginainstellingen-paneel
-                (titel/beschrijving, achtergrond, indelingen) rechtsboven op
-                de canvas — dat neemt anders veel vaste ruimte in beslag. */}
-            <button type="button" onClick={() => setShowPagePanel((s) => !s)} aria-label="Pagina-instellingen"
-              className={`absolute top-5 right-5 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showPagePanel ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
-              <Icon name="sliders" size={17} />
-            </button>
+              {/* Deze twee knoppen staan bewust ALS KIND van de canvas (i.p.v.
+                  ernaast, relatief aan het hele scherm) zodat ze bij een
+                  liggende pagina (waar de canvas gecentreerd en dus smaller
+                  dan het scherm kan staan) precies op de hoeken van de
+                  pagina zelf blijven staan, niet ergens in de lege ruimte
+                  eromheen. */}
+              <button type="button" onClick={() => setShowPagePanel((s) => !s)} aria-label="Pagina-instellingen"
+                className={`absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showPagePanel ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
+                <Icon name="sliders" size={17} />
+              </button>
+              <button type="button" onClick={() => openPicker(currentPageIndex)} aria-label="Foto's toevoegen"
+                className="absolute top-3 left-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg bg-white text-gray-600 hover:text-sky-600 transition-colors">
+                <Icon name="plus" size={19} />
+              </button>
+            </div>
 
             {showPagePanel && (
               <div className="absolute top-16 right-3 left-3 max-h-[75%] overflow-y-auto bg-white rounded-xl shadow-2xl p-3 space-y-3">
@@ -6619,11 +6756,23 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               </div>
             )}
 
+            {/* Verbergknop voor het zwevende foto/tekstvak-paneel — een grote
+                geselecteerde foto kan de canvas (incl. sleepgreep) er onder
+                helemaal aan het zicht onttrekken, dus even wegklappen moet
+                kunnen zonder de selectie te verliezen. */}
+            {(photoSel || textBoxSel) && (
+              <button type="button" onClick={() => setShowSelPanel((s) => !s)} title={showSelPanel ? "Opties verbergen" : "Opties tonen"}
+                className="absolute bottom-3 right-3 z-10 w-9 h-9 rounded-full bg-white shadow-lg flex items-center justify-center text-gray-500 hover:text-sky-600 transition-colors">
+                <Icon name="chevronDown" size={15} style={{ transform: showSelPanel ? "none" : "rotate(180deg)" }} />
+              </button>
+            )}
+
             {/* Zwevend paneel voor de geselecteerde foto — bijschrift,
-                z-volgorde, achtergrond-knop, doorzicht/hoeken/bijsnijden en
-                verwijderen. */}
-            {photoSel && (
-              <div className="absolute bottom-3 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
+                z-volgorde, achtergrond-knop, hoeken en verwijderen. Bijsnijden
+                (verschuiven/inzoomen) zit niet hier maar achter het
+                crop-icoontje op de foto zelf, zie PhotobookCanvasPhoto. */}
+            {photoSel && showSelPanel && (
+              <div className="absolute bottom-14 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
                 <div className="flex items-center gap-2">
                   <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                   <div className="flex-1">
@@ -6652,15 +6801,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 </div>
                 <div className="flex items-center gap-3 flex-wrap px-0.5">
                   <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400 mr-0.5">Doorzicht</span>
-                    {PHOTOBOOK_OPACITY_PRESETS.map((p) => (
-                      <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { opacity: p.value })}
-                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(photoSel.opacity ?? 1) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1">
                     <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
                     {PHOTOBOOK_CORNER_PRESETS.map((p) => (
                       <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cornerRadius: p.value })}
@@ -6670,7 +6810,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     ))}
                   </div>
                 </div>
-                {(() => {
+                {cropMode && (() => {
                   const cur = photoSel;
                   const nudge = (dx, dy) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
                     cropX: Math.min(1, Math.max(0, (cur.cropX ?? 0.5) + dx)),
@@ -6845,7 +6985,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   );
 }
 
-function PhotobookPreview({ title, pages, onClose }) {
+function PhotobookPreview({ title, pages, orientation, onClose }) {
   return (
     <div className="fixed inset-0 z-[70] bg-gray-900 overflow-y-auto">
       <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
@@ -6859,7 +6999,7 @@ function PhotobookPreview({ title, pages, onClose }) {
         {pages.map((page, i) => (
           <div key={i} className="rounded-2xl overflow-hidden shadow-2xl relative"
             style={{
-              aspectRatio: "210 / 297",
+              aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
               background: page.background?.type === "color" ? page.background.value
                 : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                 : "#FAF9F7",
