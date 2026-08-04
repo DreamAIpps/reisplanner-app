@@ -3048,6 +3048,45 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
   );
 }
 
+// Naam van een activiteit in het dagboek — tikken zet ‘m om in een tekstveld,
+// Enter/weg-klikken slaat op, Escape annuleert. Alleen de titel gaat mee in
+// het PUT-verzoek, maar de server verwacht de hele activiteit terug (anders
+// verdwijnen tijd/locatie/notities/categorie stilletjes) — vandaar dat we
+// hier de volledige activiteit doorsturen met alleen de titel vervangen.
+function JournalActivityTitle({ act, readOnly, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(act.title || "");
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (!editing) setValue(act.title || ""); }, [act.title, editing]);
+  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+
+  async function commit() {
+    const trimmed = value.trim();
+    setEditing(false);
+    if (!trimmed || trimmed === act.title) { setValue(act.title || ""); return; }
+    try { await onSave(trimmed); } catch { setValue(act.title || ""); }
+  }
+
+  if (editing) {
+    return (
+      <input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          else if (e.key === "Escape") { setValue(act.title || ""); setEditing(false); }
+        }}
+        className="text-sm font-bold text-gray-600 bg-white border border-sky-300 rounded px-1.5 -my-0.5 -ml-1.5 focus:outline-none focus:ring-1 focus:ring-sky-400"
+        style={{ minWidth: "6rem" }} />
+    );
+  }
+  return (
+    <span onClick={() => !readOnly && setEditing(true)} title={readOnly ? undefined : "Klik om te wijzigen"}
+      className={readOnly ? "" : "cursor-pointer hover:text-sky-600 transition-colors rounded px-0.5 -mx-0.5"}>
+      {act.title}
+    </span>
+  );
+}
+
 function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer, onShare }) {
   const [entries, setEntries] = useState([]);
   const [comments, setComments] = useState([]);
@@ -3310,7 +3349,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                       return (
                         <div key={"act" + act.id} id={`journal-activity-${act.id}`} className="pl-3 border-l border-gray-200" style={{ scrollMarginTop: "5rem" }}>
                           <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
-                            <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />{act.title}
+                            <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400 shrink-0" />
+                            <JournalActivityTitle act={act} readOnly={readOnly}
+                              onSave={async (title) => { await api.updateActivity(act.id, { ...act, title }); onRefresh?.(); }} />
                           </div>
                           <JournalEntryBox entries={actEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
