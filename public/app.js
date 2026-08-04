@@ -721,6 +721,10 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
 // vet/cursief/lettertype op een selectie toe te passen zonder een hele
 // rich-text-library toe te voegen.
 function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
+  // Staat standaard ingeklapt achter één "Aa"-knop — de volledige rij (vet/
+  // cursief/uitlijning/kleur/lettertype) nam veel ruimte in voor iets dat
+  // niet bij elke tik nodig is.
+  const [expanded, setExpanded] = useState(false);
   function run(cmd, value) {
     const el = getEl();
     if (!el) return;
@@ -728,8 +732,21 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
+  if (!expanded) {
+    return (
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(true)} title="Tekstopmaak"
+        className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors mb-1.5">
+        Aa
+      </button>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(false)} title="Opmaak inklappen"
+        className="w-8 h-8 rounded-lg border border-sky-300 bg-sky-50 flex items-center justify-center text-xs font-semibold text-sky-700 transition-colors">
+        Aa
+      </button>
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
@@ -6133,6 +6150,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function removePhoto(pageIndex, photoIndex) {
+    if (!confirm("Foto van deze pagina verwijderen?")) return;
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, photos: p.photos.filter((_, j) => j !== photoIndex) })));
     setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? null : sel));
     setDirty(true);
@@ -6186,6 +6204,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     updatePage(pageIndex, { background: { type: "color", value: color } });
   }
   function setBackgroundNone(pageIndex) {
+    updatePage(pageIndex, { background: null });
+  }
+  function removeBackgroundPhoto(pageIndex) {
+    if (!confirm("Achtergrondfoto verwijderen?")) return;
     updatePage(pageIndex, { background: null });
   }
   // De foto verhuist van de gewone foto-rij naar de achtergrond — niet
@@ -6411,7 +6433,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 <div className="mt-2">
                   <div className="flex items-center gap-2 mb-2">
                     <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
-                    <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
+                    <span className="text-xs text-gray-400 flex-1">Deze foto is de achtergrond</span>
+                    <button type="button" onClick={() => removeBackgroundPhoto(i)} title="Achtergrondfoto verwijderen"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors shrink-0">
+                      <Icon name="trash" size={14} />
+                    </button>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-[11px] text-gray-400 mr-0.5">Witte sluier</span>
