@@ -3341,13 +3341,27 @@ function clampPhotoRect(p) {
     height: Math.min(1, Math.max(0.03, n(p.height, 0.4))),
     opacity: Math.min(1, Math.max(0, n(p.opacity, 1))),
     cornerRadius: Math.min(0.5, Math.max(0, n(p.cornerRadius, 0))),
+    cropX: Math.min(1, Math.max(0, n(p.cropX, 0.5))),
+    cropY: Math.min(1, Math.max(0, n(p.cropY, 0.5))),
+    cropZoom: Math.min(2.5, Math.max(1, n(p.cropZoom, 1))),
+  };
+}
+
+function clampTextBoxRect(t) {
+  const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  return {
+    x: Math.min(1, Math.max(0, n(t.x, 0.15))),
+    y: Math.min(1, Math.max(0, n(t.y, 0.4))),
+    width: Math.min(1, Math.max(0.05, n(t.width, 0.7))),
+    height: Math.min(1, Math.max(0.03, n(t.height, 0.15))),
+    align: ["left", "center", "right"].includes(t.align) ? t.align : "center",
   };
 }
 
 function photobookBackground(page) {
   if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
   if (page.background_type === "photo" && page.background_photo_id) {
-    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw` };
+    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw`, overlay: page.background_overlay || 0 };
   }
   return null;
 }
@@ -3374,8 +3388,23 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       id: p.id, photoId: p.photo_id, caption: p.caption,
       x: p.x, y: p.y, width: p.width, height: p.height,
       opacity: p.opacity, cornerRadius: p.corner_radius,
+      cropX: p.crop_x, cropY: p.crop_y, cropZoom: p.crop_zoom,
       nativeWidth: p.native_width, nativeHeight: p.native_height,
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
+    });
+  }
+  const { rows: pageTextBoxes } = await query(
+    `SELECT * FROM photobook_page_textboxes WHERE page_id IN (
+       SELECT id FROM photobook_pages WHERE photobook_id = $1
+     ) ORDER BY page_id ASC, position ASC`,
+    [params.id]
+  );
+  const textBoxesByPage = new Map();
+  for (const t of pageTextBoxes) {
+    if (!textBoxesByPage.has(t.page_id)) textBoxesByPage.set(t.page_id, []);
+    textBoxesByPage.get(t.page_id).push({
+      id: t.id, html: t.html, x: t.x, y: t.y, width: t.width, height: t.height,
+      align: t.align, backgroundColor: t.background_color,
     });
   }
   sendJson(res, 200, {
@@ -3385,6 +3414,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       titleAlign: pg.title_align, descriptionAlign: pg.description_align,
       background: photobookBackground(pg),
       photos: photosByPage.get(pg.id) || [],
+      textBoxes: textBoxesByPage.get(pg.id) || [],
     })),
   });
 }, { tripScope: "photobooks", allowViewer: true });
@@ -3439,24 +3469,36 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     const page = items[i];
     const title = typeof page.title === "string" ? page.title.trim() || null : null;
     const description = typeof page.description === "string" ? page.description.trim() || null : null;
-    let bgType = null, bgColor = null, bgPhotoId = null;
+    let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
     } else if (page.background?.type === "photo") {
       bgType = "photo"; bgPhotoId = Number(page.background.photo_id);
+      const overlay = Number(page.background.overlay);
+      bgOverlay = Number.isFinite(overlay) ? Math.min(0.75, Math.max(0, overlay)) : 0;
     }
     const { rows: pageRows } = await query(
-      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, title_align, description_align)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [params.id, i, title, description, bgType, bgColor, bgPhotoId, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
+      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, background_overlay, title_align, description_align)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [params.id, i, title, description, bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
     );
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
       const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
       const rect = clampPhotoRect(page.photos[j]);
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
+      );
+    }
+    const textBoxes = Array.isArray(page.textBoxes) ? page.textBoxes : [];
+    for (let j = 0; j < textBoxes.length; j++) {
+      const html = typeof textBoxes[j].html === "string" ? textBoxes[j].html : null;
+      const bgColor = typeof textBoxes[j].backgroundColor === "string" ? textBoxes[j].backgroundColor : null;
+      const rect = clampTextBoxRect(textBoxes[j]);
+      await query(
+        "INSERT INTO photobook_page_textboxes (page_id, position, html, x, y, width, height, align, background_color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        [pageId, j, html, rect.x, rect.y, rect.width, rect.height, rect.align, bgColor]
       );
     }
   }
@@ -3510,6 +3552,17 @@ function pdfParseRichHtml(html) {
   if (last < html.length) pushText(decodeEntities(html.slice(last)));
   return lines;
 }
+// pdfkit's .fill(kleur) accepteert wel een "rgba(...)"-string zonder te
+// klagen, maar negeert het alpha-kanaal stilletjes (getest: geen /ca in de
+// content-stream, dus altijd volledig dekkend) — het alfakanaal moet zelf
+// via fillOpacity() worden toegepast, net als elders in dit bestand.
+function parseRgbaColor(str) {
+  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/i.exec(str || "");
+  if (!m) return { color: str, alpha: 1 };
+  const [, r, g, b, a] = m;
+  const hex = "#" + [r, g, b].map((v) => Number(v).toString(16).padStart(2, "0")).join("");
+  return { color: hex, alpha: a !== undefined ? Number(a) : 1 };
+}
 // pdfkit heeft zonder embedden alleen de 14 standaard PDF-fonts (Helvetica/
 // Times/Courier, elk in vet/cursief) — elke lettertype-keuze uit de editor
 // valt terug op de dichtstbijzijnde van die drie. "Rond" en "Script" hebben
@@ -3548,6 +3601,19 @@ function drawFormattedText(doc, html, x, y, opts = {}) {
   doc.font("Helvetica");
 }
 
+// Zelfde crop-wiskunde als de CSS object-position/transform in de editor:
+// schaal de foto zodat 'm het kader precies vult ("cover"), vermenigvuldig
+// met de extra inzoom, en schuif 'm zo dat het brandpunt (cropX/cropY,
+// 0-1) op dezelfde relatieve plek in het kader blijft staan.
+function pdfCoverPlacement(imgW, imgH, boxW, boxH, cropX, cropY, zoom) {
+  const coverScale = Math.max(boxW / imgW, boxH / imgH);
+  const scale = coverScale * (zoom || 1);
+  const drawW = imgW * scale, drawH = imgH * scale;
+  const offsetX = (drawW - boxW) * (cropX ?? 0.5);
+  const offsetY = (drawH - boxH) * (cropY ?? 0.5);
+  return { drawX: -offsetX, drawY: -offsetY, drawW, drawH };
+}
+
 route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
@@ -3558,7 +3624,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     [params.id]
   );
   const { rows: pagePhotoRows } = await query(
-    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius, p.data
+    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
+            pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.width AS native_width, p.height AS native_height
      FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
      JOIN photos p ON p.id = pgp.photo_id
@@ -3578,6 +3645,17 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   if (bgPhotoIds.length) {
     const { rows: bgRows } = await query("SELECT id, data FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
     for (const r of bgRows) bgPhotosById.set(r.id, r.data);
+  }
+  const { rows: pageTextBoxRows } = await query(
+    `SELECT tb.* FROM photobook_page_textboxes tb
+     JOIN photobook_pages pp ON pp.id = tb.page_id
+     WHERE pp.photobook_id = $1 ORDER BY tb.page_id ASC, tb.position ASC`,
+    [params.id]
+  );
+  const textBoxesByPage = new Map();
+  for (const t of pageTextBoxRows) {
+    if (!textBoxesByPage.has(t.page_id)) textBoxesByPage.set(t.page_id, []);
+    textBoxesByPage.get(t.page_id).push(t);
   }
 
   const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
@@ -3599,6 +3677,9 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       if (bgData) {
         try {
           doc.image(bgData, 0, 0, { cover: [PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT] });
+          if (page.background_overlay > 0) {
+            doc.rect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
+          }
         } catch (err) {
           console.error("Fotoboek-PDF: achtergrondfoto kon niet worden ingevoegd:", err?.message || err);
         }
@@ -3616,7 +3697,14 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         if (radius > 0) doc.roundedRect(x, y, w, h, radius).clip();
         else doc.rect(x, y, w, h).clip();
         doc.opacity(ph.opacity ?? 1);
-        doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
+        // Zonder bekende pixelafmetingen (oudere foto's van vóór deze kolom
+        // bestond) valt terug op pdfkit's eigen gecentreerde cover-crop.
+        if (ph.native_width && ph.native_height) {
+          const { drawX, drawY, drawW, drawH } = pdfCoverPlacement(ph.native_width, ph.native_height, w, h, ph.crop_x, ph.crop_y, ph.crop_zoom);
+          doc.image(ph.data, x + drawX, y + drawY, { width: drawW, height: drawH });
+        } else {
+          doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
+        }
         doc.restore();
       } catch (err) {
         console.error("Fotoboek-PDF: foto kon niet worden ingevoegd:", err?.message || err);
@@ -3627,6 +3715,17 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         drawFormattedText(doc, ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2),
           { width: Math.max(1, w - 8), height: capH, fontSize: 8, color: "#463D38", ellipsis: true });
       }
+    }
+
+    for (const tb of (textBoxesByPage.get(page.id) || [])) {
+      if (!tb.html) continue;
+      const x = tb.x * PDF_PAGE_WIDTH, y = tb.y * PDF_PAGE_HEIGHT;
+      const w = tb.width * PDF_PAGE_WIDTH, h = tb.height * PDF_PAGE_HEIGHT;
+      if (tb.background_color && tb.background_color !== "transparent") {
+        const { color, alpha } = parseRgbaColor(tb.background_color);
+        try { doc.rect(x, y, w, h).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
+      }
+      drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: "#241D19", align: tb.align });
     }
 
     if (page.title || page.description) {

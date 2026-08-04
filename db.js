@@ -464,6 +464,7 @@ async function initDb() {
       background_type TEXT,
       background_color TEXT,
       background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+      background_overlay REAL NOT NULL DEFAULT 0,
       title_align TEXT NOT NULL DEFAULT 'left',
       description_align TEXT NOT NULL DEFAULT 'left'
     );
@@ -473,6 +474,9 @@ async function initDb() {
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_type TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
+    -- Witte sluier over een achtergrondfoto (0 = geen, tot 0.75 = bijna wit),
+    -- zodat voorgrondtekst/-foto's leesbaar blijven op een drukke achtergrond.
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_overlay REAL NOT NULL DEFAULT 0;
     -- Uitlijning van titel/beschrijving (CEWE-achtige stijlopties).
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description_align TEXT NOT NULL DEFAULT 'left';
@@ -492,7 +496,10 @@ async function initDb() {
       width REAL NOT NULL DEFAULT 0.4,
       height REAL NOT NULL DEFAULT 0.4,
       opacity REAL NOT NULL DEFAULT 1,
-      corner_radius REAL NOT NULL DEFAULT 0
+      corner_radius REAL NOT NULL DEFAULT 0,
+      crop_x REAL NOT NULL DEFAULT 0.5,
+      crop_y REAL NOT NULL DEFAULT 0.5,
+      crop_zoom REAL NOT NULL DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS photobook_page_photos_page_idx ON photobook_page_photos(page_id, position);
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS x REAL NOT NULL DEFAULT 0.1;
@@ -502,6 +509,29 @@ async function initDb() {
     -- Doorzicht en hoekafronding per foto (CEWE-achtige stijlopties).
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS opacity REAL NOT NULL DEFAULT 1;
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS corner_radius REAL NOT NULL DEFAULT 0;
+    -- Welk deel van de foto zichtbaar is binnen het kader: crop_x/crop_y is
+    -- het brandpunt (0-1, zoals CSS object-position), crop_zoom vergroot dat
+    -- verder in dan de standaard "vul het kader" (1 = geen extra inzoom).
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS crop_x REAL NOT NULL DEFAULT 0.5;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS crop_y REAL NOT NULL DEFAULT 0.5;
+    ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS crop_zoom REAL NOT NULL DEFAULT 1;
+
+    -- Zwevend tekstvak op een pagina, los van de vaste titel/beschrijving-band
+    -- — vrij te verslepen/schalen net als een foto, met eigen HTML-inhoud
+    -- (dezelfde beperkte opmaak-substring als titel/beschrijving/bijschrift).
+    CREATE TABLE IF NOT EXISTS photobook_page_textboxes (
+      id SERIAL PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES photobook_pages(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      html TEXT,
+      x REAL NOT NULL DEFAULT 0.15,
+      y REAL NOT NULL DEFAULT 0.4,
+      width REAL NOT NULL DEFAULT 0.7,
+      height REAL NOT NULL DEFAULT 0.15,
+      align TEXT NOT NULL DEFAULT 'center',
+      background_color TEXT
+    );
+    CREATE INDEX IF NOT EXISTS photobook_page_textboxes_page_idx ON photobook_page_textboxes(page_id, position);
 
     -- Foto's van vóór het losse verslepen/schalen stonden allemaal op
     -- dezelfde standaardplek — dit verspreidt ze eenmalig over een simpel
