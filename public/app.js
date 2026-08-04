@@ -6008,6 +6008,30 @@ function isPhotoLowRes(photo, orientation) {
     || photo.nativeHeight < targetHeightIn * PHOTOBOOK_MIN_PRINT_DPI;
 }
 
+// Zwevende panelen (paginainstellingen, foto/tekstvak-opties) zitten soms in
+// de weg van wat eronder ligt — dit sleept 'm gewoon een stuk pixels opzij,
+// los van de pagina-inhoud (dus geen fracties zoals bij foto's, gewoon een
+// px-offset boven op de vaste positie). Niet geklemd op een grens: net als
+// bij een blaadje dat je opzij schuift mag het best (bijna) uit beeld — je
+// sleept 'm net zo makkelijk weer terug.
+function usePhotobookPanelDrag(offset, setOffset) {
+  const dragRef = useRef(null);
+  function beginPanelDrag(e) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startOffset: offset };
+  }
+  function onPanelDrag(e) {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    setOffset({ x: d.startOffset.x + (e.clientX - d.startX), y: d.startOffset.y + (e.clientY - d.startY) });
+  }
+  function endPanelDrag(e) {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+  }
+  return { beginPanelDrag, onPanelDrag, endPanelDrag };
+}
+
 // Vrij verslepen (heel het element) en met de hoekgreep vergroten/verkleinen
 // op de A4-canvas — x/y/width/height zijn fracties van de pagina, dus de
 // berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
@@ -6109,12 +6133,18 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
       {/* Bijsnijden zit hierachter i.p.v. altijd in het paneel eronder — dat
           hield het paneel onnodig groot voor iets dat je niet elke keer
           gebruikt. onToggleCrop is alleen gezet als deze foto geselecteerd is
-          (zie de canvas-render hieronder), dus verschijnt niet op elke foto. */}
+          (zie de canvas-render hieronder), dus verschijnt niet op elke foto.
+          Binnen de foto (top-1/left-1), niet erbuiten zoals de hoekgreep —
+          een foto die tot tegen de paginarand staat zou 'm anders onder de
+          overflow-hidden van de canvas laten verdwijnen, onbereikbaar. */}
       {selected && onToggleCrop && (
+        // z-20: als een foto precies tegen de paginarand staat (x/y 0) valt
+        // dit knopje samen met de vaste "+"/instellingen-knoppen op de
+        // canvas zelf — bij een geselecteerde foto mag dit knopje dan winnen.
         <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onToggleCrop(); }}
           title="Bijsnijden"
-          className={`absolute -left-2 -top-2 w-6 h-6 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-colors ${cropActive ? "bg-sky-600 text-white" : "bg-white text-gray-500 hover:text-sky-600"}`}>
-          <Icon name="crop" size={11} />
+          className={`absolute top-1 left-1 z-20 w-8 h-8 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-colors touch-none ${cropActive ? "bg-sky-600 text-white" : "bg-white text-gray-500 hover:text-sky-600"}`}>
+          <Icon name="crop" size={14} />
         </button>
       )}
     </div>
@@ -6202,6 +6232,12 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // Bijsnijden (verschuiven/inzoomen) staat niet meer altijd in het paneel —
   // pas zichtbaar nadat het crop-icoontje op de foto zelf is aangetikt.
   const [cropMode, setCropMode] = useState(false);
+  // Zwevende panelen kunnen aan de kant geschoven worden (via het
+  // sleepgreepje bovenin) als ze net de canvas eronder in de weg zitten —
+  // een pixel-offset boven op de vaste positie, puur voor deze sessie.
+  const [pagePanelOffset, setPagePanelOffset] = useState({ x: 0, y: 0 });
+  const [selPanelOffset, setSelPanelOffset] = useState({ x: 0, y: 0 });
+  const [showAddMenu, setShowAddMenu] = useState(false); // "+"-knop: kiezen tussen foto's en tekstvak toevoegen
   // History van eerdere `pages`-snapshots, voor de "Ongedaan maken"-knop.
   // Elke muterende functie roept pushHistory() aan vóórdat 'ie zelf iets
   // wijzigt, met de op dat moment geldende `pages` (via closure) — zo hoeft
@@ -6215,6 +6251,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const descRef = useRef(null); // beschrijving-textarea, idem
   const captionRef = useRef(null); // bijschrift-input van de geselecteerde foto, idem
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
+  const pagePanelDrag = usePhotobookPanelDrag(pagePanelOffset, setPagePanelOffset);
+  const selPanelDrag = usePhotobookPanelDrag(selPanelOffset, setSelPanelOffset);
 
   // Blijft binnen de grenzen als de laatste pagina verwijderd wordt, en
   // wisselt van geselecteerd element als er naar een andere pagina genavigeerd
@@ -6227,6 +6265,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   useEffect(() => {
     setSelectedPhoto(null);
     setSelectedTextBox(null);
+    setShowAddMenu(false);
   }, [currentPageIndex]);
   // Een nieuwe selectie toont het paneel weer fris open, en verlaat bijsnij-
   // modus — anders blijft bijv. de zoomrij van de vorige foto zichtbaar op
@@ -6234,6 +6273,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   useEffect(() => {
     setShowSelPanel(true);
     setCropMode(false);
+    setSelPanelOffset({ x: 0, y: 0 });
   }, [selectedPhoto?.page, selectedPhoto?.photo, selectedTextBox?.page, selectedTextBox?.box]);
   function toggleCropMode() {
     setCropMode((m) => {
@@ -6641,17 +6681,40 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 className={`absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showPagePanel ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
                 <Icon name="sliders" size={17} />
               </button>
-              <button type="button" onClick={() => openPicker(currentPageIndex)} aria-label="Foto's toevoegen"
-                className="absolute top-3 left-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg bg-white text-gray-600 hover:text-sky-600 transition-colors">
+              <button type="button" onClick={() => setShowAddMenu((s) => !s)} aria-label="Toevoegen"
+                className={`absolute top-3 left-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showAddMenu ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
                 <Icon name="plus" size={19} />
               </button>
+              {showAddMenu && (
+                <div className="absolute top-16 left-3 z-20 bg-white rounded-xl shadow-2xl p-1.5 space-y-0.5">
+                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(currentPageIndex); }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                    <Icon name="frame" size={15} className="text-gray-400" />Foto's
+                  </button>
+                  <button type="button" onClick={() => { setShowAddMenu(false); addTextBox(currentPageIndex); }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                    <Icon name="alignLeft" size={15} className="text-gray-400" />Tekstvak
+                  </button>
+                </div>
+              )}
             </div>
 
             {showPagePanel && (
-              <div className="absolute top-16 right-3 left-3 max-h-[75%] overflow-y-auto bg-white rounded-xl shadow-2xl p-3 space-y-3">
+              <div className="absolute top-16 right-3 left-3 max-h-[75%] overflow-y-auto bg-white rounded-xl shadow-2xl p-3 space-y-3"
+                style={{ transform: `translate(${pagePanelOffset.x}px, ${pagePanelOffset.y}px)` }}>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pagina-instellingen</span>
-                  <button type="button" onClick={() => setShowPagePanel(false)} aria-label="Sluiten" className="text-gray-400 hover:text-gray-700">
+                  <div className="flex items-center gap-1.5">
+                    {/* Sleepgreepje: paneel even aan de kant schuiven als het
+                        de canvas eronder in de weg zit — geen aparte modus,
+                        gewoon overal op het paneel behalve de invoervelden. */}
+                    <button type="button" onPointerDown={pagePanelDrag.beginPanelDrag} onPointerMove={pagePanelDrag.onPanelDrag}
+                      onPointerUp={pagePanelDrag.endPanelDrag} onPointerCancel={pagePanelDrag.endPanelDrag}
+                      title="Slepen" className="text-gray-300 hover:text-gray-500 cursor-move touch-none">
+                      <Icon name="dragHandle" size={14} />
+                    </button>
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pagina-instellingen</span>
+                  </div>
+                  <button type="button" onClick={() => { setShowPagePanel(false); setPagePanelOffset({ x: 0, y: 0 }); }} aria-label="Sluiten" className="text-gray-400 hover:text-gray-700">
                     <Icon name="close" size={16} />
                   </button>
                 </div>
@@ -6772,8 +6835,17 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 (verschuiven/inzoomen) zit niet hier maar achter het
                 crop-icoontje op de foto zelf, zie PhotobookCanvasPhoto. */}
             {photoSel && showSelPanel && (
-              <div className="absolute bottom-14 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
+              <div className="absolute bottom-14 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5"
+                style={{ transform: `translate(${selPanelOffset.x}px, ${selPanelOffset.y}px)` }}>
                 <div className="flex items-center gap-2">
+                  {/* Sleepgreepje: dit paneel opzij schuiven zonder de
+                      selectie kwijt te raken — handig als het net de foto
+                      of de sleepgreep eronder aan het zicht onttrekt. */}
+                  <button type="button" onPointerDown={selPanelDrag.beginPanelDrag} onPointerMove={selPanelDrag.onPanelDrag}
+                    onPointerUp={selPanelDrag.endPanelDrag} onPointerCancel={selPanelDrag.endPanelDrag}
+                    title="Slepen" className="text-gray-300 hover:text-gray-500 cursor-move touch-none shrink-0 self-stretch flex items-center">
+                    <Icon name="dragHandle" size={14} />
+                  </button>
                   <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                   <div className="flex-1">
                     <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)} />
@@ -6860,9 +6932,15 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
             )}
 
             {/* Zwevend paneel voor het geselecteerde tekstvak. */}
-            {textBoxSel && (
-              <div className="absolute bottom-3 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
+            {textBoxSel && showSelPanel && (
+              <div className="absolute bottom-14 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5"
+                style={{ transform: `translate(${selPanelOffset.x}px, ${selPanelOffset.y}px)` }}>
                 <div className="flex items-center justify-between">
+                  <button type="button" onPointerDown={selPanelDrag.beginPanelDrag} onPointerMove={selPanelDrag.onPanelDrag}
+                    onPointerUp={selPanelDrag.endPanelDrag} onPointerCancel={selPanelDrag.endPanelDrag}
+                    title="Slepen" className="text-gray-300 hover:text-gray-500 cursor-move touch-none shrink-0 pr-1.5">
+                    <Icon name="dragHandle" size={14} />
+                  </button>
                   <RichTextToolbar getEl={() => textBoxRef.current} onChange={(v) => updateTextBoxRect(currentPageIndex, selectedTextBox.box, { html: v })}
                     align={textBoxSel.align} onAlignChange={(a) => updateTextBoxRect(currentPageIndex, selectedTextBox.box, { align: a })} />
                   <button type="button" onClick={() => removeTextBox(currentPageIndex, selectedTextBox.box)} title="Tekstvak verwijderen"
