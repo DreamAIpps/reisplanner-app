@@ -3411,8 +3411,8 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
   sendJson(res, 200, {
     id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status, orientation: bookRows[0].orientation,
     pages: pages.map((pg) => ({
-      id: pg.id, title: pg.title, description: pg.description,
-      titleAlign: pg.title_align, descriptionAlign: pg.description_align,
+      id: pg.id, title: pg.title, titleAlign: pg.title_align,
+      titleX: pg.title_x, titleY: pg.title_y, titleWidth: pg.title_width, titleHeight: pg.title_height,
       background: photobookBackground(pg),
       photos: photosByPage.get(pg.id) || [],
       textBoxes: textBoxesByPage.get(pg.id) || [],
@@ -3464,12 +3464,12 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   }
 
   const validAlign = (v) => (["left", "center", "right"].includes(v) ? v : "left");
+  const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 
   await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
   for (let i = 0; i < items.length; i++) {
     const page = items[i];
     const title = typeof page.title === "string" ? page.title.trim() || null : null;
-    const description = typeof page.description === "string" ? page.description.trim() || null : null;
     let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
@@ -3478,10 +3478,16 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       const overlay = Number(page.background.overlay);
       bgOverlay = Number.isFinite(overlay) ? Math.min(0.75, Math.max(0, overlay)) : 0;
     }
+    // Titel is vrij versleepbaar/vergrootbaar zoals een tekstvak — zelfde
+    // klem-logica (fractie 0-1, met een minimale breedte/hoogte).
+    const titleX = Math.min(1, Math.max(0, n(page.titleX, 0.15)));
+    const titleY = Math.min(1, Math.max(0, n(page.titleY, 0.06)));
+    const titleWidth = Math.min(1, Math.max(0.05, n(page.titleWidth, 0.7)));
+    const titleHeight = Math.min(1, Math.max(0.03, n(page.titleHeight, 0.1)));
     const { rows: pageRows } = await query(
-      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, background_overlay, title_align, description_align)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [params.id, i, title, description, bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
+      `INSERT INTO photobook_pages (photobook_id, position, title, background_type, background_color, background_photo_id, background_overlay, title_align, title_x, title_y, title_width, title_height)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [params.id, i, title, bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign), titleX, titleY, titleWidth, titleHeight]
     );
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
@@ -3735,20 +3741,14 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: "#241D19", align: tb.align });
     }
 
-    if (page.title || page.description) {
-      // Altijd een leesbare achtergrondband, ook zonder page.background — een
-      // foto kan tot in dit gebied reiken (bijv. bij één foto per pagina die
-      // bijna de hele pagina vult), en dan moet de titel er nog boven staan.
-      const bandH = 70;
-      doc.rect(0, 0, pageW, bandH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      let ty = 18;
-      if (page.title) {
-        drawFormattedText(doc, page.title, 20, ty, { width: pageW - 40, fontSize: 18, color: "#241D19", align: page.title_align, ellipsis: true });
-        ty += 26;
-      }
-      if (page.description) {
-        drawFormattedText(doc, page.description, 20, ty, { width: pageW - 40, height: bandH - ty, fontSize: 10, color: "#5E534D", align: page.description_align, ellipsis: true });
-      }
+    if (page.title) {
+      // Vrij gepositioneerd zoals een tekstvak (i.p.v. een vaste band
+      // bovenaan) — zelfde wit-transparante achtergrond voor leesbaarheid
+      // op een drukke foto, alleen niet zelf te kiezen.
+      const x = page.title_x * pageW, y = page.title_y * pageH;
+      const w = page.title_width * pageW, h = page.title_height * pageH;
+      doc.roundedRect(x, y, w, h, 8).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
+      drawFormattedText(doc, page.title, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 14, color: "#241D19", align: page.title_align, ellipsis: true });
     }
   }
 

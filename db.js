@@ -481,9 +481,14 @@ async function initDb() {
     -- Witte sluier over een achtergrondfoto (0 = geen, tot 0.75 = bijna wit),
     -- zodat voorgrondtekst/-foto's leesbaar blijven op een drukke achtergrond.
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_overlay REAL NOT NULL DEFAULT 0;
-    -- Uitlijning van titel/beschrijving (CEWE-achtige stijlopties).
+    -- Uitlijning van titel (CEWE-achtige stijlopties).
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
-    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description_align TEXT NOT NULL DEFAULT 'left';
+    -- De titel is vrij versleepbaar/vergrootbaar op de pagina, net als een
+    -- zwevend tekstvak — x/y/width/height zijn fracties van de pagina.
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_x REAL NOT NULL DEFAULT 0.15;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_y REAL NOT NULL DEFAULT 0.06;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_width REAL NOT NULL DEFAULT 0.7;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_height REAL NOT NULL DEFAULT 0.1;
 
     -- x/y/width/height zijn fracties van de pagina (0-1), niet pixels — zo
     -- blijft een foto op dezelfde relatieve plek staan ongeacht schermgrootte

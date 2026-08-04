@@ -746,6 +746,21 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
+  // Lettergrootte geldt vrijwel altijd voor het hele veld (titel, bijschrift-
+  // achtige velden) — niks selecteren voordat je 'm kunt toepassen is een
+  // onnodige stap, dus dit selecteert eerst alles in het veld zelf.
+  function runOnWhole(cmd, value) {
+    const el = getEl();
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand(cmd, false, value);
+    onChange(sanitizeRichText(el.innerHTML));
+  }
   if (!expanded) {
     return (
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(true)} title="Tekstopmaak"
@@ -787,7 +802,7 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
       ))}
       <div className="w-px h-6 bg-gray-200 mx-0.5" />
       {RICH_TEXT_SIZES.map((s) => (
-        <button key={s.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fontSize", s.key)} title={s.label}
+        <button key={s.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runOnWhole("fontSize", s.key)} title={s.label}
           className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors"
           style={{ fontSize: `${10 + Number(s.key)}px` }}>
           A
@@ -6235,6 +6250,9 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
   return (
     <div
       onPointerDown={selected ? undefined : (e) => beginDrag(e, "move")}
+      onPointerMove={onDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
       className={`absolute select-none rounded-xl ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
       style={{
         left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
@@ -6272,6 +6290,60 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
   );
 }
 
+// De titel is net als een zwevend tekstvak vrij te verslepen/vergroten —
+// x/y/width/height staan rechtstreeks op de pagina (niet in een array,
+// er is er maar één per pagina). Een wit vlak eronder (vast, niet te
+// kiezen zoals bij een tekstvak) houdt 'm leesbaar op een drukke foto.
+function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChangeHtml, getPageEl, snap, richTextRef }) {
+  // x:0.15/width:0.7 (i.p.v. bijna de volle breedte) om dezelfde reden als
+  // bij een nieuw tekstvak: zo blijft de titel standaard uit de buurt van de
+  // "+"/instellingen-knoppen in de canvas-hoeken.
+  const rect = { x: page.titleX ?? 0.15, y: page.titleY ?? 0.06, width: page.titleWidth ?? 0.7, height: page.titleHeight ?? 0.1 };
+  const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect });
+
+  return (
+    <div
+      onPointerDown={selected ? undefined : (e) => beginDrag(e, "move")}
+      onPointerMove={onDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      className={`absolute select-none rounded-lg ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
+      style={{
+        left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`,
+        background: "rgba(255,255,255,0.85)",
+      }}
+    >
+      {selected && (
+        <div
+          onPointerDown={(e) => beginDrag(e, "move")}
+          onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+          title="Verslepen"
+          className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-sky-600 border-2 border-white shadow-md cursor-move touch-none flex items-center justify-center text-white z-10"
+        >
+          <Icon name="dragHandle" size={12} />
+        </div>
+      )}
+      <div className="w-full h-full overflow-auto p-1.5 flex items-center" onPointerDown={(e) => selected && e.stopPropagation()}>
+        {selected ? (
+          <RichTextEditable ref={richTextRef} value={page.title || ""} onChange={onChangeHtml} align={page.titleAlign} singleLine
+            className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent font-display text-base w-full" placeholder="Titel..." />
+        ) : (
+          page.title ? <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base truncate w-full pointer-events-none" /> : null
+        )}
+      </div>
+      {selected && (
+        <div
+          onPointerDown={(e) => beginDrag(e, "resize")}
+          onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+          className="absolute -right-2 -bottom-2 w-6 h-6 rounded-full bg-sky-600 border-2 border-white shadow-md cursor-nwse-resize touch-none flex items-center justify-center"
+        >
+          <div className="w-2 h-2 border-b-2 border-r-2 border-white" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [orientation, setOrientation] = useState("portrait"); // bij aanmaken gekozen, geldt voor heel het boek
@@ -6286,6 +6358,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [showPreview, setShowPreview] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
   const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
+  const [selectedTitle, setSelectedTitle] = useState(null); // { page } | null
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // welke pagina fullscreen in beeld staat
@@ -6313,8 +6386,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // meer nodig zoals toen alle pagina's onder elkaar stonden — telkens één
   // canvas/titel/beschrijving-veld gemonteerd.
   const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
-  const titleRef = useRef(null); // titel-input, voor de opmaakknoppen (vet/cursief)
-  const descRef = useRef(null); // beschrijving-textarea, idem
+  const titleRef = useRef(null); // titel-tekstveld van de geselecteerde titel, voor de opmaakknoppen
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
   const pagePanelDrag = usePhotobookPanelDrag(pagePanelOffset, setPagePanelOffset);
   const selPanelDrag = usePhotobookPanelDrag(selPanelOffset, setSelPanelOffset);
@@ -6330,6 +6402,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   useEffect(() => {
     setSelectedPhoto(null);
     setSelectedTextBox(null);
+    setSelectedTitle(null);
     setShowAddMenu(false);
   }, [currentPageIndex]);
   // Een nieuwe selectie toont het paneel weer fris open, en verlaat bijsnij-
@@ -6339,7 +6412,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setShowSelPanel(true);
     setCropMode(false);
     setSelPanelOffset({ x: 0, y: 0 });
-  }, [selectedPhoto?.page, selectedPhoto?.photo, selectedTextBox?.page, selectedTextBox?.box]);
+  }, [selectedPhoto?.page, selectedPhoto?.photo, selectedTextBox?.page, selectedTextBox?.box, selectedTitle?.page]);
   function toggleCropMode() {
     setCropMode((m) => {
       const next = !m;
@@ -6377,6 +6450,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setHistory((h) => h.slice(0, -1));
     setSelectedPhoto(null);
     setSelectedTextBox(null);
+    setSelectedTitle(null);
     setDirty(true);
   }
   function updatePage(i, patch) {
@@ -6403,7 +6477,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function addPage() {
     pushHistory();
-    setPages((ps) => [...ps, { title: null, description: null, background: null, photos: [] }]);
+    setPages((ps) => [...ps, { title: null, background: null, photos: [] }]);
     setDirty(true);
   }
   // Legt de eerste N foto's (N = aantal vakken in de indeling) in de gekozen
@@ -6463,6 +6537,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, textBoxes: [...(p.textBoxes || []), box] })));
     setSelectedTextBox({ page: pageIndex, box: (pages[pageIndex].textBoxes || []).length });
     setSelectedPhoto(null);
+    setSelectedTitle(null);
     setDirty(true);
   }
   function updateTextBoxRect(pageIndex, boxIndex, patch) {
@@ -6549,8 +6624,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setSaving(true); setError(null);
     try {
       await api.savePhotobookPages(bookId, pages.map((p) => ({
-        title: p.title, description: p.description,
-        titleAlign: p.titleAlign, descriptionAlign: p.descriptionAlign,
+        title: p.title, titleAlign: p.titleAlign,
+        titleX: p.titleX, titleY: p.titleY, titleWidth: p.titleWidth, titleHeight: p.titleHeight,
         background: !p.background ? null
           : p.background.type === "color" ? { type: "color", value: p.background.value }
           : { type: "photo", photo_id: p.background.photoId, overlay: p.background.overlay },
@@ -6638,6 +6713,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const page = pages[currentPageIndex] || null;
   const photoSel = selectedPhoto?.page === currentPageIndex && page ? page.photos[selectedPhoto.photo] : null;
   const textBoxSel = selectedTextBox?.page === currentPageIndex && page ? page.textBoxes?.[selectedTextBox.box] : null;
+  const titleSel = selectedTitle?.page === currentPageIndex ? page : null;
 
   return (
     <div className="fixed inset-0 z-10 flex flex-col bg-gray-800">
@@ -6685,7 +6761,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           <>
             <div
               ref={canvasRef}
-              onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); }}
+              onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); setSelectedTitle(null); }}
               className="relative rounded-lg overflow-hidden shadow-2xl"
               style={{
                 aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
@@ -6704,7 +6780,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               {page.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
                   selected={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j}
-                  onSelect={() => { setSelectedPhoto({ page: currentPageIndex, photo: j }); setSelectedTextBox(null); }}
+                  onSelect={() => { setSelectedPhoto({ page: currentPageIndex, photo: j }); setSelectedTextBox(null); setSelectedTitle(null); }}
                   onChangeRect={(patch) => updatePhotoRect(currentPageIndex, j, patch)}
                   getPageEl={() => canvasRef.current}
                   snap={snapEnabled}
@@ -6716,7 +6792,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               {(page.textBoxes || []).map((box, k) => (
                 <PhotobookCanvasTextBox key={box.id ?? k} box={box}
                   selected={selectedTextBox?.page === currentPageIndex && selectedTextBox?.box === k}
-                  onSelect={() => { setSelectedTextBox({ page: currentPageIndex, box: k }); setSelectedPhoto(null); }}
+                  onSelect={() => { setSelectedTextBox({ page: currentPageIndex, box: k }); setSelectedPhoto(null); setSelectedTitle(null); }}
                   onChangeRect={(patch) => updateTextBoxRect(currentPageIndex, k, patch)}
                   onChangeHtml={(html) => updateTextBoxRect(currentPageIndex, k, { html })}
                   getPageEl={() => canvasRef.current}
@@ -6729,16 +6805,17 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               {/* Altijd bovenop de foto's getekend (en met eigen achtergrond),
                   anders verdwijnt de titel achter een foto die er bovenop ligt
                   — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
-              {(page.title || page.description) && (
-                // pl-14/pr-14 houden de tekst uit de buurt van de twee
-                // zwevende knoppen hieronder (die als kind van dit canvas-
-                // element in de linker/rechter bovenhoek staan) — anders zou
-                // een titel die tot aan de rand loopt er zo onder verdwijnen.
-                <div className="absolute top-0 left-0 right-0 pl-14 pr-14 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
-                  {page.title && <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800 mb-0.5 truncate" />}
-                  {page.description && <RichTextView html={page.description} align={page.descriptionAlign} className="text-xs text-gray-600 leading-snug line-clamp-2" />}
-                </div>
-              )}
+              <PhotobookCanvasTitle page={page}
+                selected={selectedTitle?.page === currentPageIndex}
+                onSelect={() => { setSelectedTitle({ page: currentPageIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
+                onChangeRect={(patch) => updatePage(currentPageIndex, {
+                  titleX: patch.x ?? page.titleX, titleY: patch.y ?? page.titleY,
+                  titleWidth: patch.width ?? page.titleWidth, titleHeight: patch.height ?? page.titleHeight,
+                })}
+                onChangeHtml={(html) => updatePage(currentPageIndex, { title: html })}
+                getPageEl={() => canvasRef.current}
+                snap={snapEnabled}
+                richTextRef={titleRef} />
 
               {/* Deze twee knoppen staan bewust ALS KIND van de canvas (i.p.v.
                   ernaast, relatief aan het hele scherm) zodat ze bij een
@@ -6786,17 +6863,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   <button type="button" onClick={() => { setShowPagePanel(false); setPagePanelOffset({ x: 0, y: 0 }); }} aria-label="Sluiten" className="text-gray-400 hover:text-gray-700">
                     <Icon name="close" size={16} />
                   </button>
-                </div>
-
-                <div>
-                  <RichTextToolbar getEl={() => titleRef.current} onChange={(v) => updatePage(currentPageIndex, { title: v })}
-                    align={page.titleAlign} onAlignChange={(a) => updatePage(currentPageIndex, { titleAlign: a })} />
-                  <RichTextEditable ref={titleRef} value={page.title || ""} onChange={(v) => updatePage(currentPageIndex, { title: v })}
-                    align={page.titleAlign} singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
-                  <RichTextToolbar getEl={() => descRef.current} onChange={(v) => updatePage(currentPageIndex, { description: v })}
-                    align={page.descriptionAlign} onAlignChange={(a) => updatePage(currentPageIndex, { descriptionAlign: a })} />
-                  <RichTextEditable ref={descRef} value={page.description || ""} onChange={(v) => updatePage(currentPageIndex, { description: v })}
-                    align={page.descriptionAlign} placeholder="Beschrijving (optioneel)" className="!text-sm" />
                 </div>
 
                 <div>
@@ -6892,7 +6958,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 geselecteerde foto kan de canvas (incl. sleepgreep) er onder
                 helemaal aan het zicht onttrekken, dus even wegklappen moet
                 kunnen zonder de selectie te verliezen. */}
-            {(photoSel || textBoxSel) && (
+            {(photoSel || textBoxSel || titleSel) && (
               <button type="button" onClick={() => setShowSelPanel((s) => !s)} title={showSelPanel ? "Opties verbergen" : "Opties tonen"}
                 className="absolute bottom-3 right-3 z-10 w-9 h-9 rounded-full bg-white shadow-lg flex items-center justify-center text-gray-500 hover:text-sky-600 transition-colors">
                 <Icon name="chevronDown" size={15} style={{ transform: showSelPanel ? "none" : "rotate(180deg)" }} />
@@ -6963,7 +7029,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
                   return (
                     <div className="space-y-1.5 px-0.5">
-                      <div className="text-[11px] text-gray-400">Sleep de foto hierboven om te verschuiven, knijp om te zoomen.</div>
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-gray-500 tnum">{zoomPct}%</span>
                         {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
@@ -7002,6 +7067,24 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                       {b.label}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Zwevend paneel voor de geselecteerde titel — alleen opmaak,
+                geen achtergrondkeuze/verwijderknop: de titel zelf is geen
+                los element om weg te halen, alleen de tekst kan leeg zijn. */}
+            {titleSel && showSelPanel && (
+              <div className="absolute bottom-14 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5"
+                style={{ transform: `translate(${selPanelOffset.x}px, ${selPanelOffset.y}px)` }}>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onPointerDown={selPanelDrag.beginPanelDrag} onPointerMove={selPanelDrag.onPanelDrag}
+                    onPointerUp={selPanelDrag.endPanelDrag} onPointerCancel={selPanelDrag.endPanelDrag}
+                    title="Slepen" className="text-gray-300 hover:text-gray-500 cursor-move touch-none shrink-0">
+                    <Icon name="dragHandle" size={14} />
+                  </button>
+                  <RichTextToolbar getEl={() => titleRef.current} onChange={(v) => updatePage(currentPageIndex, { title: v })}
+                    align={titleSel.titleAlign} onAlignChange={(a) => updatePage(currentPageIndex, { titleAlign: a })} />
                 </div>
               </div>
             )}
@@ -7058,22 +7141,33 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     const picked = pickerSelected.has(p.id);
                     const alreadyIn = photoPageNumbers.has(p.id);
                     return (
-                      <button key={p.id} type="button" onClick={() => togglePick(p.id)}
-                        className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${picked ? "border-sky-500" : "border-gray-100"}`}>
-                        <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
-                        {alreadyIn && !picked && (
-                          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px] font-medium">
-                            In boek
-                          </div>
-                        )}
-                        {picked && (
-                          <div className="absolute inset-0 bg-sky-600/20 flex items-center justify-center">
-                            <div className="w-6 h-6 rounded-full bg-sky-600 flex items-center justify-center">
-                              <Icon name="check" size={13} className="text-white" />
+                      <div key={p.id} className="relative">
+                        <button type="button" onClick={() => togglePick(p.id)}
+                          className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors w-full ${picked ? "border-sky-500" : "border-gray-100"}`}>
+                          <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                          {alreadyIn && !picked && (
+                            <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px] font-medium">
+                              In boek
                             </div>
-                          </div>
-                        )}
-                      </button>
+                          )}
+                          {picked && (
+                            <div className="absolute inset-0 bg-sky-600/20 flex items-center justify-center">
+                              <div className="w-6 h-6 rounded-full bg-sky-600 flex items-center justify-center">
+                                <Icon name="check" size={13} className="text-white" />
+                              </div>
+                            </div>
+                          )}
+                        </button>
+                        {/* Direct als achtergrond zetten, los van het multi-
+                            select (toevoegen) hierboven — scheelt eerst zelf
+                            moeten toevoegen en daarna via het foto-paneel
+                            "Als achtergrond gebruiken" te moeten zoeken. */}
+                        <button type="button" title="Als achtergrond gebruiken"
+                          onClick={() => { useAsBackground(pickerForPage, { photoId: p.id, url: p.url }); setPickerForPage(null); }}
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-sky-600 transition-colors">
+                          <Icon name="frame" size={12} />
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -7150,13 +7244,16 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
                 <RichTextView html={box.html} align={box.align} className="text-sm" />
               </div>
             ))}
-            {page.photos.length === 0 && !page.title && !page.description && (page.textBoxes || []).length === 0 && (
+            {page.photos.length === 0 && !page.title && (page.textBoxes || []).length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
             )}
-            {(page.title || page.description) && (
-              <div className="absolute top-0 left-0 right-0 p-4 bg-white/85 backdrop-blur-sm">
-                {page.title && <RichTextView html={page.title} align={page.titleAlign} className="font-display text-xl text-gray-800 mb-1" />}
-                {page.description && <RichTextView html={page.description} align={page.descriptionAlign} className="text-sm text-gray-600 leading-relaxed" />}
+            {page.title && (
+              <div className="absolute rounded-lg p-1.5 bg-white/85"
+                style={{
+                  left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.06) * 100}%`,
+                  width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
+                }}>
+                <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800" />
               </div>
             )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
