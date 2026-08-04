@@ -3341,6 +3341,9 @@ function clampPhotoRect(p) {
     height: Math.min(1, Math.max(0.03, n(p.height, 0.4))),
     opacity: Math.min(1, Math.max(0, n(p.opacity, 1))),
     cornerRadius: Math.min(0.5, Math.max(0, n(p.cornerRadius, 0))),
+    cropX: Math.min(1, Math.max(0, n(p.cropX, 0.5))),
+    cropY: Math.min(1, Math.max(0, n(p.cropY, 0.5))),
+    cropZoom: Math.min(2.5, Math.max(1, n(p.cropZoom, 1))),
   };
 }
 
@@ -3374,6 +3377,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       id: p.id, photoId: p.photo_id, caption: p.caption,
       x: p.x, y: p.y, width: p.width, height: p.height,
       opacity: p.opacity, cornerRadius: p.corner_radius,
+      cropX: p.crop_x, cropY: p.crop_y, cropZoom: p.crop_zoom,
       nativeWidth: p.native_width, nativeHeight: p.native_height,
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
     });
@@ -3455,8 +3459,8 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
       const rect = clampPhotoRect(page.photos[j]);
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
       );
     }
   }
@@ -3548,6 +3552,19 @@ function drawFormattedText(doc, html, x, y, opts = {}) {
   doc.font("Helvetica");
 }
 
+// Zelfde crop-wiskunde als de CSS object-position/transform in de editor:
+// schaal de foto zodat 'm het kader precies vult ("cover"), vermenigvuldig
+// met de extra inzoom, en schuif 'm zo dat het brandpunt (cropX/cropY,
+// 0-1) op dezelfde relatieve plek in het kader blijft staan.
+function pdfCoverPlacement(imgW, imgH, boxW, boxH, cropX, cropY, zoom) {
+  const coverScale = Math.max(boxW / imgW, boxH / imgH);
+  const scale = coverScale * (zoom || 1);
+  const drawW = imgW * scale, drawH = imgH * scale;
+  const offsetX = (drawW - boxW) * (cropX ?? 0.5);
+  const offsetY = (drawH - boxH) * (cropY ?? 0.5);
+  return { drawX: -offsetX, drawY: -offsetY, drawW, drawH };
+}
+
 route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
@@ -3558,7 +3575,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     [params.id]
   );
   const { rows: pagePhotoRows } = await query(
-    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius, p.data
+    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
+            pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.width AS native_width, p.height AS native_height
      FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
      JOIN photos p ON p.id = pgp.photo_id
@@ -3616,7 +3634,14 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         if (radius > 0) doc.roundedRect(x, y, w, h, radius).clip();
         else doc.rect(x, y, w, h).clip();
         doc.opacity(ph.opacity ?? 1);
-        doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
+        // Zonder bekende pixelafmetingen (oudere foto's van vóór deze kolom
+        // bestond) valt terug op pdfkit's eigen gecentreerde cover-crop.
+        if (ph.native_width && ph.native_height) {
+          const { drawX, drawY, drawW, drawH } = pdfCoverPlacement(ph.native_width, ph.native_height, w, h, ph.crop_x, ph.crop_y, ph.crop_zoom);
+          doc.image(ph.data, x + drawX, y + drawY, { width: drawW, height: drawH });
+        } else {
+          doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
+        }
         doc.restore();
       } catch (err) {
         console.error("Fotoboek-PDF: foto kon niet worden ingevoegd:", err?.message || err);

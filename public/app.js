@@ -5950,8 +5950,19 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
       className={`absolute select-none touch-none ${selected ? "cursor-move ring-2 ring-sky-500 ring-offset-1" : "cursor-pointer"}`}
       style={{ left: `${photo.x * 100}%`, top: `${photo.y * 100}%`, width: `${photo.width * 100}%`, height: `${photo.height * 100}%` }}
     >
-      <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none"
-        style={{ opacity: photo.opacity ?? 1, borderRadius: `${(photo.cornerRadius ?? 0) * 100}%` }} />
+      {/* Aparte clip-laag (i.p.v. afronding/overflow direct op de foto) omdat
+          de vergrote (ingezoomde) foto anders over de hoekgreep/badges heen
+          zou uitsteken — en overflow-hidden op de buitenste div zou zelf weer
+          de greep afsnijden, die er juist net buiten hoort te steken. */}
+      <div className="w-full h-full overflow-hidden" style={{ borderRadius: `${(photo.cornerRadius ?? 0) * 100}%` }}>
+        <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none"
+          style={{
+            opacity: photo.opacity ?? 1,
+            objectPosition: `${(photo.cropX ?? 0.5) * 100}% ${(photo.cropY ?? 0.5) * 100}%`,
+            transform: `scale(${photo.cropZoom ?? 1})`,
+            transformOrigin: `${(photo.cropX ?? 0.5) * 100}% ${(photo.cropY ?? 0.5) * 100}%`,
+          }} />
+      </div>
       {/* Alleen een hint tijdens het bewerken — niet in het voorbeeld of de
           uiteindelijke PDF, dus dit leeft puur hier in de editor-canvas. */}
       {duplicatePages?.length > 0 && (
@@ -6413,6 +6424,52 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 </div>
               </div>
             )}
+            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (() => {
+              const cur = page.photos[selectedPhoto.photo];
+              const nudge = (dx, dy) => updatePhotoRect(i, selectedPhoto.photo, {
+                cropX: Math.min(1, Math.max(0, (cur.cropX ?? 0.5) + dx)),
+                cropY: Math.min(1, Math.max(0, (cur.cropY ?? 0.5) + dy)),
+              });
+              const zoomBy = (delta) => updatePhotoRect(i, selectedPhoto.photo, {
+                cropZoom: Math.min(2.5, Math.max(1, Math.round(((cur.cropZoom ?? 1) + delta) * 100) / 100)),
+              });
+              const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
+              return (
+                <div className="mt-1.5 flex items-center gap-3 flex-wrap px-1">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400 mr-0.5">Bijsnijden</span>
+                    <button type="button" onClick={() => nudge(-0.15, 0)} title="Naar links"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(-90deg)" }} />
+                    </button>
+                    <button type="button" onClick={() => nudge(0.15, 0)} title="Naar rechts"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(90deg)" }} />
+                    </button>
+                    <button type="button" onClick={() => nudge(0, -0.15)} title="Naar boven"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                      <Icon name="arrowUp" size={11} />
+                    </button>
+                    <button type="button" onClick={() => nudge(0, 0.15)} title="Naar onder"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(180deg)" }} />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400 mr-0.5">Zoom</span>
+                    <button type="button" onClick={() => zoomBy(-0.15)} disabled={zoomPct <= 100} title="Uitzoomen"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">−</button>
+                    <span className="text-[11px] text-gray-500 tnum w-9 text-center">{zoomPct}%</span>
+                    <button type="button" onClick={() => zoomBy(0.15)} disabled={zoomPct >= 250} title="Inzoomen"
+                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">+</button>
+                    {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
+                      <button type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { cropX: 0.5, cropY: 0.5, cropZoom: 1 })} title="Bijsnijden herstellen"
+                        className="ml-1 text-[11px] text-sky-600 hover:text-sky-700">Herstel</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <button type="button" onClick={() => openPicker(i)}
               className="mt-2 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
@@ -6521,7 +6578,13 @@ function PhotobookPreview({ title, pages, onClose }) {
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
                 <img src={ph.url} alt="" className="w-full h-full object-cover"
-                  style={{ opacity: ph.opacity ?? 1, borderRadius: `${(ph.cornerRadius ?? 0) * 100}%` }} />
+                  style={{
+                    opacity: ph.opacity ?? 1,
+                    borderRadius: `${(ph.cornerRadius ?? 0) * 100}%`,
+                    objectPosition: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
+                    transform: `scale(${ph.cropZoom ?? 1})`,
+                    transformOrigin: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
+                  }} />
                 {ph.caption && <RichTextView html={ph.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate" />}
               </div>
             ))}
