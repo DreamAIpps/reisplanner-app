@@ -3430,44 +3430,72 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
 const PDF_PAGE_WIDTH = 595.28;
 const PDF_PAGE_HEIGHT = 841.89;
 
-// Titel, beschrijving en bijschriften ondersteunen dezelfde lichte opmaak als
-// de editor: **vet** en *cursief*. Splitst een regel op in runs met hun eigen
-// stijl, in volgorde — geen geneste combinaties (***vet+cursief*** wordt niet
-// apart herkend, dat is bewust simpel gehouden).
-function pdfParseFormatted(line) {
-  const runs = [];
-  const re = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+// Titel, beschrijving en bijschriften komen uit de editor als een beperkte
+// HTML-substring (b/i/font[face]/br/div — precies wat de contentEditable-
+// opmaakknoppen produceren, zie public/app.js RICH_TEXT_ALLOWED_TAGS). Geen
+// echte HTML-parser nodig voor zo'n kleine, vaste tagset: een simpele
+// stack-based tag-walker volstaat. <br> en <div> worden allebei als
+// regeleinde behandeld.
+function pdfParseRichHtml(html) {
+  const lines = [[]];
+  const styleStack = [{ bold: false, italic: false, font: null }];
+  // "br" vóór "b" — regex-alternatie kiest de eerste match, niet de langste,
+  // dus "b" zou anders <br> al aftappen (met de "r" als restjunk-attribuut)
+  // en het als een (nooit gesloten) <b>-tag behandelen.
+  const tagRe = /<(\/?)(br|b|strong|i|em|font|div)([^>]*)>/gi;
+  const decodeEntities = (s) => s.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   let last = 0, m;
-  while ((m = re.exec(line))) {
-    if (m.index > last) runs.push({ text: line.slice(last, m.index), bold: false, italic: false });
-    if (m[1] !== undefined) runs.push({ text: m[1], bold: true, italic: false });
-    else runs.push({ text: m[2], bold: false, italic: true });
-    last = re.lastIndex;
+  const pushText = (text) => { if (text) lines[lines.length - 1].push({ text, ...styleStack[styleStack.length - 1] }); };
+  while ((m = tagRe.exec(html))) {
+    if (m.index > last) pushText(decodeEntities(html.slice(last, m.index)));
+    const closing = m[1] === "/";
+    const tag = m[2].toLowerCase();
+    if (tag === "br") {
+      lines.push([]);
+    } else if (tag === "div") {
+      if (!closing && lines[lines.length - 1].length > 0) lines.push([]);
+    } else if (closing) {
+      if (styleStack.length > 1) styleStack.pop();
+    } else {
+      const next = { ...styleStack[styleStack.length - 1] };
+      if (tag === "b" || tag === "strong") next.bold = true;
+      else if (tag === "i" || tag === "em") next.italic = true;
+      else if (tag === "font") {
+        const faceMatch = /face="([^"]*)"/i.exec(m[3] || "");
+        if (faceMatch) next.font = faceMatch[1];
+      }
+      styleStack.push(next);
+    }
+    last = tagRe.lastIndex;
   }
-  if (last < line.length) runs.push({ text: line.slice(last), bold: false, italic: false });
-  if (runs.length === 0) runs.push({ text: "", bold: false, italic: false });
-  return runs;
+  if (last < html.length) pushText(decodeEntities(html.slice(last)));
+  return lines;
 }
-function pdfFontFor(bold, italic) {
-  if (bold && italic) return "Helvetica-BoldOblique";
-  if (bold) return "Helvetica-Bold";
-  if (italic) return "Helvetica-Oblique";
+function pdfBaseFontFamily(face) {
+  if (face && face.includes("mono")) return "Courier";
+  if (face && face.includes("Iowan")) return "Times";
   return "Helvetica";
+}
+function pdfFontFor(run) {
+  const base = pdfBaseFontFamily(run.font);
+  if (base === "Times") return run.bold && run.italic ? "Times-BoldItalic" : run.bold ? "Times-Bold" : run.italic ? "Times-Italic" : "Times-Roman";
+  if (base === "Courier") return run.bold && run.italic ? "Courier-BoldOblique" : run.bold ? "Courier-Bold" : run.italic ? "Courier-Oblique" : "Courier";
+  return run.bold && run.italic ? "Helvetica-BoldOblique" : run.bold ? "Helvetica-Bold" : run.italic ? "Helvetica-Oblique" : "Helvetica";
 }
 // pdfkit's "continued" runs laten losse stukken tekst met een eigen font achter
 // elkaar doorlopen (en samen netjes binnen `width` afbreken) alsof het één
-// paragraaf is — zo blijft **vet**/*cursief* binnen dezelfde alinea werken.
-function drawFormattedText(doc, text, x, y, opts = {}) {
+// paragraaf is — zo blijft vet/cursief/lettertype binnen dezelfde alinea werken.
+function drawFormattedText(doc, html, x, y, opts = {}) {
   const { width, height, fontSize = 10, color = "#241D19", ellipsis } = opts;
   doc.fillColor(color).fontSize(fontSize);
-  const lines = String(text || "").split("\n");
+  const lines = pdfParseRichHtml(String(html || ""));
   let first = true;
-  lines.forEach((line, li) => {
-    const runs = pdfParseFormatted(line);
+  lines.forEach((lineRuns, li) => {
+    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null }];
     runs.forEach((run, ri) => {
       const lastRunOfLine = ri === runs.length - 1;
       const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
-      doc.font(pdfFontFor(run.bold, run.italic));
+      doc.font(pdfFontFor(run));
       const textOpts = { continued: !lastRunOfLine, width, ellipsis: lastRunOverall ? ellipsis : undefined };
       if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
       else doc.text(run.text, textOpts);

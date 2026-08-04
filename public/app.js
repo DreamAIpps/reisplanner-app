@@ -616,65 +616,104 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
-// Lichte opmaak voor fotoboek-tekst: **vet** en *cursief*, net als in de
-// editor getypt. Geen geneste combinaties (bewust simpel gehouden).
-function parseFormatted(line) {
-  const runs = [];
-  const re = /\*\*(.+?)\*\*|\*(.+?)\*/g;
-  let last = 0, m;
-  while ((m = re.exec(line))) {
-    if (m.index > last) runs.push({ text: line.slice(last, m.index) });
-    if (m[1] !== undefined) runs.push({ text: m[1], bold: true });
-    else runs.push({ text: m[2], italic: true });
-    last = re.lastIndex;
+// Lichte opmaak voor fotoboek-tekst: vet, cursief en lettertype, als een
+// beperkte HTML-substring (b/i/font/br) — geen zichtbare markers, gewoon
+// direct zichtbaar terwijl je typt. DOMPurify is de enige plek die bepaalt
+// wat er ooit gerenderd wordt, dus dat is waar de echte veiligheidsgrens zit.
+const RICH_TEXT_ALLOWED_TAGS = ["b", "i", "font", "br", "div"];
+const RICH_TEXT_ALLOWED_ATTR = ["face"];
+function sanitizeRichText(html) {
+  return window.DOMPurify
+    ? window.DOMPurify.sanitize(html || "", { ALLOWED_TAGS: RICH_TEXT_ALLOWED_TAGS, ALLOWED_ATTR: RICH_TEXT_ALLOWED_ATTR })
+    : "";
+}
+const RICH_TEXT_FONTS = [
+  { key: "sans", label: "Standaard", family: 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif' },
+  { key: "serif", label: "Klassiek", family: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif' },
+  { key: "mono", label: "Mono", family: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
+];
+// Alleen-lezen weergave van opgeslagen fotoboek-tekst — altijd door de
+// sanitizer heen, ook al is er clientside al gesaneerd vóór het opslaan (de
+// databasewaarde is niet per se te vertrouwen als enige bron).
+function RichTextView({ html, className }) {
+  if (!html) return null;
+  return <div className={className} dangerouslySetInnerHTML={{ __html: sanitizeRichText(html) }} />;
+}
+// contentEditable in plaats van een input/textarea, zodat vet/cursief/
+// lettertype meteen zichtbaar zijn terwijl je typt — geen **markers** die je
+// zelf moet interpreteren. `singleLine` voorkomt regeleinden (titel,
+// bijschrift); de beschrijving mag wel meerdere regels hebben.
+const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, singleLine }, ref) {
+  const innerRef = useRef(null);
+  const lastValue = useRef(value);
+  React.useImperativeHandle(ref, () => innerRef.current);
+
+  useEffect(() => {
+    if (innerRef.current && value !== lastValue.current && value !== innerRef.current.innerHTML) {
+      innerRef.current.innerHTML = sanitizeRichText(value || "");
+    }
+    lastValue.current = value;
+  }, [value]);
+
+  function sync() {
+    const raw = innerRef.current.innerHTML;
+    const html = sanitizeRichText(raw);
+    // Als saneren iets veranderde (een niet-toegestane tag/attribuut), moet de
+    // DOM zelf ook bijgewerkt worden — anders blijft het scherm iets tonen
+    // dat niet is wat er straks opgeslagen/getoond wordt elders.
+    if (html !== raw) innerRef.current.innerHTML = html;
+    lastValue.current = html;
+    onChange(html);
   }
-  if (last < line.length) runs.push({ text: line.slice(last) });
-  return runs;
-}
-function FormattedText({ text, className }) {
-  if (!text) return null;
-  const lines = String(text).split("\n");
+  function handleFocus() {
+    // Regeleinden altijd als <br> (niet <div>/<p>) zodat weergave en PDF één
+    // simpel formaat hoeven te begrijpen; stijl via tags, niet inline CSS.
+    try {
+      document.execCommand("defaultParagraphSeparator", false, "br");
+      document.execCommand("styleWithCSS", false, false);
+    } catch {}
+  }
+  function handleKeyDown(e) {
+    if (singleLine && e.key === "Enter") e.preventDefault();
+  }
+  const isEmpty = !value || value === "<br>";
   return (
-    <span className={className}>
-      {lines.map((line, li) => (
-        <React.Fragment key={li}>
-          {li > 0 && <br />}
-          {parseFormatted(line).map((run, ri) => {
-            if (run.bold) return <b key={ri}>{run.text}</b>;
-            if (run.italic) return <em key={ri}>{run.text}</em>;
-            return <React.Fragment key={ri}>{run.text}</React.Fragment>;
-          })}
-        </React.Fragment>
-      ))}
-    </span>
+    <div className="relative">
+      {isEmpty && placeholder && (
+        <div className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none truncate">{placeholder}</div>
+      )}
+      <div ref={innerRef} contentEditable suppressContentEditableWarning
+        onFocus={handleFocus} onInput={sync} onBlur={sync} onKeyDown={handleKeyDown}
+        className={`w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
+    </div>
   );
-}
-// Zet de selectie in een input/textarea tussen **/* markers (of voegt een
-// plaatshouder in als er niets geselecteerd is), zoals de opmaakknoppen bij
-// veel tekstvelden werken.
-function wrapSelectionMarker(getEl, value, onChange, marker) {
-  const el = getEl();
-  if (!el) return;
-  const start = el.selectionStart ?? value.length;
-  const end = el.selectionEnd ?? value.length;
-  const before = value.slice(0, start), selected = value.slice(start, end), after = value.slice(end);
-  const inserted = selected || (marker === "**" ? "vet" : "cursief");
-  onChange(`${before}${marker}${inserted}${marker}${after}`);
-  requestAnimationFrame(() => {
+});
+// Werkt op de browser-selectie in het bijbehorende contentEditable-veld —
+// document.execCommand is verouderd maar nog altijd de simpelste manier om
+// vet/cursief/lettertype op een selectie toe te passen zonder een hele
+// rich-text-library toe te voegen.
+function RichTextToolbar({ getEl, onChange }) {
+  function run(cmd, value) {
+    const el = getEl();
+    if (!el) return;
     el.focus();
-    const newStart = start + marker.length;
-    el.setSelectionRange(newStart, newStart + inserted.length);
-  });
-}
-function FormatToolbar({ getEl, value, onChange }) {
+    document.execCommand(cmd, false, value);
+    onChange(sanitizeRichText(el.innerHTML));
+  }
   return (
-    <div className="flex items-center gap-1 mb-1">
-      <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
-        onClick={() => wrapSelectionMarker(getEl, value, onChange, "**")} title="Vet (**tekst**)"
-        className="w-6 h-5 rounded flex items-center justify-center text-[11px] font-bold text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">B</button>
-      <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
-        onClick={() => wrapSelectionMarker(getEl, value, onChange, "*")} title="Cursief (*tekst*)"
-        className="w-6 h-5 rounded flex items-center justify-center text-[11px] italic text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">I</button>
+    <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
+        className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
+        className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center italic text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">I</button>
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
+      {RICH_TEXT_FONTS.map((f) => (
+        <button key={f.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fontName", f.family)}
+          style={{ fontFamily: f.family }} title={f.label}
+          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">
+          {f.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -6114,11 +6153,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               </div>
             </div>
 
-            <FormatToolbar getEl={() => titleRefs.current[i]} value={page.title || ""} onChange={(v) => updatePage(i, { title: v })} />
-            <Input ref={(el) => { titleRefs.current[i] = el; }} value={page.title || ""} onChange={(e) => updatePage(i, { title: e.target.value })}
-              placeholder="Titel van deze pagina" className="!text-sm !font-semibold mb-2" />
-            <FormatToolbar getEl={() => descRefs.current[i]} value={page.description || ""} onChange={(v) => updatePage(i, { description: v })} />
-            <Textarea ref={(el) => { descRefs.current[i] = el; }} rows={2} value={page.description || ""} onChange={(e) => updatePage(i, { description: e.target.value })}
+            <RichTextToolbar getEl={() => titleRefs.current[i]} onChange={(v) => updatePage(i, { title: v })} />
+            <RichTextEditable ref={(el) => { titleRefs.current[i] = el; }} value={page.title || ""} onChange={(v) => updatePage(i, { title: v })}
+              singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
+            <RichTextToolbar getEl={() => descRefs.current[i]} onChange={(v) => updatePage(i, { description: v })} />
+            <RichTextEditable ref={(el) => { descRefs.current[i] = el; }} value={page.description || ""} onChange={(v) => updatePage(i, { description: v })}
               placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
 
             <div className="mb-3">
@@ -6195,8 +6234,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
               {(page.title || page.description) && (
                 <div className="absolute top-0 left-0 right-0 p-3 pointer-events-none bg-white/85 backdrop-blur-sm">
-                  {page.title && <h3 className="font-display text-base text-gray-800 mb-0.5 truncate"><FormattedText text={page.title} /></h3>}
-                  {page.description && <p className="text-xs text-gray-600 leading-snug line-clamp-2"><FormattedText text={page.description} /></p>}
+                  {page.title && <RichTextView html={page.title} className="font-display text-base text-gray-800 mb-0.5 truncate" />}
+                  {page.description && <RichTextView html={page.description} className="text-xs text-gray-600 leading-snug line-clamp-2" />}
                 </div>
               )}
             </div>
@@ -6206,10 +6245,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 <img src={page.photos[selectedPhoto.photo].thumbUrl || page.photos[selectedPhoto.photo].url} alt=""
                   className="w-10 h-10 rounded-lg object-cover shrink-0" />
                 <div className="flex-1">
-                  <FormatToolbar getEl={() => captionRef.current} value={page.photos[selectedPhoto.photo].caption || ""}
-                    onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)} />
-                  <Input ref={captionRef} value={page.photos[selectedPhoto.photo].caption || ""} onChange={(e) => setPhotoCaption(i, selectedPhoto.photo, e.target.value)}
-                    placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
+                  <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)} />
+                  <RichTextEditable ref={captionRef} value={page.photos[selectedPhoto.photo].caption || ""} onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)}
+                    singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
@@ -6339,7 +6377,7 @@ function PhotobookPreview({ title, pages, onClose }) {
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
                 <img src={ph.url} alt="" className="w-full h-full object-cover" />
-                {ph.caption && <div className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate"><FormattedText text={ph.caption} /></div>}
+                {ph.caption && <RichTextView html={ph.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate" />}
               </div>
             ))}
             {page.photos.length === 0 && !page.title && !page.description && (
@@ -6347,8 +6385,8 @@ function PhotobookPreview({ title, pages, onClose }) {
             )}
             {(page.title || page.description) && (
               <div className="absolute top-0 left-0 right-0 p-4 bg-white/85 backdrop-blur-sm">
-                {page.title && <h3 className="font-display text-xl text-gray-800 mb-1"><FormattedText text={page.title} /></h3>}
-                {page.description && <p className="text-sm text-gray-600 leading-relaxed"><FormattedText text={page.description} /></p>}
+                {page.title && <RichTextView html={page.title} className="font-display text-xl text-gray-800 mb-1" />}
+                {page.description && <RichTextView html={page.description} className="text-sm text-gray-600 leading-relaxed" />}
               </div>
             )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
