@@ -36,7 +36,7 @@ async function initDb() {
       currency TEXT DEFAULT 'EUR',
       status TEXT DEFAULT 'planning',
       notes TEXT,
-      cover_color TEXT DEFAULT '#FF7A00',
+      cover_color TEXT DEFAULT '#F3C2B5',
       cover_image TEXT,
       user_id INTEGER,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -606,6 +606,27 @@ async function initDb() {
     END
     WHERE cover_color IN ('#0369a1','#7c3aed','#b45309','#065f46','#9f1239','#1e40af','#92400e','#134e4a');
   `);
+
+  // Zelfde verhaal voor de stap van het felle oranje naar het pastelpalet:
+  // opnieuw slot voor slot, en bewust ná het blok hierboven, zodat een heel
+  // oude rij in twee stappen (blauw -> oranje -> pastel) alsnog goed uitkomt.
+  await query(`
+    UPDATE trips SET cover_color = CASE cover_color
+      WHEN '#FF7A00' THEN '#F3C2B5'
+      WHEN '#8A4B12' THEN '#E98C7D'
+      WHEN '#6B3A2A' THEN '#F6E2A7'
+      WHEN '#4A5D3A' THEN '#A8C7B3'
+      WHEN '#4A2F42' THEN '#B8D6E8'
+      WHEN '#3D2E22' THEN '#8C4A3F'
+      WHEN '#6B3145' THEN '#7B7571'
+      WHEN '#5A4632' THEN '#373432'
+    END
+    WHERE cover_color IN ('#FF7A00','#8A4B12','#6B3A2A','#4A5D3A','#4A2F42','#3D2E22','#6B3145','#5A4632');
+  `);
+
+  // ADD COLUMN IF NOT EXISTS laat de DEFAULT van een bestaande kolom staan,
+  // dus die moet los bijgewerkt worden (zie ook title_y eerder).
+  await query(`ALTER TABLE trips ALTER COLUMN cover_color SET DEFAULT '#F3C2B5';`);
 
   // Merge any photos already duplicated (same trip, identical bytes) before
   // this content_hash uniqueness was introduced, so the index below can apply.

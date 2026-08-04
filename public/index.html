@@ -9,36 +9,74 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Reisplanner" />
-  <meta name="theme-color" content="#FF7A00" />
+  <meta name="theme-color" content="#FCFAF8" />
   <meta property="og:title" content="Reisplanner" />
   <meta property="og:description" content="Jouw reizen, overzichtelijk gepland" />
   <meta property="og:image" content="/icon-512.png" />
   <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    /* Fris oranje. sky-700 (#FF7A00) draagt de interface, sky-400 (#E4571A) is
-       voorbehouden aan "nieuw" en "vandaag". De schaal heet nog sky zodat de
-       bestaande klassen blijven werken. De grijzen zijn warm gezet, zodat het
-       oranje er niet koud naast staat. */
+    /* Zacht perzik. De schaal heet nog sky zodat alle bestaande klassen blijven
+       werken, maar loopt nu netjes van licht naar donker binnen één warme
+       familie — dat is nodig omdat sky-600/700 in de app vaker als tekstkleur
+       dan als vlak gebruikt worden en dus leesbaar op wit moeten blijven.
+
+         50-200  zachte vlakken en tinten (Primary Soft)
+         300     Primary — de pastel waar knoppen en accenten op staan
+         400     Coral — voorbehouden aan "nieuw", "vandaag" en focusringen
+         600/700 de enige tinten donker genoeg voor accenttekst op wit
+                 (contrast 4.9 resp. 6.6)
+
+       De grijzen zijn de warme neutralen uit het ontwerpsysteem: 50 is de
+       achtergrond, 100 het secundaire vlak, 200 de rand, 500 secundaire tekst
+       en 800 primaire tekst. */
     tailwind.config = {
       theme: {
         extend: {
           colors: {
             sky: {
-              50: "#FDF5F0", 100: "#FAE7DA", 200: "#F3CDB4", 300: "#E9A985",
-              400: "#E4571A", 500: "#D14A0C", 600: "#B8400A", 700: "#FF7A00",
-              800: "#83300A", 900: "#6A2708",
+              50: "#FDF3F0", 100: "#FBEAE5", 200: "#F7DDD5", 300: "#F3C2B5",
+              400: "#E98C7D", 500: "#D97565", 600: "#AC5947", 700: "#8C4A3F",
+              800: "#6E3A31", 900: "#522B24",
             },
             gray: {
-              50: "#FAF9F7", 100: "#F4F2EF", 200: "#E6E0DA", 300: "#D5CCC4",
-              400: "#A99C93", 500: "#7B6E67", 600: "#5E534D", 700: "#463D38",
-              800: "#332C28", 900: "#241D19",
+              50: "#FCFAF8", 100: "#F8F5F3", 200: "#ECE6E2", 300: "#C7C1BC",
+              400: "#A9A29D", 500: "#7B7571", 600: "#635D59", 700: "#4A4643",
+              800: "#373432", 900: "#2A2725",
             },
+            /* Zachte statuskleuren — alleen voor betekenis, nooit als accent. */
+            good: "#A8C7B3",
+            info: "#B8D6E8",
+            accent: "#F6E2A7",
+            coral: "#E98C7D",
           },
           fontFamily: {
-            display: ['"Iowan Old Style"', '"Palatino Linotype"', "Palatino", '"Book Antiqua"', "Georgia", "serif"],
-            num: ["ui-monospace", '"SF Mono"', "Menlo", "Consolas", "monospace"],
+            display: ['"Plus Jakarta Sans"', "ui-sans-serif", "-apple-system", '"Segoe UI"', "system-ui", "sans-serif"],
+            num: ['"Plus Jakarta Sans"', "ui-sans-serif", "-apple-system", "system-ui", "sans-serif"],
           },
+          /* Klein 12 · Middel 16 · Groot 20 · XL 28 · Pil 999. De bestaande
+             klassennamen schuiven mee omhoog, zodat kaarten (rounded-2xl) in
+             één keer op 24px uitkomen zonder 200 classNames aan te raken. */
+          borderRadius: {
+            sm: "6px", DEFAULT: "8px", md: "10px", lg: "12px",
+            xl: "16px", "2xl": "24px", "3xl": "28px",
+          },
+          /* Nauwelijks zichtbaar en warm getint — liever een rand dan hoogte. */
+          boxShadow: {
+            sm: "0 1px 2px rgba(55,52,50,0.04)",
+            DEFAULT: "0 1px 3px rgba(55,52,50,0.05)",
+            md: "0 2px 8px rgba(55,52,50,0.05)",
+            lg: "0 4px 16px rgba(55,52,50,0.06)",
+            xl: "0 8px 28px rgba(55,52,50,0.07)",
+            "2xl": "0 12px 40px rgba(55,52,50,0.08)",
+          },
+          /* Ingetogen beweging. 220ms is de standaard voor elk element dat al
+             een transition-klasse heeft, dus losse duration-klassen zijn de
+             uitzondering en niet de regel. */
+          transitionDuration: { DEFAULT: "220ms", fast: "120ms", normal: "220ms", slow: "320ms" },
         }
       }
     };
@@ -67,7 +105,7 @@
        is te fors (6px padding, schaduw, pijltje) voor een klein kaartje vol stippen. */
     .leaflet-reisplanner-tooltip {
       padding: 2px 7px; font-size: 11px; line-height: 1.5; border-radius: 6px;
-      border: none; box-shadow: 0 1px 3px rgba(36,29,25,.25);
+      border: none; box-shadow: 0 1px 3px rgba(55,52,50,.18);
     }
     * { box-sizing: border-box; }
     /* Tailwinds tekstschaal (text-xs t/m text-2xl) is in rem, dus deze ene regel
@@ -76,12 +114,12 @@
        kopjes) staan hier los van en zijn apart iets vergroot waar dat las. */
     html { font-size: 18px; }
     body {
-      background: #F4F2EF; margin: 0;
-      font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+      background: #FCFAF8; margin: 0; color: #373432;
+      font-family: "Plus Jakarta Sans", ui-sans-serif, -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #E6E0DA; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: #ECE6E2; border-radius: 999px; }
     /* Cijfers die onder elkaar horen te staan — tijden, bedragen, dagnummers. */
     .tnum { font-variant-numeric: tabular-nums; }
     /* Dubbeltik-waardering in de fotoviewer — hetzelfde duimpje als de like-knop
@@ -120,18 +158,18 @@
   </style>
 </head>
 <body>
-  <div id="js-error" style="display:none;position:fixed;inset:0;background:#fff;z-index:9999;padding:32px;font-family:sans-serif">
+  <div id="js-error" style="display:none;position:fixed;inset:0;background:#FCFAF8;z-index:9999;padding:32px">
     <div style="max-width:400px;margin:0 auto;text-align:center;padding-top:60px">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#B85800" stroke-width="1.6"
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#8C4A3F" stroke-width="1.6"
            stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px">
         <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5" /><path d="M12 16.2h.01" />
       </svg>
-      <h2 style="color:#241D19;margin-bottom:8px;font-family:Georgia,serif;font-weight:400">Er ging iets mis</h2>
-      <p style="color:#7B6E67;font-size:14px;margin-bottom:24px;word-break:break-all"></p>
-      <button onclick="window.location.reload()" style="background:#FF7A00;color:#241D19;border:none;padding:10px 24px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer">Pagina herladen</button>
+      <h2 style="color:#373432;margin-bottom:8px;font-weight:600">Er ging iets mis</h2>
+      <p style="color:#7B7571;font-size:14px;margin-bottom:24px;word-break:break-all"></p>
+      <button onclick="window.location.reload()" style="background:#F3C2B5;color:#373432;border:none;padding:14px 28px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer">Pagina herladen</button>
     </div>
   </div>
   <div id="root"></div>
-  <script type="text/babel" src="app.js?v=212"></script>
+  <script type="text/babel" src="app.js?v=213"></script>
 </body>
 </html>

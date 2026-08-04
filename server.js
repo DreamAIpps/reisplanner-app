@@ -19,6 +19,14 @@ const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
 const anthropicClient = new Anthropic();
 
+// Dezelfde ontwerp-tokens als PALETTE in public/app.js — hier alleen de paar
+// waarden die de server nodig heeft (PDF-tekst en de standaard reiskleur),
+// zodat een PDF er niet anders uitziet dan het scherm waar hij van komt.
+const PALETTE = {
+  primary: "#F3C2B5",
+  textPrimary: "#373432",
+};
+
 const PORT = process.env.PORT || 3002;
 const STARTED_AT = new Date();
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -1152,7 +1160,7 @@ route("POST", "/api/trips", async (req, res, params, body) => {
   const { rows } = await query(
     `INSERT INTO trips (name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, timezone, user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, timezone||null, req.user.id]
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||PALETTE.primary, cover_image||null, timezone||null, req.user.id]
   );
   // Auto-create day entries if dates are set. Generated in SQL rather than by
   // stepping a JS Date: "YYYY-MM-DD" parses as UTC midnight while setDate()
@@ -1176,7 +1184,7 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   const { rows } = await query(
     `UPDATE trips SET name=$1, destination=$2, start_date=$3, end_date=$4, budget=$5, currency=$6, status=$7, notes=$8, cover_color=$9, cover_image=$10, timezone=$11
      WHERE id=$12 AND user_id=$13 RETURNING *`,
-    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||"#FF7A00", cover_image||null, timezone||null, params.id, req.user.id]
+    [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||PALETTE.primary, cover_image||null, timezone||null, params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
   sendJson(res, 200, rows[0]);
@@ -3596,7 +3604,7 @@ const HTML_FONT_SIZE_RATIOS = { 1: 10 / 16, 2: 13 / 16, 3: 1, 4: 18 / 16, 5: 24 
 // paragraaf is — zo blijft vet/cursief/lettertype/grootte binnen dezelfde
 // alinea werken.
 function drawFormattedText(doc, html, x, y, opts = {}) {
-  const { width, height, fontSize = 10, color = "#241D19", ellipsis, align } = opts;
+  const { width, height, fontSize = 10, color = PALETTE.textPrimary, ellipsis, align } = opts;
   doc.fontSize(fontSize);
   const lines = pdfParseRichHtml(String(html || ""));
   let first = true;
@@ -3738,7 +3746,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         // Zelfde afgeronde hoeken als de editor/preview (rounded-xl).
         try { doc.roundedRect(x, y, w, h, 8).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
       }
-      drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: "#241D19", align: tb.align });
+      drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: PALETTE.textPrimary, align: tb.align });
     }
 
     if (page.title) {
@@ -3748,7 +3756,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const x = page.title_x * pageW, y = page.title_y * pageH;
       const w = page.title_width * pageW, h = page.title_height * pageH;
       doc.roundedRect(x, y, w, h, 8).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      drawFormattedText(doc, page.title, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 14, color: "#241D19", align: page.title_align, ellipsis: true });
+      drawFormattedText(doc, page.title, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align, ellipsis: true });
     }
   }
 
