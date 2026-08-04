@@ -39,6 +39,7 @@ const ICONS = {
   map: <><path d="M9 4.5 3.5 7v12.5L9 17l6 2.5 5.5-2.5V4.5L15 7z" /><path d="M9 4.5V17" /><path d="M15 7v12.5" /></>,
   globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17" /><path d="M12 3.5c2.3 2.4 3.5 5.3 3.5 8.5s-1.2 6.1-3.5 8.5c-2.3-2.4-3.5-5.3-3.5-8.5S9.7 5.9 12 3.5z" /></>,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
+  dragHandle: <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></>,
 
   // vervoer
   plane: <><path d="M3 13.5 21 7l-4.5 12-3.2-5.1z" /><path d="M13.3 13.9 21 7" /></>,
@@ -5909,8 +5910,10 @@ function isPhotoLowRes(photo) {
 // op de A4-canvas — x/y/width/height zijn fracties van de pagina, dus de
 // berekening gaat via de pixel-afmetingen van de canvas zelf (getPageEl),
 // niet via vaste pixelwaarden. Pointer Events (i.p.v. HTML5 drag-and-drop)
-// omdat die zowel met muis als met een vinger op de telefoon werken.
-function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages }) {
+// omdat die zowel met muis als met een vinger op de telefoon werken. Gedeeld
+// tussen foto's en tekstvakken op de canvas — alleen wat er ín het vak zit
+// verschilt.
+function usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect }) {
   const dragRef = useRef(null);
 
   function beginDrag(e, mode) {
@@ -5920,7 +5923,7 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
       mode, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
-      startRect: { x: photo.x, y: photo.y, width: photo.width, height: photo.height },
+      startRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     };
   }
   function onDrag(e) {
@@ -5928,9 +5931,9 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
     if (!d || d.pointerId !== e.pointerId) return;
     const el = getPageEl();
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const fx = (e.clientX - d.startX) / rect.width;
-    const fy = (e.clientY - d.startY) / rect.height;
+    const pageRect = el.getBoundingClientRect();
+    const fx = (e.clientX - d.startX) / pageRect.width;
+    const fy = (e.clientY - d.startY) / pageRect.height;
     if (d.mode === "move") {
       let x = Math.min(1 - d.startRect.width, Math.max(0, d.startRect.x + fx));
       let y = Math.min(1 - d.startRect.height, Math.max(0, d.startRect.y + fy));
@@ -5949,6 +5952,11 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
   function endDrag(e) {
     if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
   }
+  return { beginDrag, onDrag, endDrag };
+}
+
+function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPageEl, snap, duplicatePages }) {
+  const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: photo, onChangeRect, getPageEl, snap, onSelect });
 
   return (
     <div
@@ -6000,6 +6008,61 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
   );
 }
 
+// Achtergrond-presets voor een zwevend tekstvak — een paar duidelijk van
+// elkaar te onderscheiden opties, geen vrije kleurenkiezer nodig.
+const PHOTOBOOK_TEXTBOX_BACKGROUNDS = [
+  { value: "transparent", label: "Geen" },
+  { value: "rgba(255,255,255,0.85)", label: "Wit" },
+  { value: "rgba(36,29,25,0.75)", label: "Donker" },
+];
+// Zelfde verslepen/schalen als een foto (usePhotobookDragResize), maar met
+// tekst als inhoud i.p.v. een afbeelding. Zodra het vak geselecteerd is, mag
+// je er middenin klikken om de cursor te plaatsen — dus dan verhuist het
+// verslepen naar een klein apart handvat, anders zou elke tik in de tekst
+// het vak verplaatsen in plaats van de cursor te zetten.
+function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChangeHtml, getPageEl, snap, richTextRef }) {
+  const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: box, onChangeRect, getPageEl, snap, onSelect });
+
+  return (
+    <div
+      onPointerDown={selected ? undefined : (e) => beginDrag(e, "move")}
+      className={`absolute select-none ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
+      style={{
+        left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
+        background: box.backgroundColor || "transparent",
+      }}
+    >
+      {selected && (
+        <div
+          onPointerDown={(e) => beginDrag(e, "move")}
+          onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+          title="Verslepen"
+          className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-sky-600 border-2 border-white shadow-md cursor-move touch-none flex items-center justify-center text-white z-10"
+        >
+          <Icon name="dragHandle" size={12} />
+        </div>
+      )}
+      <div className="w-full h-full overflow-auto p-1.5" onPointerDown={(e) => selected && e.stopPropagation()}>
+        {selected ? (
+          <RichTextEditable ref={richTextRef} value={box.html || ""} onChange={onChangeHtml} align={box.align}
+            className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent text-sm" placeholder="Tekst..." />
+        ) : (
+          <RichTextView html={box.html} align={box.align} className="text-sm pointer-events-none" />
+        )}
+      </div>
+      {selected && (
+        <div
+          onPointerDown={(e) => beginDrag(e, "resize")}
+          onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+          className="absolute -right-2 -bottom-2 w-6 h-6 rounded-full bg-sky-600 border-2 border-white shadow-md cursor-nwse-resize touch-none flex items-center justify-center"
+        >
+          <div className="w-2 h-2 border-b-2 border-r-2 border-white" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [pages, setPages] = useState(null); // null = laden
@@ -6012,12 +6075,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [error, setError] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
+  const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
   const titleRefs = useRef({}); // pageIndex -> titel-input, voor de opmaakknoppen (vet/cursief)
   const descRefs = useRef({}); // pageIndex -> beschrijving-textarea, idem
   const captionRef = useRef(null); // bijschrift-input van de geselecteerde foto, idem
+  const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
 
   useEffect(() => {
     api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
@@ -6094,6 +6159,29 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     })));
     setDirty(true);
   }
+  function addTextBox(pageIndex) {
+    const box = {
+      id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      html: "", x: 0.15, y: 0.4, width: 0.7, height: 0.15, align: "center", backgroundColor: "rgba(255,255,255,0.85)",
+    };
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, textBoxes: [...(p.textBoxes || []), box] })));
+    setSelectedTextBox({ page: pageIndex, box: (pages[pageIndex].textBoxes || []).length });
+    setSelectedPhoto(null);
+    setDirty(true);
+  }
+  function updateTextBoxRect(pageIndex, boxIndex, patch) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, textBoxes: (p.textBoxes || []).map((b, j) => (j === boxIndex ? { ...b, ...patch } : b)),
+    })));
+    setDirty(true);
+  }
+  function removeTextBox(pageIndex, boxIndex) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, textBoxes: (p.textBoxes || []).filter((_, j) => j !== boxIndex),
+    })));
+    setSelectedTextBox((sel) => (sel && sel.page === pageIndex ? null : sel));
+    setDirty(true);
+  }
   function setBackgroundColor(pageIndex, color) {
     updatePage(pageIndex, { background: { type: "color", value: color } });
   }
@@ -6163,6 +6251,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         photos: p.photos.map((ph) => ({
           photo_id: ph.photoId, caption: ph.caption, x: ph.x, y: ph.y, width: ph.width, height: ph.height,
           opacity: ph.opacity, cornerRadius: ph.cornerRadius, cropX: ph.cropX, cropY: ph.cropY, cropZoom: ph.cropZoom,
+        })),
+        textBoxes: (p.textBoxes || []).map((b) => ({
+          html: b.html, x: b.x, y: b.y, width: b.width, height: b.height, align: b.align, backgroundColor: b.backgroundColor,
         })),
       })));
       setDirty(false);
@@ -6365,7 +6456,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 schalen (sleep de blauwe greep rechtsonder). */}
             <div
               ref={(el) => { canvasRefs.current[i] = el; }}
-              onPointerDown={() => setSelectedPhoto(null)}
+              onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); }}
               className="relative w-full rounded-lg overflow-hidden border border-gray-100"
               style={{
                 aspectRatio: "210 / 297",
@@ -6380,13 +6471,23 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               {page.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
                   selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
-                  onSelect={() => setSelectedPhoto({ page: i, photo: j })}
+                  onSelect={() => { setSelectedPhoto({ page: i, photo: j }); setSelectedTextBox(null); }}
                   onChangeRect={(patch) => updatePhotoRect(i, j, patch)}
                   getPageEl={() => canvasRefs.current[i]}
                   snap={snapEnabled}
                   duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== i + 1)} />
               ))}
-              {page.photos.length === 0 && !page.background && (
+              {(page.textBoxes || []).map((box, k) => (
+                <PhotobookCanvasTextBox key={box.id ?? k} box={box}
+                  selected={selectedTextBox?.page === i && selectedTextBox?.box === k}
+                  onSelect={() => { setSelectedTextBox({ page: i, box: k }); setSelectedPhoto(null); }}
+                  onChangeRect={(patch) => updateTextBoxRect(i, k, patch)}
+                  onChangeHtml={(html) => updateTextBoxRect(i, k, { html })}
+                  getPageEl={() => canvasRefs.current[i]}
+                  snap={snapEnabled}
+                  richTextRef={textBoxRef} />
+              ))}
+              {page.photos.length === 0 && !page.background && (page.textBoxes || []).length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
               )}
               {/* Altijd bovenop de foto's getekend (en met eigen achtergrond),
@@ -6498,10 +6599,38 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               );
             })()}
 
-            <button type="button" onClick={() => openPicker(i)}
-              className="mt-2 w-full text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
-              + Foto's toevoegen
-            </button>
+            {selectedTextBox?.page === i && page.textBoxes?.[selectedTextBox.box] && (
+              <div className="mt-2 p-2 rounded-lg bg-sky-50 border border-sky-100">
+                <div className="flex items-center justify-between mb-1">
+                  <RichTextToolbar getEl={() => textBoxRef.current} onChange={(v) => updateTextBoxRect(i, selectedTextBox.box, { html: v })}
+                    align={page.textBoxes[selectedTextBox.box].align} onAlignChange={(a) => updateTextBoxRect(i, selectedTextBox.box, { align: a })} />
+                  <button type="button" onClick={() => removeTextBox(i, selectedTextBox.box)} title="Tekstvak verwijderen"
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors shrink-0">
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400 mr-0.5">Achtergrond</span>
+                  {PHOTOBOOK_TEXTBOX_BACKGROUNDS.map((b) => (
+                    <button key={b.value} type="button" onClick={() => updateTextBoxRect(i, selectedTextBox.box, { backgroundColor: b.value })}
+                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.textBoxes[selectedTextBox.box].backgroundColor || "transparent") === b.value ? "border-sky-400 bg-sky-100 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={() => openPicker(i)}
+                className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+                + Foto's toevoegen
+              </button>
+              <button type="button" onClick={() => addTextBox(i)}
+                className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+                + Tekstvak toevoegen
+              </button>
+            </div>
           </div>
         ))}
         {pages.length === 0 && <div className="text-center text-sm text-gray-400 py-8">Nog geen pagina's in dit fotoboek.</div>}
@@ -6618,7 +6747,13 @@ function PhotobookPreview({ title, pages, onClose }) {
                 {ph.caption && <RichTextView html={ph.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate" />}
               </div>
             ))}
-            {page.photos.length === 0 && !page.title && !page.description && (
+            {(page.textBoxes || []).map((box, k) => (
+              <div key={box.id ?? k} className="absolute overflow-hidden p-1.5"
+                style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
+                <RichTextView html={box.html} align={box.align} className="text-sm" />
+              </div>
+            ))}
+            {page.photos.length === 0 && !page.title && !page.description && (page.textBoxes || []).length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
             )}
             {(page.title || page.description) && (

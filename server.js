@@ -3347,6 +3347,17 @@ function clampPhotoRect(p) {
   };
 }
 
+function clampTextBoxRect(t) {
+  const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  return {
+    x: Math.min(1, Math.max(0, n(t.x, 0.15))),
+    y: Math.min(1, Math.max(0, n(t.y, 0.4))),
+    width: Math.min(1, Math.max(0.05, n(t.width, 0.7))),
+    height: Math.min(1, Math.max(0.03, n(t.height, 0.15))),
+    align: ["left", "center", "right"].includes(t.align) ? t.align : "center",
+  };
+}
+
 function photobookBackground(page) {
   if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
   if (page.background_type === "photo" && page.background_photo_id) {
@@ -3382,6 +3393,20 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       url: `/api/photos/${p.photo_id}/raw`, thumbUrl: `/api/photos/${p.photo_id}/thumb`,
     });
   }
+  const { rows: pageTextBoxes } = await query(
+    `SELECT * FROM photobook_page_textboxes WHERE page_id IN (
+       SELECT id FROM photobook_pages WHERE photobook_id = $1
+     ) ORDER BY page_id ASC, position ASC`,
+    [params.id]
+  );
+  const textBoxesByPage = new Map();
+  for (const t of pageTextBoxes) {
+    if (!textBoxesByPage.has(t.page_id)) textBoxesByPage.set(t.page_id, []);
+    textBoxesByPage.get(t.page_id).push({
+      id: t.id, html: t.html, x: t.x, y: t.y, width: t.width, height: t.height,
+      align: t.align, backgroundColor: t.background_color,
+    });
+  }
   sendJson(res, 200, {
     id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status,
     pages: pages.map((pg) => ({
@@ -3389,6 +3414,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       titleAlign: pg.title_align, descriptionAlign: pg.description_align,
       background: photobookBackground(pg),
       photos: photosByPage.get(pg.id) || [],
+      textBoxes: textBoxesByPage.get(pg.id) || [],
     })),
   });
 }, { tripScope: "photobooks", allowViewer: true });
@@ -3465,6 +3491,16 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
         [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
       );
     }
+    const textBoxes = Array.isArray(page.textBoxes) ? page.textBoxes : [];
+    for (let j = 0; j < textBoxes.length; j++) {
+      const html = typeof textBoxes[j].html === "string" ? textBoxes[j].html : null;
+      const bgColor = typeof textBoxes[j].backgroundColor === "string" ? textBoxes[j].backgroundColor : null;
+      const rect = clampTextBoxRect(textBoxes[j]);
+      await query(
+        "INSERT INTO photobook_page_textboxes (page_id, position, html, x, y, width, height, align, background_color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        [pageId, j, html, rect.x, rect.y, rect.width, rect.height, rect.align, bgColor]
+      );
+    }
   }
   sendJson(res, 200, { ok: true, pageCount: items.length });
 }, { tripScope: "photobooks", allowViewer: true });
@@ -3515,6 +3551,17 @@ function pdfParseRichHtml(html) {
   }
   if (last < html.length) pushText(decodeEntities(html.slice(last)));
   return lines;
+}
+// pdfkit's .fill(kleur) accepteert wel een "rgba(...)"-string zonder te
+// klagen, maar negeert het alpha-kanaal stilletjes (getest: geen /ca in de
+// content-stream, dus altijd volledig dekkend) — het alfakanaal moet zelf
+// via fillOpacity() worden toegepast, net als elders in dit bestand.
+function parseRgbaColor(str) {
+  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/i.exec(str || "");
+  if (!m) return { color: str, alpha: 1 };
+  const [, r, g, b, a] = m;
+  const hex = "#" + [r, g, b].map((v) => Number(v).toString(16).padStart(2, "0")).join("");
+  return { color: hex, alpha: a !== undefined ? Number(a) : 1 };
 }
 // pdfkit heeft zonder embedden alleen de 14 standaard PDF-fonts (Helvetica/
 // Times/Courier, elk in vet/cursief) — elke lettertype-keuze uit de editor
@@ -3599,6 +3646,17 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     const { rows: bgRows } = await query("SELECT id, data FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
     for (const r of bgRows) bgPhotosById.set(r.id, r.data);
   }
+  const { rows: pageTextBoxRows } = await query(
+    `SELECT tb.* FROM photobook_page_textboxes tb
+     JOIN photobook_pages pp ON pp.id = tb.page_id
+     WHERE pp.photobook_id = $1 ORDER BY tb.page_id ASC, tb.position ASC`,
+    [params.id]
+  );
+  const textBoxesByPage = new Map();
+  for (const t of pageTextBoxRows) {
+    if (!textBoxesByPage.has(t.page_id)) textBoxesByPage.set(t.page_id, []);
+    textBoxesByPage.get(t.page_id).push(t);
+  }
 
   const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
 
@@ -3657,6 +3715,17 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         drawFormattedText(doc, ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2),
           { width: Math.max(1, w - 8), height: capH, fontSize: 8, color: "#463D38", ellipsis: true });
       }
+    }
+
+    for (const tb of (textBoxesByPage.get(page.id) || [])) {
+      if (!tb.html) continue;
+      const x = tb.x * PDF_PAGE_WIDTH, y = tb.y * PDF_PAGE_HEIGHT;
+      const w = tb.width * PDF_PAGE_WIDTH, h = tb.height * PDF_PAGE_HEIGHT;
+      if (tb.background_color && tb.background_color !== "transparent") {
+        const { color, alpha } = parseRgbaColor(tb.background_color);
+        try { doc.rect(x, y, w, h).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
+      }
+      drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: "#241D19", align: tb.align });
     }
 
     if (page.title || page.description) {

@@ -516,6 +516,23 @@ async function initDb() {
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS crop_y REAL NOT NULL DEFAULT 0.5;
     ALTER TABLE photobook_page_photos ADD COLUMN IF NOT EXISTS crop_zoom REAL NOT NULL DEFAULT 1;
 
+    -- Zwevend tekstvak op een pagina, los van de vaste titel/beschrijving-band
+    -- — vrij te verslepen/schalen net als een foto, met eigen HTML-inhoud
+    -- (dezelfde beperkte opmaak-substring als titel/beschrijving/bijschrift).
+    CREATE TABLE IF NOT EXISTS photobook_page_textboxes (
+      id SERIAL PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES photobook_pages(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      html TEXT,
+      x REAL NOT NULL DEFAULT 0.15,
+      y REAL NOT NULL DEFAULT 0.4,
+      width REAL NOT NULL DEFAULT 0.7,
+      height REAL NOT NULL DEFAULT 0.15,
+      align TEXT NOT NULL DEFAULT 'center',
+      background_color TEXT
+    );
+    CREATE INDEX IF NOT EXISTS photobook_page_textboxes_page_idx ON photobook_page_textboxes(page_id, position);
+
     -- Foto's van vóór het losse verslepen/schalen stonden allemaal op
     -- dezelfde standaardplek — dit verspreidt ze eenmalig over een simpel
     -- rooster per pagina, zodat ze niet allemaal op elkaar blijven liggen.
