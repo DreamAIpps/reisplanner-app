@@ -464,6 +464,7 @@ async function initDb() {
       background_type TEXT,
       background_color TEXT,
       background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+      background_overlay REAL NOT NULL DEFAULT 0,
       title_align TEXT NOT NULL DEFAULT 'left',
       description_align TEXT NOT NULL DEFAULT 'left'
     );
@@ -473,6 +474,9 @@ async function initDb() {
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_type TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_color TEXT;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL;
+    -- Witte sluier over een achtergrondfoto (0 = geen, tot 0.75 = bijna wit),
+    -- zodat voorgrondtekst/-foto's leesbaar blijven op een drukke achtergrond.
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_overlay REAL NOT NULL DEFAULT 0;
     -- Uitlijning van titel/beschrijving (CEWE-achtige stijlopties).
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS description_align TEXT NOT NULL DEFAULT 'left';

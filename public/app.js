@@ -5800,6 +5800,15 @@ const PHOTOBOOK_CORNER_PRESETS = [
   { value: 0.25, label: "Sterk" },
   { value: 0.5, label: "Rondje" },
 ];
+// Witte sluier over een achtergrondfoto, zodat voorgrondtekst/-foto's
+// leesbaar blijven op een drukke achtergrond — zelfde idee als de
+// opacity-presets, maar dan als vast wit vlak boven de achtergrond.
+const PHOTOBOOK_OVERLAY_PRESETS = [
+  { value: 0, label: "Geen" },
+  { value: 0.25, label: "25%" },
+  { value: 0.5, label: "50%" },
+  { value: 0.75, label: "75%" },
+];
 
 // Kant-en-klare paginaindelingen, zoals "Pagina sjablonen" bij professionele
 // fotoboek-editors (Albelli e.d.) — één tik legt de al aanwezige foto's op
@@ -6147,10 +6156,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     try {
       await api.savePhotobookPages(bookId, pages.map((p) => ({
         title: p.title, description: p.description,
+        titleAlign: p.titleAlign, descriptionAlign: p.descriptionAlign,
         background: !p.background ? null
           : p.background.type === "color" ? { type: "color", value: p.background.value }
-          : { type: "photo", photo_id: p.background.photoId },
-        photos: p.photos.map((ph) => ({ photo_id: ph.photoId, caption: ph.caption, x: ph.x, y: ph.y, width: ph.width, height: ph.height })),
+          : { type: "photo", photo_id: p.background.photoId, overlay: p.background.overlay },
+        photos: p.photos.map((ph) => ({
+          photo_id: ph.photoId, caption: ph.caption, x: ph.x, y: ph.y, width: ph.width, height: ph.height,
+          opacity: ph.opacity, cornerRadius: ph.cornerRadius, cropX: ph.cropX, cropY: ph.cropY, cropZoom: ph.cropZoom,
+        })),
       })));
       setDirty(false);
     } catch (err) { setError(err.message || "Opslaan mislukt"); }
@@ -6304,9 +6317,20 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 )}
               </div>
               {page.background?.type === "photo" && (
-                <div className="mt-2 flex items-center gap-2">
-                  <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
-                  <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
+                <div className="mt-2">
+                  <div className="flex items-center gap-2 mb-2">
+                    <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                    <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400 mr-0.5">Witte sluier</span>
+                    {PHOTOBOOK_OVERLAY_PRESETS.map((p) => (
+                      <button key={p.value} type="button" onClick={() => updatePage(i, { background: { ...page.background, overlay: p.value } })}
+                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.background.overlay || 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -6350,6 +6374,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   : "#FAF9F7",
               }}
             >
+              {page.background?.type === "photo" && page.background.overlay > 0 && (
+                <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
+              )}
               {page.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
                   selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
@@ -6574,6 +6601,9 @@ function PhotobookPreview({ title, pages, onClose }) {
                 : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                 : "#FAF9F7",
             }}>
+            {page.background?.type === "photo" && page.background.overlay > 0 && (
+              <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
+            )}
             {page.photos.map((ph, j) => (
               <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
                 style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>

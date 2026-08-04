@@ -3350,7 +3350,7 @@ function clampPhotoRect(p) {
 function photobookBackground(page) {
   if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
   if (page.background_type === "photo" && page.background_photo_id) {
-    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw` };
+    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw`, overlay: page.background_overlay || 0 };
   }
   return null;
 }
@@ -3443,16 +3443,18 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     const page = items[i];
     const title = typeof page.title === "string" ? page.title.trim() || null : null;
     const description = typeof page.description === "string" ? page.description.trim() || null : null;
-    let bgType = null, bgColor = null, bgPhotoId = null;
+    let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
     } else if (page.background?.type === "photo") {
       bgType = "photo"; bgPhotoId = Number(page.background.photo_id);
+      const overlay = Number(page.background.overlay);
+      bgOverlay = Number.isFinite(overlay) ? Math.min(0.75, Math.max(0, overlay)) : 0;
     }
     const { rows: pageRows } = await query(
-      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, title_align, description_align)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [params.id, i, title, description, bgType, bgColor, bgPhotoId, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
+      `INSERT INTO photobook_pages (photobook_id, position, title, description, background_type, background_color, background_photo_id, background_overlay, title_align, description_align)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [params.id, i, title, description, bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign), validAlign(page.descriptionAlign)]
     );
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
@@ -3617,6 +3619,9 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       if (bgData) {
         try {
           doc.image(bgData, 0, 0, { cover: [PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT] });
+          if (page.background_overlay > 0) {
+            doc.rect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
+          }
         } catch (err) {
           console.error("Fotoboek-PDF: achtergrondfoto kon niet worden ingevoegd:", err?.message || err);
         }
