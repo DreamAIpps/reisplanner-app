@@ -631,6 +631,9 @@ const RICH_TEXT_FONTS = [
   { key: "sans", label: "Standaard", family: 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif' },
   { key: "serif", label: "Klassiek", family: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif' },
   { key: "mono", label: "Mono", family: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
+  { key: "rounded", label: "Rond", family: '"Trebuchet MS", Verdana, "Segoe UI", sans-serif' },
+  { key: "elegant", label: "Sierlijk", family: '"Big Caslon", Didot, serif' },
+  { key: "script", label: "Script", family: '"Bradley Hand", "Segoe Script", "Comic Sans MS", cursive' },
 ];
 // Alleen-lezen weergave van opgeslagen fotoboek-tekst — altijd door de
 // sanitizer heen, ook al is er clientside al gesaneerd vóór het opslaan (de

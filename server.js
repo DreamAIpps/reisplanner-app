@@ -3471,9 +3471,14 @@ function pdfParseRichHtml(html) {
   if (last < html.length) pushText(decodeEntities(html.slice(last)));
   return lines;
 }
+// pdfkit heeft zonder embedden alleen de 14 standaard PDF-fonts (Helvetica/
+// Times/Courier, elk in vet/cursief) — elke lettertype-keuze uit de editor
+// valt terug op de dichtstbijzijnde van die drie. "Rond" en "Script" hebben
+// geen echt serif/mono-equivalent en landen daarom bewust bij Helvetica.
 function pdfBaseFontFamily(face) {
-  if (face && face.includes("mono")) return "Courier";
-  if (face && face.includes("Iowan")) return "Times";
+  if (!face) return "Helvetica";
+  if (face.includes("mono")) return "Courier";
+  if (face.includes("Iowan") || face.includes("Didot")) return "Times";
   return "Helvetica";
 }
 function pdfFontFor(run) {
