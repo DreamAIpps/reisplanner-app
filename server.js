@@ -3386,7 +3386,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
   for (const p of pagePhotos) {
     if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
     photosByPage.get(p.page_id).push({
-      id: p.id, photoId: p.photo_id, caption: p.caption,
+      id: p.id, photoId: p.photo_id,
       x: p.x, y: p.y, width: p.width, height: p.height,
       opacity: p.opacity, cornerRadius: p.corner_radius,
       cropX: p.crop_x, cropY: p.crop_y, cropZoom: p.crop_zoom,
@@ -3485,11 +3485,10 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     );
     const pageId = pageRows[0].id;
     for (let j = 0; j < page.photos.length; j++) {
-      const caption = typeof page.photos[j].caption === "string" ? page.photos[j].caption.trim() || null : null;
       const rect = clampPhotoRect(page.photos[j]);
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, caption, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-        [pageId, Number(page.photos[j].photo_id), j, caption, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        [pageId, Number(page.photos[j].photo_id), j, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
       );
     }
     const textBoxes = Array.isArray(page.textBoxes) ? page.textBoxes : [];
@@ -3632,7 +3631,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     [params.id]
   );
   const { rows: pagePhotoRows } = await query(
-    `SELECT pgp.page_id, pgp.caption, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
+    `SELECT pgp.page_id, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
             pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.width AS native_width, p.height AS native_height
      FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
@@ -3721,12 +3720,6 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         doc.restore();
       } catch (err) {
         console.error("Fotoboek-PDF: foto kon niet worden ingevoegd:", err?.message || err);
-      }
-      if (ph.caption) {
-        const capH = Math.min(24, h * 0.3);
-        doc.rect(x, y + h - capH, w, capH).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-        drawFormattedText(doc, ph.caption, x + 4, y + h - capH + Math.max(2, (capH - 10) / 2),
-          { width: Math.max(1, w - 8), height: capH, fontSize: 8, color: "#463D38", ellipsis: true });
       }
     }
 
