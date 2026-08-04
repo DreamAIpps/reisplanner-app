@@ -665,6 +665,15 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
   const lastValue = useRef(value);
   React.useImperativeHandle(ref, () => innerRef.current);
 
+  // Los van de sync-effect hieronder: die vergelijkt tegen lastValue, dat bij
+  // het allereerste render al op de meegekregen `value` staat (via useRef's
+  // lazy initializer) — dus als een pagina met bestaand tekst laadt (bijv.
+  // een automatisch gegenereerde titel), ziet die effect "geen wijziging" en
+  // zet de DOM nooit. Deze mount-only effect zet 'm altijd hardhandig één keer.
+  useEffect(() => {
+    if (innerRef.current) innerRef.current.innerHTML = sanitizeRichText(value || "");
+  }, []);
+
   useEffect(() => {
     if (innerRef.current && value !== lastValue.current && value !== innerRef.current.innerHTML) {
       innerRef.current.innerHTML = sanitizeRichText(value || "");
