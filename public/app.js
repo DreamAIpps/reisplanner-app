@@ -6168,6 +6168,12 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
             transform: `scale(${photo.cropZoom ?? 1})`,
             transformOrigin: `${(photo.cropX ?? 0.5) * 100}% ${(photo.cropY ?? 0.5) * 100}%`,
           }} />
+        {/* Zelfde plek/stijl als in het voorbeeld en de PDF, zodat een
+            bijschrift meteen zichtbaar is terwijl je 'm typt, niet pas na
+            "Voorbeeld" openen. */}
+        {photo.caption && (
+          <RichTextView html={photo.caption} className="absolute bottom-0 left-0 right-0 text-xs px-1.5 py-1 bg-white/85 truncate pointer-events-none" />
+        )}
       </div>
       {/* Alleen een hint tijdens het bewerken — niet in het voorbeeld of de
           uiteindelijke PDF, dus dit leeft puur hier in de editor-canvas. */}
@@ -6235,7 +6241,7 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
   return (
     <div
       onPointerDown={selected ? undefined : (e) => beginDrag(e, "move")}
-      className={`absolute select-none ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
+      className={`absolute select-none rounded-xl ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
       style={{
         left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
         background: box.backgroundColor || "transparent",
@@ -6923,61 +6929,72 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     title="Slepen" className="text-gray-300 hover:text-gray-500 cursor-move touch-none shrink-0 self-stretch flex items-center">
                     <Icon name="dragHandle" size={14} />
                   </button>
-                  <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                  <div className="flex-1">
-                    <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)} />
-                    <RichTextEditable ref={captionRef} value={photoSel.caption || ""} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)}
-                      singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
-                      <Icon name="arrowLeft" size={13} />
-                    </button>
-                    <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, 1)} disabled={selectedPhoto.photo === page.photos.length - 1} title="Naar voren"
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
-                      <Icon name="arrowRight" size={13} />
-                    </button>
-                    <button type="button" onClick={() => useAsBackground(currentPageIndex, photoSel)} title="Als achtergrond gebruiken"
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 transition-colors">
-                      <Icon name="frame" size={13} />
-                    </button>
-                    <button type="button" onClick={() => removePhoto(currentPageIndex, selectedPhoto.photo)} title="Verwijderen"
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
+                  {/* Tijdens bijsnijden alleen het sleepgreepje en een label
+                      — bijschrift/volgorde/achtergrond/verwijderen leiden
+                      alleen maar af terwijl je met de foto zelf bezig bent. */}
+                  {cropMode ? (
+                    <span className="text-xs font-semibold text-gray-500">Bijsnijden</span>
+                  ) : (
+                    <>
+                      <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      <div className="flex-1">
+                        <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)} />
+                        <div className="relative">
+                          <RichTextEditable ref={captionRef} value={photoSel.caption || ""} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)}
+                            singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white !pr-8" />
+                          {photoSel.caption && (
+                            <button type="button" onClick={() => setPhotoCaption(currentPageIndex, selectedPhoto.photo, "")} title="Bijschrift verwijderen"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-500 transition-colors">
+                              <Icon name="close" size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                          <Icon name="arrowLeft" size={13} />
+                        </button>
+                        <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, 1)} disabled={selectedPhoto.photo === page.photos.length - 1} title="Naar voren"
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                          <Icon name="arrowRight" size={13} />
+                        </button>
+                        <button type="button" onClick={() => useAsBackground(currentPageIndex, photoSel)} title="Als achtergrond gebruiken"
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 transition-colors">
+                          <Icon name="frame" size={13} />
+                        </button>
+                        <button type="button" onClick={() => removePhoto(currentPageIndex, selectedPhoto.photo)} title="Verwijderen"
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 flex-wrap px-0.5">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
-                    {PHOTOBOOK_CORNER_PRESETS.map((p) => (
-                      <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cornerRadius: p.value })}
-                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(photoSel.cornerRadius ?? 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                        {p.label}
-                      </button>
-                    ))}
+                {!cropMode && (
+                  <div className="flex items-center gap-3 flex-wrap px-0.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
+                      {PHOTOBOOK_CORNER_PRESETS.map((p) => (
+                        <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cornerRadius: p.value })}
+                          className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(photoSel.cornerRadius ?? 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
                 {cropMode && (() => {
                   const cur = photoSel;
-                  const zoomBy = (delta) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
-                    cropZoom: Math.min(2.5, Math.max(1, Math.round(((cur.cropZoom ?? 1) + delta) * 100) / 100)),
-                  });
                   const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
                   return (
                     <div className="space-y-1.5 px-0.5">
                       <div className="text-[11px] text-gray-400">Sleep de foto hierboven om te verschuiven, knijp om te zoomen.</div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-[11px] text-gray-400 mr-0.5">Zoom</span>
-                        <button type="button" onClick={() => zoomBy(-0.15)} disabled={zoomPct <= 100} title="Uitzoomen"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">−</button>
-                        <span className="text-[11px] text-gray-500 tnum w-9 text-center">{zoomPct}%</span>
-                        <button type="button" onClick={() => zoomBy(0.15)} disabled={zoomPct >= 250} title="Inzoomen"
-                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">+</button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-gray-500 tnum">{zoomPct}%</span>
                         {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
                           <button type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cropX: 0.5, cropY: 0.5, cropZoom: 1 })} title="Bijsnijden herstellen"
-                            className="ml-1 text-[11px] text-sky-600 hover:text-sky-700">Herstel</button>
+                            className="text-[11px] text-sky-600 hover:text-sky-700">Herstel</button>
                         )}
                       </div>
                     </div>
@@ -7155,7 +7172,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
               </div>
             ))}
             {(page.textBoxes || []).map((box, k) => (
-              <div key={box.id ?? k} className="absolute overflow-hidden p-1.5"
+              <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-1.5"
                 style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
                 <RichTextView html={box.html} align={box.align} className="text-sm" />
               </div>
