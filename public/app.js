@@ -5866,7 +5866,7 @@ function PhotobookTab({ trip }) {
                 {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
                   <button key={n} type="button" onClick={() => handleCreate({ autofill: true, photosPerPage: n, orientation: wizardOrientation })} disabled={creating}
                     className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
-                    <PhotobookLayoutThumb slots={layout.slots} />
+                    <PhotobookLayoutThumb slots={layout.slots} orientation={wizardOrientation} />
                     <span className="text-sm font-medium text-gray-800">{n}</span>
                   </button>
                 ))}
@@ -5958,9 +5958,11 @@ const PHOTOBOOK_LAYOUTS = [
 
 // Klein diagram van de indeling zelf (geen foto-inhoud) — zodat je in één
 // oogopslag ziet wat je kiest.
-function PhotobookLayoutThumb({ slots }) {
+// Zelfde 36x44 vlak, alleen verwisseld voor liggend — zo laat het mini-
+// diagram meteen de gekozen paginavorm zien in plaats van altijd staand.
+function PhotobookLayoutThumb({ slots, orientation }) {
   return (
-    <div className="relative w-9 h-11 rounded border border-gray-300 bg-gray-50 overflow-hidden shrink-0">
+    <div className={`relative rounded border border-gray-300 bg-gray-50 overflow-hidden shrink-0 ${orientation === "landscape" ? "w-11 h-9" : "w-9 h-11"}`}>
       {slots.map((s, i) => (
         <div key={i} className="absolute bg-gray-400 rounded-[1px]"
           style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }} />
@@ -6297,8 +6299,11 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
 function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChangeHtml, getPageEl, snap, richTextRef }) {
   // x:0.15/width:0.7 (i.p.v. bijna de volle breedte) om dezelfde reden als
   // bij een nieuw tekstvak: zo blijft de titel standaard uit de buurt van de
-  // "+"/instellingen-knoppen in de canvas-hoeken.
-  const rect = { x: page.titleX ?? 0.15, y: page.titleY ?? 0.06, width: page.titleWidth ?? 0.7, height: page.titleHeight ?? 0.1 };
+  // "+"/instellingen-knoppen in de canvas-hoeken. y:0.14 (i.p.v. hoger) om
+  // ook verticaal onder die knoppen te blijven — anders ligt de sleepgreep
+  // (die er nog -2 boven uitsteekt) er middenin, en vangt de knop de tik weg
+  // die eigenlijk voor de tekst bedoeld was (geen toetsenbord dan).
+  const rect = { x: page.titleX ?? 0.15, y: page.titleY ?? 0.14, width: page.titleWidth ?? 0.7, height: page.titleHeight ?? 0.1 };
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect });
 
   return (
@@ -6307,7 +6312,11 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
       onPointerMove={onDrag}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      className={`absolute select-none rounded-lg ${selected ? "ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
+      // z-20 zodra geselecteerd: als de titel (bijv. na verslepen) toch onder
+      // de vaste "+"/instellingen-knoppen komt te liggen, mag de titel zelf
+      // dan winnen — anders vangen die knoppen tikken weg die voor de tekst
+      // bedoeld waren.
+      className={`absolute select-none rounded-lg ${selected ? "z-20 ring-2 ring-sky-500 ring-offset-1" : "touch-none cursor-pointer"}`}
       style={{
         left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`,
         background: "rgba(255,255,255,0.85)",
@@ -6386,10 +6395,47 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // meer nodig zoals toen alle pagina's onder elkaar stonden — telkens één
   // canvas/titel/beschrijving-veld gemonteerd.
   const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
+  const canvasAreaRef = useRef(null); // omringende vlak waarbinnen de canvas moet passen (voor canvasSize hieronder)
   const titleRef = useRef(null); // titel-tekstveld van de geselecteerde titel, voor de opmaakknoppen
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
   const pagePanelDrag = usePhotobookPanelDrag(pagePanelOffset, setPagePanelOffset);
   const selPanelDrag = usePhotobookPanelDrag(selPanelOffset, setSelPanelOffset);
+  // De canvas moet altijd de A4-verhouding houden, ongeacht of het beschikbare
+  // vlak zelf breed-kort of smal-lang is (bijv. de telefoon gekanteld) — een
+  // pure CSS-aanpak (aspect-ratio + max-width/max-height zonder vaste
+  // breedte/hoogte) bleek in de praktijk niet betrouwbaar (het vlak werd of
+  // 0x0, of rekte juist helemaal uit zonder de verhouding te respecteren).
+  // In plaats daarvan hier zelf de grootste maat berekenen die binnen zowel
+  // de beschikbare breedte als hoogte past (hetzelfde idee als
+  // object-fit:contain, maar dan voor een gewone div) en als expliciete
+  // pixelwaarden toepassen; een ResizeObserver houdt dit bij als het vlak
+  // van vorm verandert (kantelen, resizen, het paneel openen/sluiten).
+  const [canvasSize, setCanvasSize] = useState(null);
+  const pagesLoaded = pages !== null; // canvasAreaRef bestaat pas zodra dit true wordt (zie "Laden..."-return hierboven) — zonder deze afhankelijkheid mist het effect die overgang als "orientation" ondertussen niet wijzigt
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const targetRatio = orientation === "landscape" ? 297 / 210 : 210 / 297;
+    function recompute() {
+      // el.clientWidth/Height omvat ook el's eigen padding (p-3); de canvas
+      // wordt daarbinnen (in de content-box) gecentreerd, dus die padding
+      // moet eraf, anders is de berekende maat te groot en wordt de canvas
+      // alsnog scheefgetrokken doordat flexbox 'm terug moet knijpen.
+      const cs = getComputedStyle(el);
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      if (!w || !h) return;
+      const areaRatio = w / h;
+      const size = areaRatio > targetRatio
+        ? { width: Math.round(h * targetRatio), height: h }
+        : { width: w, height: Math.round(w / targetRatio) };
+      setCanvasSize(size);
+    }
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [orientation, pagesLoaded]);
 
   // Blijft binnen de grenzen als de laatste pagina verwijderd wordt, en
   // wisselt van geselecteerd element als er naar een andere pagina genavigeerd
@@ -6751,7 +6797,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       {/* De pagina zelf blijft fullscreen in beeld; opmaak/instellingen liggen
           er als zwevende panelen overheen in plaats van in een scrollende
           lijst erboven/eronder — zo zie je altijd wat je aan het bewerken bent. */}
-      <div className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
+      <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
         {!page ? (
           <div className="text-center text-white/60">
             <p className="text-sm mb-3">Nog geen pagina's in dit fotoboek.</p>
@@ -6763,12 +6809,21 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               ref={canvasRef}
               onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); setSelectedTitle(null); }}
               className="relative rounded-lg overflow-hidden shadow-2xl"
-              style={{
+              style={canvasSize ? {
+                // Uitgerekende pixelmaat (zie canvasSize hierboven) i.p.v.
+                // CSS aspect-ratio + max-width/max-height: die laatste bleek
+                // in de praktijk niet betrouwbaar de juiste kant (breedte of
+                // hoogte) als bottleneck te kiezen zodra het beschikbare vlak
+                // zelf van vorm wisselt (bijv. de telefoon kantelen).
+                width: `${canvasSize.width}px`, height: `${canvasSize.height}px`,
+                background: page.background?.type === "color" ? page.background.value
+                  : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
+                  : "#FAF9F7",
+              } : {
+                // Eerste render, vóórdat de ResizeObserver heeft kunnen meten —
+                // dezelfde oude aanpak als noodgreep, maar dan maar heel even.
                 aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
-                // Liggend vult breedte-eerst (anders zou height:100% op een
-                // smal mobiel scherm een veel te brede, dus geknelde, pagina
-                // opleveren); staand vult zoals voorheen hoogte-eerst.
-                ...(orientation === "landscape" ? { width: "100%", maxHeight: "100%" } : { height: "100%", maxWidth: "100%" }),
+                maxWidth: "100%", maxHeight: "100%",
                 background: page.background?.type === "color" ? page.background.value
                   : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                   : "#FAF9F7",
@@ -6935,7 +6990,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                       <button key={layout.key} type="button" onClick={() => applyLayout(currentPageIndex, layout)} title={layout.label}
                         disabled={page.photos.length === 0}
                         className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
-                        <PhotobookLayoutThumb slots={layout.slots} />
+                        <PhotobookLayoutThumb slots={layout.slots} orientation={orientation} />
                       </button>
                     ))}
                   </div>
@@ -7250,7 +7305,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
             {page.title && (
               <div className="absolute rounded-lg p-1.5 bg-white/85"
                 style={{
-                  left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.06) * 100}%`,
+                  left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.14) * 100}%`,
                   width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
                 }}>
                 <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800" />

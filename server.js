@@ -3481,7 +3481,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     // Titel is vrij versleepbaar/vergrootbaar zoals een tekstvak — zelfde
     // klem-logica (fractie 0-1, met een minimale breedte/hoogte).
     const titleX = Math.min(1, Math.max(0, n(page.titleX, 0.15)));
-    const titleY = Math.min(1, Math.max(0, n(page.titleY, 0.06)));
+    const titleY = Math.min(1, Math.max(0, n(page.titleY, 0.14)));
     const titleWidth = Math.min(1, Math.max(0.05, n(page.titleWidth, 0.7)));
     const titleHeight = Math.min(1, Math.max(0.03, n(page.titleHeight, 0.1)));
     const { rows: pageRows } = await query(
