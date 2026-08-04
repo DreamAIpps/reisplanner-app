@@ -5835,6 +5835,30 @@ function PhotobookLayoutThumb({ slots }) {
   );
 }
 
+// Kant-en-klare combinaties van indeling + achtergrondkleur — net als de
+// "Designvorlagen" bij professionele fotoboek-editors (CEWE e.d.), die
+// layout en achtergrond samen als één stijl aanbieden. Zet je daarna nog
+// gewoon zelf verder naar smaak; puur een vertrekpunt.
+const PHOTOBOOK_DESIGN_PRESETS = [
+  { key: "clean", label: "Strak wit", layout: PHOTOBOOK_LAYOUTS[0], background: null },
+  { key: "warm", label: "Warm duo", layout: PHOTOBOOK_LAYOUTS[1], background: { type: "color", value: "#FDF5F0" } },
+  { key: "dark", label: "Donker elegant", layout: PHOTOBOOK_LAYOUTS[3], background: { type: "color", value: "#241D19" } },
+  { key: "ocean", label: "Oceaan raster", layout: PHOTOBOOK_LAYOUTS[4], background: { type: "color", value: "#3D5A80" } },
+];
+function PhotobookDesignPresetThumb({ layout, background }) {
+  return (
+    <div className="relative w-9 h-11 rounded border border-gray-300 overflow-hidden shrink-0"
+      style={{ background: background ? background.value : "#FAF9F7" }}>
+      {layout.slots.map((s, i) => (
+        <div key={i} className="absolute rounded-[1px]" style={{
+          left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%`,
+          background: background?.type === "color" && contrastRatio(background.value, "#ffffff") < 2.5 ? "rgba(255,255,255,.7)" : "rgba(0,0,0,.35)",
+        }} />
+      ))}
+    </div>
+  );
+}
+
 // Rooster/magneetpunten voor het verslepen en schalen — dezelfde gedachte
 // als "Raster aan/uit" bij professionele fotoboek-editors: makkelijk precies
 // tegen de marge/het midden aan leggen, zonder te moeten pixelen.
@@ -5998,6 +6022,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   function applyLayout(pageIndex, layout) {
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, photos: p.photos.map((ph, j) => (j < layout.slots.length ? { ...ph, ...layout.slots[j] } : ph)),
+    })));
+    setDirty(true);
+  }
+  function applyDesignPreset(pageIndex, preset) {
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p, background: preset.background,
+      photos: p.photos.map((ph, j) => (j < preset.layout.slots.length ? { ...ph, ...preset.layout.slots[j] } : ph)),
     })));
     setDirty(true);
   }
@@ -6258,6 +6289,18 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
                 </div>
               )}
+            </div>
+
+            {/* Ontwerp-presets: indeling + achtergrond in één tik, als kant-en-
+                klaar vertrekpunt — daarna nog gewoon zelf verder aan te passen. */}
+            <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+              {PHOTOBOOK_DESIGN_PRESETS.map((preset) => (
+                <button key={preset.key} type="button" onClick={() => applyDesignPreset(i, preset)} title={preset.label}
+                  disabled={page.photos.length === 0}
+                  className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
+                  <PhotobookDesignPresetThumb layout={preset.layout} background={preset.background} />
+                </button>
+              ))}
             </div>
 
             {/* Indeling: één tik legt de al aanwezige foto's op deze pagina
