@@ -6963,7 +6963,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
                   return (
                     <div className="space-y-1.5 px-0.5">
-                      <div className="text-[11px] text-gray-400">Sleep de foto hierboven om te verschuiven, knijp om te zoomen.</div>
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-gray-500 tnum">{zoomPct}%</span>
                         {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
