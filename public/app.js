@@ -40,6 +40,7 @@ const ICONS = {
   globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17" /><path d="M12 3.5c2.3 2.4 3.5 5.3 3.5 8.5s-1.2 6.1-3.5 8.5c-2.3-2.4-3.5-5.3-3.5-8.5S9.7 5.9 12 3.5z" /></>,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
   dragHandle: <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></>,
+  sliders: <><path d="M4 7h9" /><path d="M17 7h3" /><circle cx="14.5" cy="7" r="2" /><path d="M4 12h3" /><path d="M9.5 12h10.5" /><circle cx="7" cy="12" r="2" /><path d="M4 17h9" /><path d="M17 17h3" /><circle cx="14.5" cy="17" r="2" /></>,
 
   // vervoer
   plane: <><path d="M3 13.5 21 7l-4.5 12-3.2-5.1z" /><path d="M13.3 13.9 21 7" /></>,
@@ -721,6 +722,10 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
 // vet/cursief/lettertype op een selectie toe te passen zonder een hele
 // rich-text-library toe te voegen.
 function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
+  // Staat standaard ingeklapt achter één "Aa"-knop — de volledige rij (vet/
+  // cursief/uitlijning/kleur/lettertype) nam veel ruimte in voor iets dat
+  // niet bij elke tik nodig is.
+  const [expanded, setExpanded] = useState(false);
   function run(cmd, value) {
     const el = getEl();
     if (!el) return;
@@ -728,8 +733,21 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
+  if (!expanded) {
+    return (
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(true)} title="Tekstopmaak"
+        className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors mb-1.5">
+        Aa
+      </button>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(false)} title="Opmaak inklappen"
+        className="w-8 h-8 rounded-lg border border-sky-300 bg-sky-50 flex items-center justify-center text-xs font-semibold text-sky-700 transition-colors">
+        Aa
+      </button>
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
@@ -6078,11 +6096,29 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
-  const canvasRefs = useRef({}); // pageIndex -> DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
-  const titleRefs = useRef({}); // pageIndex -> titel-input, voor de opmaakknoppen (vet/cursief)
-  const descRefs = useRef({}); // pageIndex -> beschrijving-textarea, idem
+  const [currentPageIndex, setCurrentPageIndex] = useState(0); // welke pagina fullscreen in beeld staat
+  const [showPagePanel, setShowPagePanel] = useState(false); // zwevend paneel: titel/beschrijving/achtergrond/indeling
+  // Steeds maar één pagina tegelijk in beeld (fullscreen), dus geen array
+  // meer nodig zoals toen alle pagina's onder elkaar stonden — telkens één
+  // canvas/titel/beschrijving-veld gemonteerd.
+  const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
+  const titleRef = useRef(null); // titel-input, voor de opmaakknoppen (vet/cursief)
+  const descRef = useRef(null); // beschrijving-textarea, idem
   const captionRef = useRef(null); // bijschrift-input van de geselecteerde foto, idem
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
+
+  // Blijft binnen de grenzen als de laatste pagina verwijderd wordt, en
+  // wisselt van geselecteerd element als er naar een andere pagina genavigeerd
+  // wordt (een zwevend paneel voor een pagina die niet meer in beeld is, is
+  // verwarrender dan gewoon opnieuw moeten selecteren).
+  useEffect(() => {
+    if (!pages) return;
+    if (currentPageIndex > pages.length - 1) setCurrentPageIndex(Math.max(0, pages.length - 1));
+  }, [pages, currentPageIndex]);
+  useEffect(() => {
+    setSelectedPhoto(null);
+    setSelectedTextBox(null);
+  }, [currentPageIndex]);
 
   useEffect(() => {
     api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); });
@@ -6133,6 +6169,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
   function removePhoto(pageIndex, photoIndex) {
+    if (!confirm("Foto van deze pagina verwijderen?")) return;
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : { ...p, photos: p.photos.filter((_, j) => j !== photoIndex) })));
     setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? null : sel));
     setDirty(true);
@@ -6186,6 +6223,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     updatePage(pageIndex, { background: { type: "color", value: color } });
   }
   function setBackgroundNone(pageIndex) {
+    updatePage(pageIndex, { background: null });
+  }
+  function removeBackgroundPhoto(pageIndex) {
+    if (!confirm("Achtergrondfoto verwijderen?")) return;
     updatePage(pageIndex, { background: null });
   }
   // De foto verhuist van de gewone foto-rij naar de achtergrond — niet
@@ -6329,137 +6370,56 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     return haystack.includes(pickerQuery);
   });
 
+  const page = pages[currentPageIndex] || null;
+  const photoSel = selectedPhoto?.page === currentPageIndex && page ? page.photos[selectedPhoto.photo] : null;
+  const textBoxSel = selectedTextBox?.page === currentPageIndex && page ? page.textBoxes?.[selectedTextBox.box] : null;
+
   return (
-    <div className="max-w-md mx-auto">
-      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors">
-        <Icon name="arrowLeft" size={15} />Alle fotoboeken
-      </button>
-      <div className="flex items-center gap-2 mb-4">
+    <div className="fixed inset-0 z-10 flex flex-col bg-gray-800">
+      {/* Bovenbalk: vast, niet zwevend — titel en boek-brede acties horen
+          niet bij een specifieke pagina, dus die verdienen geen overlay. */}
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gray-900"
+        style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
+        <button onClick={onBack} aria-label="Alle fotoboeken" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+          <Icon name="arrowLeft" size={16} />
+        </button>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
-          className="!text-lg !font-display flex-1" placeholder="Titel van het fotoboek" />
+          className="!text-sm !bg-white/10 !border-white/20 !text-white flex-1" placeholder="Titel van het fotoboek" />
         <button type="button" onClick={() => setSnapEnabled((s) => !s)} title="Uitlijnen op raster/marges tijdens verslepen"
-          className={`shrink-0 px-2.5 h-9 rounded-full text-xs font-medium border transition-colors ${snapEnabled ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-400 hover:border-gray-300"}`}>
+          className={`shrink-0 px-2.5 h-8 rounded-full text-xs font-medium border transition-colors ${snapEnabled ? "border-sky-400 bg-sky-500/20 text-sky-300" : "border-white/20 text-white/50 hover:border-white/40"}`}>
           Raster
         </button>
         <button type="button" onClick={() => setShowPreview(true)} aria-label="Voorbeeld bekijken"
-          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
-          <Icon name="eye" size={17} />
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+          <Icon name="eye" size={16} />
         </button>
         <button type="button" onClick={handleDownloadPdf} aria-label="Downloaden als PDF"
-          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
-          <Icon name="doc" size={17} />
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+          <Icon name="doc" size={16} />
         </button>
-        <button type="button" onClick={handleDelete} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
-          <Icon name="trash" size={16} />
+        <button type="button" onClick={handleDelete} aria-label="Fotoboek verwijderen" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors">
+          <Icon name="trash" size={15} />
         </button>
       </div>
-      {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4">{error}</div>}
+      {error && <div className="shrink-0 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>}
 
-      <div className="space-y-4 mb-4">
-        {pages.map((page, i) => (
-          <div key={i} className="p-3 rounded-xl border border-gray-100 bg-white shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400">Pagina {i + 1}</span>
-              <div className="flex items-center gap-1">
-                <button type="button" onClick={() => movePage(i, -1)} disabled={i === 0}
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors">
-                  <Icon name="arrowUp" size={13} />
-                </button>
-                <button type="button" onClick={() => movePage(i, 1)} disabled={i === pages.length - 1}
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-30 transition-colors" style={{ transform: "rotate(180deg)" }}>
-                  <Icon name="arrowUp" size={13} />
-                </button>
-                <button type="button" onClick={() => removePage(i)}
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
-                  <Icon name="close" size={13} />
-                </button>
-              </div>
-            </div>
-
-            <RichTextToolbar getEl={() => titleRefs.current[i]} onChange={(v) => updatePage(i, { title: v })}
-              align={page.titleAlign} onAlignChange={(a) => updatePage(i, { titleAlign: a })} />
-            <RichTextEditable ref={(el) => { titleRefs.current[i] = el; }} value={page.title || ""} onChange={(v) => updatePage(i, { title: v })}
-              align={page.titleAlign} singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
-            <RichTextToolbar getEl={() => descRefs.current[i]} onChange={(v) => updatePage(i, { description: v })}
-              align={page.descriptionAlign} onAlignChange={(a) => updatePage(i, { descriptionAlign: a })} />
-            <RichTextEditable ref={(el) => { descRefs.current[i] = el; }} value={page.description || ""} onChange={(v) => updatePage(i, { description: v })}
-              align={page.descriptionAlign} placeholder="Beschrijving (optioneel)" className="!text-sm mb-3" />
-
-            <div className="mb-3">
-              <div className="text-xs text-gray-400 mb-1.5">Achtergrond</div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button type="button" onClick={() => setBackgroundNone(i)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${!page.background ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                  Geen
-                </button>
-                <button type="button" onClick={() => setBackgroundColor(i, page.background?.type === "color" ? page.background.value : "#FDF5F0")}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${page.background?.type === "color" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                  Kleur
-                </button>
-                {page.background?.type === "color" && (
-                  <>
-                    <input type="color" value={page.background.value} onChange={(e) => setBackgroundColor(i, e.target.value)}
-                      className="w-7 h-7 rounded-full border border-gray-200 p-0 overflow-hidden cursor-pointer" />
-                    {PHOTOBOOK_BG_SWATCHES.map((c) => (
-                      <button key={c} type="button" onClick={() => setBackgroundColor(i, c)} aria-label={c}
-                        className="w-5 h-5 rounded-full border border-gray-200" style={{ background: c }} />
-                    ))}
-                  </>
-                )}
-              </div>
-              {page.background?.type === "photo" && (
-                <div className="mt-2">
-                  <div className="flex items-center gap-2 mb-2">
-                    <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
-                    <span className="text-xs text-gray-400">Deze foto is de achtergrond</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400 mr-0.5">Witte sluier</span>
-                    {PHOTOBOOK_OVERLAY_PRESETS.map((p) => (
-                      <button key={p.value} type="button" onClick={() => updatePage(i, { background: { ...page.background, overlay: p.value } })}
-                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.background.overlay || 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Ontwerp-presets: indeling + achtergrond in één tik, als kant-en-
-                klaar vertrekpunt — daarna nog gewoon zelf verder aan te passen. */}
-            <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
-              {PHOTOBOOK_DESIGN_PRESETS.map((preset) => (
-                <button key={preset.key} type="button" onClick={() => applyDesignPreset(i, preset)} title={preset.label}
-                  disabled={page.photos.length === 0}
-                  className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
-                  <PhotobookDesignPresetThumb layout={preset.layout} background={preset.background} />
-                </button>
-              ))}
-            </div>
-
-            {/* Indeling: één tik legt de al aanwezige foto's op deze pagina
-                in een verzorgde verhouding neer — daarna nog steeds vrij te
-                verslepen/schalen. */}
-            <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
-              {PHOTOBOOK_LAYOUTS.map((layout) => (
-                <button key={layout.key} type="button" onClick={() => applyLayout(i, layout)} title={layout.label}
-                  disabled={page.photos.length === 0}
-                  className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
-                  <PhotobookLayoutThumb slots={layout.slots} />
-                </button>
-              ))}
-            </div>
-
-            {/* Echte A4-verhouding (210:297) — wat je hier ziet is de pagina.
-                Tik een foto aan om 'm te verslepen (sleep de hele foto) of te
-                schalen (sleep de blauwe greep rechtsonder). */}
+      {/* De pagina zelf blijft fullscreen in beeld; opmaak/instellingen liggen
+          er als zwevende panelen overheen in plaats van in een scrollende
+          lijst erboven/eronder — zo zie je altijd wat je aan het bewerken bent. */}
+      <div className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
+        {!page ? (
+          <div className="text-center text-white/60">
+            <p className="text-sm mb-3">Nog geen pagina's in dit fotoboek.</p>
+            <Button onClick={addPage}>+ Nieuwe pagina</Button>
+          </div>
+        ) : (
+          <>
             <div
-              ref={(el) => { canvasRefs.current[i] = el; }}
+              ref={canvasRef}
               onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); }}
-              className="relative w-full rounded-lg overflow-hidden border border-gray-100"
+              className="relative rounded-lg overflow-hidden shadow-2xl"
               style={{
-                aspectRatio: "210 / 297",
+                aspectRatio: "210 / 297", height: "100%", maxWidth: "100%",
                 background: page.background?.type === "color" ? page.background.value
                   : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                   : "#FAF9F7",
@@ -6470,20 +6430,20 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               )}
               {page.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
-                  selected={selectedPhoto?.page === i && selectedPhoto?.photo === j}
-                  onSelect={() => { setSelectedPhoto({ page: i, photo: j }); setSelectedTextBox(null); }}
-                  onChangeRect={(patch) => updatePhotoRect(i, j, patch)}
-                  getPageEl={() => canvasRefs.current[i]}
+                  selected={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j}
+                  onSelect={() => { setSelectedPhoto({ page: currentPageIndex, photo: j }); setSelectedTextBox(null); }}
+                  onChangeRect={(patch) => updatePhotoRect(currentPageIndex, j, patch)}
+                  getPageEl={() => canvasRef.current}
                   snap={snapEnabled}
-                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== i + 1)} />
+                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== currentPageIndex + 1)} />
               ))}
               {(page.textBoxes || []).map((box, k) => (
                 <PhotobookCanvasTextBox key={box.id ?? k} box={box}
-                  selected={selectedTextBox?.page === i && selectedTextBox?.box === k}
-                  onSelect={() => { setSelectedTextBox({ page: i, box: k }); setSelectedPhoto(null); }}
-                  onChangeRect={(patch) => updateTextBoxRect(i, k, patch)}
-                  onChangeHtml={(html) => updateTextBoxRect(i, k, { html })}
-                  getPageEl={() => canvasRefs.current[i]}
+                  selected={selectedTextBox?.page === currentPageIndex && selectedTextBox?.box === k}
+                  onSelect={() => { setSelectedTextBox({ page: currentPageIndex, box: k }); setSelectedPhoto(null); }}
+                  onChangeRect={(patch) => updateTextBoxRect(currentPageIndex, k, patch)}
+                  onChangeHtml={(html) => updateTextBoxRect(currentPageIndex, k, { html })}
+                  getPageEl={() => canvasRef.current}
                   snap={snapEnabled}
                   richTextRef={textBoxRef} />
               ))}
@@ -6501,143 +6461,276 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               )}
             </div>
 
-            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (
-              <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-sky-50 border border-sky-100">
-                <img src={page.photos[selectedPhoto.photo].thumbUrl || page.photos[selectedPhoto.photo].url} alt=""
-                  className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                <div className="flex-1">
-                  <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)} />
-                  <RichTextEditable ref={captionRef} value={page.photos[selectedPhoto.photo].caption || ""} onChange={(v) => setPhotoCaption(i, selectedPhoto.photo, v)}
-                    singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
-                    <Icon name="arrowLeft" size={13} />
-                  </button>
-                  <button type="button" onClick={() => movePhoto(i, selectedPhoto.photo, 1)} disabled={selectedPhoto.photo === page.photos.length - 1} title="Naar voren"
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
-                    <Icon name="arrowRight" size={13} />
-                  </button>
-                  <button type="button" onClick={() => useAsBackground(i, page.photos[selectedPhoto.photo])} title="Als achtergrond gebruiken"
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 transition-colors">
-                    <Icon name="frame" size={13} />
-                  </button>
-                  <button type="button" onClick={() => removePhoto(i, selectedPhoto.photo)} title="Verwijderen"
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
-                    <Icon name="close" size={13} />
+            {/* Zwevende knop: opent/sluit het paginainstellingen-paneel
+                (titel/beschrijving, achtergrond, indelingen) rechtsboven op
+                de canvas — dat neemt anders veel vaste ruimte in beslag. */}
+            <button type="button" onClick={() => setShowPagePanel((s) => !s)} aria-label="Pagina-instellingen"
+              className={`absolute top-5 right-5 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showPagePanel ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
+              <Icon name="sliders" size={17} />
+            </button>
+
+            {showPagePanel && (
+              <div className="absolute top-16 right-3 left-3 max-h-[75%] overflow-y-auto bg-white rounded-xl shadow-2xl p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pagina-instellingen</span>
+                  <button type="button" onClick={() => setShowPagePanel(false)} aria-label="Sluiten" className="text-gray-400 hover:text-gray-700">
+                    <Icon name="close" size={16} />
                   </button>
                 </div>
-              </div>
-            )}
-            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (
-              <div className="mt-1.5 flex items-center gap-3 flex-wrap px-1">
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] text-gray-400 mr-0.5">Doorzicht</span>
-                  {PHOTOBOOK_OPACITY_PRESETS.map((p) => (
-                    <button key={p.value} type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { opacity: p.value })}
-                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.photos[selectedPhoto.photo].opacity ?? 1) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                      {p.label}
-                    </button>
-                  ))}
+
+                <div>
+                  <RichTextToolbar getEl={() => titleRef.current} onChange={(v) => updatePage(currentPageIndex, { title: v })}
+                    align={page.titleAlign} onAlignChange={(a) => updatePage(currentPageIndex, { titleAlign: a })} />
+                  <RichTextEditable ref={titleRef} value={page.title || ""} onChange={(v) => updatePage(currentPageIndex, { title: v })}
+                    align={page.titleAlign} singleLine placeholder="Titel van deze pagina" className="!text-sm mb-2" />
+                  <RichTextToolbar getEl={() => descRef.current} onChange={(v) => updatePage(currentPageIndex, { description: v })}
+                    align={page.descriptionAlign} onAlignChange={(a) => updatePage(currentPageIndex, { descriptionAlign: a })} />
+                  <RichTextEditable ref={descRef} value={page.description || ""} onChange={(v) => updatePage(currentPageIndex, { description: v })}
+                    align={page.descriptionAlign} placeholder="Beschrijving (optioneel)" className="!text-sm" />
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
-                  {PHOTOBOOK_CORNER_PRESETS.map((p) => (
-                    <button key={p.value} type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { cornerRadius: p.value })}
-                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.photos[selectedPhoto.photo].cornerRadius ?? 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-                      {p.label}
+
+                <div>
+                  <div className="text-xs text-gray-400 mb-1.5">Achtergrond</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button type="button" onClick={() => setBackgroundNone(currentPageIndex)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${!page.background ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                      Geen
                     </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {selectedPhoto?.page === i && page.photos[selectedPhoto.photo] && (() => {
-              const cur = page.photos[selectedPhoto.photo];
-              const nudge = (dx, dy) => updatePhotoRect(i, selectedPhoto.photo, {
-                cropX: Math.min(1, Math.max(0, (cur.cropX ?? 0.5) + dx)),
-                cropY: Math.min(1, Math.max(0, (cur.cropY ?? 0.5) + dy)),
-              });
-              const zoomBy = (delta) => updatePhotoRect(i, selectedPhoto.photo, {
-                cropZoom: Math.min(2.5, Math.max(1, Math.round(((cur.cropZoom ?? 1) + delta) * 100) / 100)),
-              });
-              const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
-              return (
-                <div className="mt-1.5 flex items-center gap-3 flex-wrap px-1">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400 mr-0.5">Bijsnijden</span>
-                    <button type="button" onClick={() => nudge(-0.15, 0)} title="Naar links"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(-90deg)" }} />
+                    <button type="button" onClick={() => setBackgroundColor(currentPageIndex, page.background?.type === "color" ? page.background.value : "#FDF5F0")}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${page.background?.type === "color" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                      Kleur
                     </button>
-                    <button type="button" onClick={() => nudge(0.15, 0)} title="Naar rechts"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(90deg)" }} />
-                    </button>
-                    <button type="button" onClick={() => nudge(0, -0.15)} title="Naar boven"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                      <Icon name="arrowUp" size={11} />
-                    </button>
-                    <button type="button" onClick={() => nudge(0, 0.15)} title="Naar onder"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
-                      <Icon name="arrowUp" size={11} style={{ transform: "rotate(180deg)" }} />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400 mr-0.5">Zoom</span>
-                    <button type="button" onClick={() => zoomBy(-0.15)} disabled={zoomPct <= 100} title="Uitzoomen"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">−</button>
-                    <span className="text-[11px] text-gray-500 tnum w-9 text-center">{zoomPct}%</span>
-                    <button type="button" onClick={() => zoomBy(0.15)} disabled={zoomPct >= 250} title="Inzoomen"
-                      className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">+</button>
-                    {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
-                      <button type="button" onClick={() => updatePhotoRect(i, selectedPhoto.photo, { cropX: 0.5, cropY: 0.5, cropZoom: 1 })} title="Bijsnijden herstellen"
-                        className="ml-1 text-[11px] text-sky-600 hover:text-sky-700">Herstel</button>
+                    {page.background?.type === "color" && (
+                      <>
+                        <input type="color" value={page.background.value} onChange={(e) => setBackgroundColor(currentPageIndex, e.target.value)}
+                          className="w-7 h-7 rounded-full border border-gray-200 p-0 overflow-hidden cursor-pointer" />
+                        {PHOTOBOOK_BG_SWATCHES.map((c) => (
+                          <button key={c} type="button" onClick={() => setBackgroundColor(currentPageIndex, c)} aria-label={c}
+                            className="w-5 h-5 rounded-full border border-gray-200" style={{ background: c }} />
+                        ))}
+                      </>
                     )}
                   </div>
+                  {page.background?.type === "photo" && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2 mb-2">
+                        <img src={page.background.url} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                        <span className="text-xs text-gray-400 flex-1">Deze foto is de achtergrond</span>
+                        <button type="button" onClick={() => removeBackgroundPhoto(currentPageIndex)} title="Achtergrondfoto verwijderen"
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors shrink-0">
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-gray-400 mr-0.5">Witte sluier</span>
+                        {PHOTOBOOK_OVERLAY_PRESETS.map((p) => (
+                          <button key={p.value} type="button" onClick={() => updatePage(currentPageIndex, { background: { ...page.background, overlay: p.value } })}
+                            className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.background.overlay || 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              );
-            })()}
 
-            {selectedTextBox?.page === i && page.textBoxes?.[selectedTextBox.box] && (
-              <div className="mt-2 p-2 rounded-lg bg-sky-50 border border-sky-100">
-                <div className="flex items-center justify-between mb-1">
-                  <RichTextToolbar getEl={() => textBoxRef.current} onChange={(v) => updateTextBoxRect(i, selectedTextBox.box, { html: v })}
-                    align={page.textBoxes[selectedTextBox.box].align} onAlignChange={(a) => updateTextBoxRect(i, selectedTextBox.box, { align: a })} />
-                  <button type="button" onClick={() => removeTextBox(i, selectedTextBox.box)} title="Tekstvak verwijderen"
+                {/* Ontwerp-presets: indeling + achtergrond in één tik, als kant-en-
+                    klaar vertrekpunt — daarna nog gewoon zelf verder aan te passen. */}
+                <div>
+                  <div className="text-xs text-gray-400 mb-1.5">Ontwerp-presets</div>
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {PHOTOBOOK_DESIGN_PRESETS.map((preset) => (
+                      <button key={preset.key} type="button" onClick={() => applyDesignPreset(currentPageIndex, preset)} title={preset.label}
+                        disabled={page.photos.length === 0}
+                        className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
+                        <PhotobookDesignPresetThumb layout={preset.layout} background={preset.background} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Indeling: één tik legt de al aanwezige foto's op deze pagina
+                    in een verzorgde verhouding neer — daarna nog steeds vrij te
+                    verslepen/schalen. */}
+                <div>
+                  <div className="text-xs text-gray-400 mb-1.5">Indeling</div>
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {PHOTOBOOK_LAYOUTS.map((layout) => (
+                      <button key={layout.key} type="button" onClick={() => applyLayout(currentPageIndex, layout)} title={layout.label}
+                        disabled={page.photos.length === 0}
+                        className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
+                        <PhotobookLayoutThumb slots={layout.slots} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button type="button" onClick={() => openPicker(currentPageIndex)}
+                    className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+                    + Foto's toevoegen
+                  </button>
+                  <button type="button" onClick={() => addTextBox(currentPageIndex)}
+                    className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
+                    + Tekstvak toevoegen
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Zwevend paneel voor de geselecteerde foto — bijschrift,
+                z-volgorde, achtergrond-knop, doorzicht/hoeken/bijsnijden en
+                verwijderen. */}
+            {photoSel && (
+              <div className="absolute bottom-3 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <img src={photoSel.thumbUrl || photoSel.url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                  <div className="flex-1">
+                    <RichTextToolbar getEl={() => captionRef.current} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)} />
+                    <RichTextEditable ref={captionRef} value={photoSel.caption || ""} onChange={(v) => setPhotoCaption(currentPageIndex, selectedPhoto.photo, v)}
+                      singleLine placeholder="Bijschrift (optioneel)" className="!text-sm !bg-white" />
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, -1)} disabled={selectedPhoto.photo === 0} title="Naar achteren"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                      <Icon name="arrowLeft" size={13} />
+                    </button>
+                    <button type="button" onClick={() => movePhoto(currentPageIndex, selectedPhoto.photo, 1)} disabled={selectedPhoto.photo === page.photos.length - 1} title="Naar voren"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 disabled:opacity-30 transition-colors">
+                      <Icon name="arrowRight" size={13} />
+                    </button>
+                    <button type="button" onClick={() => useAsBackground(currentPageIndex, photoSel)} title="Als achtergrond gebruiken"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-sky-600 hover:bg-sky-100 transition-colors">
+                      <Icon name="frame" size={13} />
+                    </button>
+                    <button type="button" onClick={() => removePhoto(currentPageIndex, selectedPhoto.photo)} title="Verwijderen"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap px-0.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400 mr-0.5">Doorzicht</span>
+                    {PHOTOBOOK_OPACITY_PRESETS.map((p) => (
+                      <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { opacity: p.value })}
+                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(photoSel.opacity ?? 1) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400 mr-0.5">Hoeken</span>
+                    {PHOTOBOOK_CORNER_PRESETS.map((p) => (
+                      <button key={p.value} type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cornerRadius: p.value })}
+                        className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(photoSel.cornerRadius ?? 0) === p.value ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {(() => {
+                  const cur = photoSel;
+                  const nudge = (dx, dy) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
+                    cropX: Math.min(1, Math.max(0, (cur.cropX ?? 0.5) + dx)),
+                    cropY: Math.min(1, Math.max(0, (cur.cropY ?? 0.5) + dy)),
+                  });
+                  const zoomBy = (delta) => updatePhotoRect(currentPageIndex, selectedPhoto.photo, {
+                    cropZoom: Math.min(2.5, Math.max(1, Math.round(((cur.cropZoom ?? 1) + delta) * 100) / 100)),
+                  });
+                  const zoomPct = Math.round((cur.cropZoom ?? 1) * 100);
+                  return (
+                    <div className="flex items-center gap-3 flex-wrap px-0.5">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-gray-400 mr-0.5">Bijsnijden</span>
+                        <button type="button" onClick={() => nudge(-0.15, 0)} title="Naar links"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(-90deg)" }} />
+                        </button>
+                        <button type="button" onClick={() => nudge(0.15, 0)} title="Naar rechts"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(90deg)" }} />
+                        </button>
+                        <button type="button" onClick={() => nudge(0, -0.15)} title="Naar boven"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                          <Icon name="arrowUp" size={11} />
+                        </button>
+                        <button type="button" onClick={() => nudge(0, 0.15)} title="Naar onder"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 transition-colors">
+                          <Icon name="arrowUp" size={11} style={{ transform: "rotate(180deg)" }} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-gray-400 mr-0.5">Zoom</span>
+                        <button type="button" onClick={() => zoomBy(-0.15)} disabled={zoomPct <= 100} title="Uitzoomen"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">−</button>
+                        <span className="text-[11px] text-gray-500 tnum w-9 text-center">{zoomPct}%</span>
+                        <button type="button" onClick={() => zoomBy(0.15)} disabled={zoomPct >= 250} title="Inzoomen"
+                          className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 disabled:opacity-30 transition-colors">+</button>
+                        {(cur.cropX !== undefined && (cur.cropX !== 0.5 || cur.cropY !== 0.5 || (cur.cropZoom ?? 1) !== 1)) && (
+                          <button type="button" onClick={() => updatePhotoRect(currentPageIndex, selectedPhoto.photo, { cropX: 0.5, cropY: 0.5, cropZoom: 1 })} title="Bijsnijden herstellen"
+                            className="ml-1 text-[11px] text-sky-600 hover:text-sky-700">Herstel</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Zwevend paneel voor het geselecteerde tekstvak. */}
+            {textBoxSel && (
+              <div className="absolute bottom-3 left-3 right-3 max-h-[55%] overflow-y-auto bg-white rounded-xl shadow-2xl p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <RichTextToolbar getEl={() => textBoxRef.current} onChange={(v) => updateTextBoxRect(currentPageIndex, selectedTextBox.box, { html: v })}
+                    align={textBoxSel.align} onAlignChange={(a) => updateTextBoxRect(currentPageIndex, selectedTextBox.box, { align: a })} />
+                  <button type="button" onClick={() => removeTextBox(currentPageIndex, selectedTextBox.box)} title="Tekstvak verwijderen"
                     className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors shrink-0">
-                    <Icon name="close" size={13} />
+                    <Icon name="trash" size={13} />
                   </button>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[11px] text-gray-400 mr-0.5">Achtergrond</span>
                   {PHOTOBOOK_TEXTBOX_BACKGROUNDS.map((b) => (
-                    <button key={b.value} type="button" onClick={() => updateTextBoxRect(i, selectedTextBox.box, { backgroundColor: b.value })}
-                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(page.textBoxes[selectedTextBox.box].backgroundColor || "transparent") === b.value ? "border-sky-400 bg-sky-100 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+                    <button key={b.value} type="button" onClick={() => updateTextBoxRect(currentPageIndex, selectedTextBox.box, { backgroundColor: b.value })}
+                      className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${(textBoxSel.backgroundColor || "transparent") === b.value ? "border-sky-400 bg-sky-100 text-sky-700" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}>
                       {b.label}
                     </button>
                   ))}
                 </div>
               </div>
             )}
-
-            <div className="mt-2 flex gap-2">
-              <button type="button" onClick={() => openPicker(i)}
-                className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
-                + Foto's toevoegen
-              </button>
-              <button type="button" onClick={() => addTextBox(i)}
-                className="flex-1 text-center text-xs font-medium text-sky-600 hover:text-sky-700 py-1.5 border border-dashed border-sky-200 rounded-lg transition-colors">
-                + Tekstvak toevoegen
-              </button>
-            </div>
-          </div>
-        ))}
-        {pages.length === 0 && <div className="text-center text-sm text-gray-400 py-8">Nog geen pagina's in dit fotoboek.</div>}
+          </>
+        )}
       </div>
 
-      <div className="flex gap-2">
-        <Button variant="secondary" onClick={addPage}>+ Nieuwe pagina</Button>
+      {/* Onderbalk: paginanavigatie en boek-brede acties, ook vast (niet
+          zwevend) zodat 'm nooit per ongeluk de canvas overlapt. */}
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gray-900"
+        style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom))" }}>
+        <button type="button" onClick={() => setCurrentPageIndex((p) => Math.max(0, p - 1))} disabled={currentPageIndex === 0}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
+          <Icon name="arrowUp" size={14} style={{ transform: "rotate(-90deg)" }} />
+        </button>
+        <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem]">
+          {pages.length === 0 ? "Geen pagina's" : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
+        </span>
+        <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
+          <Icon name="arrowUp" size={14} style={{ transform: "rotate(90deg)" }} />
+        </button>
+        <div className="w-px h-6 bg-white/15 mx-0.5" />
+        <button type="button" onClick={addPage} title="Nieuwe pagina"
+          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+          <Icon name="plus" size={16} />
+        </button>
+        {page && (
+          <button type="button" onClick={() => removePage(currentPageIndex)} title="Pagina verwijderen"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors">
+            <Icon name="trash" size={14} />
+          </button>
+        )}
+        <div className="flex-1" />
         <Button onClick={handleSavePages} disabled={saving || !dirty}>{saving ? "Opslaan..." : "Opslaan"}</Button>
       </div>
 
