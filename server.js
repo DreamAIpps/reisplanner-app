@@ -3736,7 +3736,8 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const w = tb.width * pageW, h = tb.height * pageH;
       if (tb.background_color && tb.background_color !== "transparent") {
         const { color, alpha } = parseRgbaColor(tb.background_color);
-        try { doc.rect(x, y, w, h).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
+        // Zelfde afgeronde hoeken als de editor/preview (rounded-xl).
+        try { doc.roundedRect(x, y, w, h, 8).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
       }
       drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: "#241D19", align: tb.align });
     }
