@@ -486,9 +486,13 @@ async function initDb() {
     -- De titel is vrij versleepbaar/vergrootbaar op de pagina, net als een
     -- zwevend tekstvak — x/y/width/height zijn fracties van de pagina.
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_x REAL NOT NULL DEFAULT 0.15;
-    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_y REAL NOT NULL DEFAULT 0.06;
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_y REAL NOT NULL DEFAULT 0.14;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_width REAL NOT NULL DEFAULT 0.7;
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_height REAL NOT NULL DEFAULT 0.1;
+    -- ADD COLUMN IF NOT EXISTS hierboven raakt de DEFAULT van een kolom die
+    -- al bestaat niet meer aan (0.06 stond te dicht bij de vaste "+"/
+    -- instellingen-knoppen in de canvas-hoeken) — vandaar deze losse SET DEFAULT.
+    ALTER TABLE photobook_pages ALTER COLUMN title_y SET DEFAULT 0.14;
 
     -- x/y/width/height zijn fracties van de pagina (0-1), niet pixels — zo
     -- blijft een foto op dezelfde relatieve plek staan ongeacht schermgrootte
