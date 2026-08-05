@@ -43,6 +43,41 @@ const MIME = {
   ".ico":  "image/x-icon",
 };
 
+// Beveiligingsheaders op elke respons. De CSP is bewust afgestemd op wat deze
+// app zonder buildstap nodig heeft en niet strenger: Babel transpileert de JSX
+// in de browser (vandaar 'unsafe-eval'), index.html/login.html hebben inline
+// scripts en de hele UI leunt op inline stijlen (vandaar 'unsafe-inline'). Die
+// twee halen de scherpste XSS-bescherming eruit, maar de rest blijft zinvol —
+// frame-ancestors/object-src/base-uri sluiten clickjacking, plugins en
+// base-tag-kaping af, en de bronlijsten perken in wáár scripts/stijlen/fetches
+// vandaan mogen komen. connect-src en img-src staan op 'https:' omdat de kaart
+// (tegels van wisselende hosts), het weer en geocoding naar meerdere externe
+// diensten gaan; enumereren zou hier alleen maar breken zonder veel te winnen
+// zolang 'unsafe-inline' toch nodig is.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://appleid.cdn-apple.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self' https:",
+  "frame-src https://appleid.apple.com",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function setSecurityHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Alleen zinvol over HTTPS (Railway); browsers negeren het over http, dus het
+  // kan veilig altijd mee.
+  res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+  res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+}
+
 // ---------- Helpers ----------
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
@@ -176,6 +211,8 @@ function setSessionCookie(res, token) {
 async function handlePostLogin(req, res, user) {
   const sessionToken = await createSession(user.id);
   const cookies = [`session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`];
+  // De OAuth-state-cookie is nu verbruikt; ruim 'm meteen op.
+  cookies.push("oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
   let redirect = "/";
 
   const { invite, quizjoin } = parseCookies(req);
@@ -2290,12 +2327,20 @@ route("POST", "/auth/logout", async (req, res) => {
 });
 
 route("GET", "/auth/google", async (req, res) => {
+  // CSRF-bescherming voor de inlogflow: een willekeurige state gaat mee naar
+  // Google én in een kortlevende cookie. De callback vergelijkt de twee, zodat
+  // een aanvaller een slachtoffer niet met een gestuurde callback-URL in het
+  // account van de aanvaller kan laten inloggen. SameSite=Lax volstaat: Google
+  // keert terug via een top-level GET, waarbij een Lax-cookie meegestuurd wordt.
+  const state = crypto.randomBytes(16).toString("hex");
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
     redirect_uri: `${appUrl(req)}/auth/google/callback`,
     response_type: "code",
     scope: "openid email profile",
+    state,
   });
+  res.setHeader("Set-Cookie", `oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
   res.writeHead(302, { Location: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
   res.end();
 });
@@ -2304,6 +2349,14 @@ route("GET", "/auth/google/callback", async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const code = url.searchParams.get("code");
   if (!code) { res.writeHead(302, { Location: "/login?error=1" }); res.end(); return; }
+  // State moet overeenkomen met de cookie die /auth/google zette — anders is deze
+  // callback niet door deze browser gestart (login-CSRF) en weigeren we hem.
+  const { oauth_state } = parseCookies(req);
+  const returnedState = url.searchParams.get("state");
+  if (!oauth_state || !returnedState || oauth_state !== returnedState) {
+    res.setHeader("Set-Cookie", "oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
+    res.writeHead(302, { Location: "/login?error=state" }); res.end(); return;
+  }
 
   const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -2375,6 +2428,11 @@ route("GET", "/auth/apple", async (req, res) => {
     response_mode: "form_post",
     state,
   });
+  // SameSite=None, niet Lax: Apple keert terug via een cross-site POST
+  // (response_mode=form_post), en een Lax-cookie zou daarbij niet meegestuurd
+  // worden — de statecontrole in de callback zou dan altijd falen. Het is enkel
+  // een korte, willekeurige nonce (geen sessie), dus None is hier veilig.
+  res.setHeader("Set-Cookie", `oauth_state=${state}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=600`);
   console.log("Apple Sign In: redirecting to Apple with redirect_uri:", `${appUrl(req)}/auth/apple/callback`);
   res.writeHead(302, { Location: `https://appleid.apple.com/auth/authorize?${params}` });
   res.end();
@@ -2455,6 +2513,16 @@ route("POST", "/auth/apple/callback", async (req, res) => {
   if (appleError) {
     console.error("Apple callback error from Apple:", appleError);
     res.writeHead(302, { Location: `/login?error=apple-${appleError}` });
+    res.end();
+    return;
+  }
+  // State moet overeenkomen met de cookie die /auth/apple zette (login-CSRF).
+  // Apple stuurt de state terug in de form_post-body.
+  const returnedState = body.get("state");
+  const { oauth_state } = parseCookies(req);
+  if (!oauth_state || !returnedState || oauth_state !== returnedState) {
+    console.error("Apple callback: state komt niet overeen");
+    res.writeHead(302, { Location: "/login?error=apple-state" });
     res.end();
     return;
   }
@@ -3371,7 +3439,7 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   }
 
   sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation, cornerRadius, backgroundColor });
-}, { tripScope: "param", allowViewer: true });
+}, { tripScope: "param" });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
 // de pagina) — geklemd tussen redelijke grenzen zodat een corrupte of
@@ -3471,12 +3539,12 @@ route("PUT", "/api/photobooks/:id", async (req, res, params, body) => {
   if (!title) return sendError(res, 400, "Titel is verplicht");
   await query("UPDATE photobooks SET title = $1 WHERE id = $2", [title, params.id]);
   sendJson(res, 200, { ok: true });
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 route("DELETE", "/api/photobooks/:id", async (req, res, params) => {
   await query("DELETE FROM photobooks WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 // Eén bulk-vervanging van de hele paginalijst — simpeler dan losse routes
 // voor toevoegen/verwijderen/herordenen/bewerken van pagina's, foto's en
@@ -3555,7 +3623,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     }
   }
   sendJson(res, 200, { ok: true, pageCount: items.length });
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 // A4 in PDF-punten (72 punten per inch): 210mm x 297mm.
 const PDF_PAGE_WIDTH = 595.28;
@@ -3921,6 +3989,7 @@ route("DELETE", "/api/packing/:id", async (req, res, params) => {
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
+  setSecurityHeaders(res);
   const url = new URL(req.url, `http://localhost`);
   const pathname = url.pathname;
 
