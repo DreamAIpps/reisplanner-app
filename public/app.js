@@ -488,6 +488,7 @@ const api = {
   updatePhotobook: (id, d) => apiFetch(`/api/photobooks/${id}`, { method: "PUT", body: JSON.stringify(d) }),
   deletePhotobook: (id) => apiFetch(`/api/photobooks/${id}`, { method: "DELETE" }),
   savePhotobookPages: (id, pages) => apiFetch(`/api/photobooks/${id}/pages`, { method: "PUT", body: JSON.stringify({ pages }) }),
+  getPhotobookPrintQuote: (id) => _guestMode ? Promise.resolve({ available: false }) : apiFetch(`/api/photobooks/${id}/print-quote`),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
@@ -5964,6 +5965,22 @@ function PhotobookTab({ trip }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Drukwerkprijzen komen van Print API en dus van buiten: apart ophalen, ná de
+  // lijst, zodat het overzicht meteen staat en een trage of onbereikbare
+  // Print API hooguit betekent dat er geen prijs bij staat. Elke boek-aanvraag
+  // vangt zijn eigen fout op, zodat één mislukking de rest niet meesleept.
+  const [quotes, setQuotes] = useState({});
+  useEffect(() => {
+    if (!books || !books.length) return;
+    let cancelled = false;
+    Promise.all(books.map((b) =>
+      api.getPhotobookPrintQuote(b.id).then((q) => [b.id, q]).catch(() => [b.id, { available: false }])
+    )).then((pairs) => {
+      if (!cancelled) setQuotes(Object.fromEntries(pairs));
+    });
+    return () => { cancelled = true; };
+  }, [books]);
+
   async function handleCreate(opts) {
     setCreating(true); setError(null);
     try {
@@ -6072,7 +6089,12 @@ function PhotobookTab({ trip }) {
                 : <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center shrink-0"><Icon name="frame" size={20} className="text-gray-300" /></div>}
               <div className="min-w-0 flex-1">
                 <div className="font-medium text-gray-800 truncate">{b.title}</div>
-                <div className="text-xs text-gray-400">{b.pageCount} {b.pageCount === 1 ? "pagina" : "pagina's"}</div>
+                <div className="text-xs text-gray-400">
+                  {b.pageCount} {b.pageCount === 1 ? "pagina" : "pagina's"}
+                  {quotes[b.id]?.available && quotes[b.id].total != null && (
+                    <span className="text-sky-700 font-medium"> · drukwerk {fmtMoney(quotes[b.id].total, quotes[b.id].currency || "EUR")}</span>
+                  )}
+                </div>
               </div>
               <Icon name="arrowRight" size={16} className="text-gray-300 shrink-0" />
             </button>

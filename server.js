@@ -14,6 +14,7 @@ catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnail
 const jpegJs = require("jpeg-js");
 const heicDecode = require("heic-decode");
 const { query, initDb, pool } = require("./db");
+const printapi = require("./printapi");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
@@ -3768,6 +3769,45 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     "Content-Length": buffer.length,
   });
   res.end(buffer);
+}, { tripScope: "photobooks", allowViewer: true });
+
+// Prijsopgave voor drukwerk bij Print API. Bewust een aparte route en geen
+// onderdeel van GET /api/photobooks/:id: dit gaat naar een externe partij, mag
+// dus traag zijn of falen, en het openen van de editor hoort daar niet op te
+// wachten. Een fout hier is geen 500 maar een nette "niet beschikbaar", zodat
+// het fotoboek zelf blijft werken als Print API plat ligt of niet is ingesteld.
+route("GET", "/api/photobooks/:id/print-quote", async (req, res, params) => {
+  const url = new URL(req.url, "http://localhost");
+  const { rows: bookRows } = await query("SELECT orientation FROM photobooks WHERE id = $1", [params.id]);
+  if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
+
+  const { rows: countRows } = await query(
+    "SELECT COUNT(*)::int AS n FROM photobook_pages WHERE photobook_id = $1",
+    [params.id]
+  );
+  const pageCount = countRows[0]?.n || 0;
+  if (!pageCount) return sendJson(res, 200, { available: false, reason: "Dit fotoboek heeft nog geen pagina's." });
+  if (!printapi.isConfigured()) {
+    return sendJson(res, 200, { available: false, reason: "Drukwerk is nog niet ingesteld." });
+  }
+
+  const quantity = Math.min(50, Math.max(1, parseInt(url.searchParams.get("quantity"), 10) || 1));
+  const country = (url.searchParams.get("country") || "NL").toUpperCase().slice(0, 2);
+  try {
+    const quote = await printapi.getQuote({
+      orientation: bookRows[0].orientation || "portrait",
+      pageCount, quantity, country,
+    });
+    sendJson(res, 200, {
+      available: quote.total !== null,
+      reason: quote.total === null ? "Print API gaf geen prijs terug." : undefined,
+      total: quote.total, currency: quote.currency,
+      pageCount: quote.pageCount, quantity: quote.quantity, country: quote.country,
+    });
+  } catch (err) {
+    console.error("Print API prijsopgave mislukt:", err.message);
+    sendJson(res, 200, { available: false, reason: "Prijs kon niet worden opgehaald." });
+  }
 }, { tripScope: "photobooks", allowViewer: true });
 
 // ---------- Expenses ----------
