@@ -63,17 +63,26 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let tooLarge = false;
     req.on("data", (c) => {
       size += c.length;
       if (size > MAX_BODY_BYTES) {
-        const err = new Error("Verzoek te groot");
-        err.statusCode = 413;
-        req.destroy(err);
-        return reject(err);
+        // Niet meer opslaan zodra de grens is gehaald (dat houdt het geheugen
+        // begrensd), maar de socket blijft leven: die deelt req en res, dus een
+        // req.destroy() hier trok eerder ook de nog te versturen 413-respons
+        // onderuit — zonder foutafhandeling op die kapotte socket crashte dat
+        // het hele proces, en dat zag de gebruiker als "Fout 502" bij uploaden.
+        tooLarge = true;
+        return;
       }
       chunks.push(c);
     });
     req.on("end", () => {
+      if (tooLarge) {
+        const err = new Error("Verzoek te groot");
+        err.statusCode = 413;
+        return reject(err);
+      }
       if (!chunks.length) return resolve({});
       try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
       catch (e) { reject(e); }
@@ -3281,24 +3290,36 @@ const PHOTOBOOK_AUTOFILL_LAYOUTS = {
   ],
 };
 
+// Hoekafronding is een fractie van de kortste zijde van de pagina (zie
+// PHOTOBOOK_CORNER_PRESETS in public/app.js). 0.05 is op A4 zo'n 10 mm — ruim
+// boven de sterkste keuze die de app aanbiedt, en de grens waarboven het geen
+// afwerking meer is maar een vorm.
+const PHOTOBOOK_MAX_CORNER = 0.05;
+
+// Achtergrondkleuren gaan als losse tekst de database in en komen er als CSS
+// weer uit. Alleen een letterlijke hexkleur toelaten houdt daar alles buiten
+// wat in een style-attribuut iets anders zou kunnen betekenen.
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
 route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const title = (body?.title && String(body.title).trim()) || "Fotoboek";
   const autofill = body?.autofill !== false;
   const photosPerPage = Math.min(4, Math.max(1, parseInt(body?.photosPerPage, 10) || 1));
   const orientation = body?.orientation === "landscape" ? "landscape" : "portrait";
-  const cornerRadius = Math.min(0.5, Math.max(0, Number(body?.cornerRadius) || 0));
+  const cornerRadius = Math.min(PHOTOBOOK_MAX_CORNER, Math.max(0, Number(body?.cornerRadius) || 0));
   // Paginatitels uit het dagboek halen. Standaard aan, zodat een aanroep zonder
   // deze sleutel zich gedraagt zoals het altijd deed: wel een paginatitel.
   const useJournalTitles = body?.useJournalTitles !== false;
+  const backgroundColor = HEX_COLOR.test(String(body?.backgroundColor || "")) ? body.backgroundColor : null;
 
   const { rows: bookRows } = await query(
-    "INSERT INTO photobooks (trip_id, title, created_by, orientation, corner_radius) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-    [params.id, title, req.user.id, orientation, cornerRadius]
+    "INSERT INTO photobooks (trip_id, title, created_by, orientation, corner_radius, background_color) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+    [params.id, title, req.user.id, orientation, cornerRadius, backgroundColor]
   );
   const bookId = bookRows[0].id;
 
   if (!autofill) {
-    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation, cornerRadius });
+    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation, cornerRadius, backgroundColor });
   }
 
   const { rows: photos } = await query(
@@ -3334,8 +3355,8 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
         ? ((group[0].caption && String(group[0].caption).trim()) || photobookCaption(group[0]))
         : photobookCaption(group[0]);
     const { rows: pageRows } = await query(
-      "INSERT INTO photobook_pages (photobook_id, position, title) VALUES ($1,$2,$3) RETURNING id",
-      [bookId, pageCount, pageTitle]
+      "INSERT INTO photobook_pages (photobook_id, position, title, background_type, background_color) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+      [bookId, pageCount, pageTitle, backgroundColor ? "color" : null, backgroundColor]
     );
     const pageId = pageRows[0].id;
     const rects = PHOTOBOOK_AUTOFILL_LAYOUTS[group.length];
@@ -3349,7 +3370,7 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     pageCount++;
   }
 
-  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation, cornerRadius });
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation, cornerRadius, backgroundColor });
 }, { tripScope: "param", allowViewer: true });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
@@ -3364,7 +3385,7 @@ function clampPhotoRect(p) {
     width: Math.min(1, Math.max(0.03, n(p.width, 0.4))),
     height: Math.min(1, Math.max(0.03, n(p.height, 0.4))),
     opacity: Math.min(1, Math.max(0, n(p.opacity, 1))),
-    cornerRadius: Math.min(0.5, Math.max(0, n(p.cornerRadius, 0))),
+    cornerRadius: Math.min(PHOTOBOOK_MAX_CORNER, Math.max(0, n(p.cornerRadius, 0))),
     cropX: Math.min(1, Math.max(0, n(p.cropX, 0.5))),
     cropY: Math.min(1, Math.max(0, n(p.cropY, 0.5))),
     cropZoom: Math.min(2.5, Math.max(1, n(p.cropZoom, 1))),
@@ -3434,6 +3455,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
   sendJson(res, 200, {
     id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status, orientation: bookRows[0].orientation,
     cornerRadius: bookRows[0].corner_radius ?? 0,
+    backgroundColor: bookRows[0].background_color ?? null,
     pages: pages.map((pg) => ({
       id: pg.id, title: pg.title, titleAlign: pg.title_align,
       titleX: pg.title_x, titleY: pg.title_y, titleWidth: pg.title_width, titleHeight: pg.title_height,
@@ -3741,9 +3763,12 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const w = ph.width * pageW, h = ph.height * pageH;
       try {
         doc.save();
-        // cornerRadius 0.5 == volledig rond/pil-vorm (radius = halve kortste
-        // zijde), zelfde interpretatie als de CSS border-radius:% in de editor.
-        const radius = (ph.corner_radius || 0) * Math.min(w, h);
+        // Fractie van de kortste zijde van de pagina, niet van de foto — zo is
+        // de ronding op papier voor elke foto even groot, precies zoals de
+        // cqmin-eenheid dat in de editor doet. De begrenzing op de halve
+        // kortste fotozijde vangt alleen het randgeval af waarin een heel
+        // klein fotootje anders een radius groter dan zichzelf zou krijgen.
+        const radius = Math.min((ph.corner_radius || 0) * Math.min(pageW, pageH), Math.min(w, h) / 2);
         if (radius > 0) doc.roundedRect(x, y, w, h, radius).clip();
         else doc.rect(x, y, w, h).clip();
         doc.opacity(ph.opacity ?? 1);
