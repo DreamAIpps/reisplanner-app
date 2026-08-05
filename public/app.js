@@ -2853,6 +2853,20 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         + Iets toevoegen op deze dag
                       </button>
                     )}
+                    {/* Vaste "+ Activiteit"-knop per dag zodra er al iets staat:
+                        zo hoef je niet meer via het algemene Toevoegen-blad de
+                        juiste dag te kiezen — een tik voegt meteen aan díe dag
+                        toe. Bij een lege dag doet de grote knop hierboven dat al,
+                        dus dan geen tweede knop. pl-8 lijnt 'm uit met de
+                        kaartjes (langs de tijdlijn), niet met de stip ervoor. */}
+                    {totalItems > 0 && !readOnly && (
+                      <div className="pl-8">
+                        <button onClick={() => setShowActivityForm({ dayId: day.id })}
+                          className="rp-press inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
+                          <Icon name="plus" size={15} />Activiteit
+                        </button>
+                      </div>
+                    )}
                     {totalItems === 0 && readOnly && (
                       <div className="text-[15px] text-gray-400 py-2">Niets gepland.</div>
                     )}
