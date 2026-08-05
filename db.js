@@ -455,6 +455,10 @@ async function initDb() {
     -- gekozen bij het aanmaken, geldt voor het hele boek (canvas-verhouding
     -- in de editor/preview en het PDF-paginaformaat).
     ALTER TABLE photobooks ADD COLUMN IF NOT EXISTS orientation TEXT NOT NULL DEFAULT 'portrait';
+    -- Bij het aanmaken gekozen hoekafronding voor foto's (fractie van de
+    -- kortste zijde, 0 = vierkant). Geldt als startwaarde voor elke foto die
+    -- in dit boek belandt; per foto kan het daarna nog bijgesteld worden.
+    ALTER TABLE photobooks ADD COLUMN IF NOT EXISTS corner_radius REAL NOT NULL DEFAULT 0;
 
     -- Eén pagina kan meerdere foto's bevatten (zie photobook_page_photos
     -- hieronder), een titel/beschrijving, en een optionele achtergrond (een
