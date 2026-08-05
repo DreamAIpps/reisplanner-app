@@ -2246,11 +2246,31 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         </div>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+      {/* Deze vraag stond als een dun regeltje van 12px met "Ja" als tekstlink
+          en een kruisje ernaast — te makkelijk over het hoofd te zien, en het
+          was niet duidelijk dat je hier iets kon kiezen. Nu een echte kaart met
+          de foto erbij (zodat zichtbaar is wélke foto het betreft) en twee
+          even grote knoppen met een duidelijk ja en nee. */}
       {canOfferActivity && activityPromptPhoto && (
-        <div className="mt-2 flex items-center gap-2 text-xs bg-sky-50 text-sky-700 px-3 py-2 rounded-lg" style={{ maxWidth: largeMaxWidth }}>
-          <span className="flex-1">Activiteit van deze foto maken?</span>
-          <button type="button" onClick={() => setShowActivityForm(true)} className="font-semibold hover:underline">Ja</button>
-          <button type="button" onClick={() => setActivityPromptPhoto(null)} className="text-sky-400 hover:text-sky-600" aria-label="Niet nu">✕</button>
+        <div className="rp-rise mt-3 p-3 rounded-2xl border border-sky-200 bg-sky-50 shadow-sm" style={{ maxWidth: largeMaxWidth }}>
+          <div className="flex items-center gap-3">
+            <img src={activityPromptPhoto.thumb_url || activityPromptPhoto.url} alt=""
+              className="w-14 h-14 rounded-xl object-cover shrink-0" />
+            <div className="min-w-0">
+              <div className="font-display text-[17px] text-gray-800 leading-snug">Activiteit van deze foto maken?</div>
+              <div className="text-xs text-gray-500 mt-0.5">Dan komt hij op de planning te staan met een naam en tijd.</div>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button type="button" onClick={() => setActivityPromptPhoto(null)}
+              className="rp-press flex-1 h-11 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-600 hover:border-gray-300 transition-colors">
+              Nee
+            </button>
+            <button type="button" onClick={() => setShowActivityForm(true)}
+              className="rp-press flex-1 h-11 rounded-xl bg-sky-300 text-sm font-semibold text-gray-800 hover:bg-sky-400 transition-colors">
+              Ja
+            </button>
+          </div>
         </div>
       )}
       {showActivityForm && (
@@ -2417,6 +2437,24 @@ function categoryIcon(cat) { return CATEGORY_ICONS[cat] || "flag"; }
 // Eén kaartje op de tijdlijn — vervoer, verblijf en activiteit zien er verder
 // hetzelfde uit, dus alleen de inhoud verschilt. Het stipje links valt precies
 // op de verticale lijn van de dag (zie de lijn in DayPlanningTab).
+// Een locatie in de planning opent rechtstreeks Google Maps — onderweg is dat
+// vrijwel altijd wat je met een adres wilt, en anders moest je het overtypen.
+// stopPropagation is hier geen bijzaak: de kaart eromheen opent bij een tik het
+// bewerkscherm, en zonder dit deed een tik op het adres dat óók.
+function MapsLink({ query, className = "" }) {
+  if (!query) return null;
+  return (
+    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`}
+      target="_blank" rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={`${query} openen in Google Maps`}
+      className={`inline-flex items-baseline gap-1.5 hover:text-sky-700 hover:underline transition-colors ${className}`}>
+      <Icon name="pin" size={14} className="shrink-0 self-center" />
+      <span className="min-w-0">{query}</span>
+    </a>
+  );
+}
+
 function TimelineCard({ time, icon, title, subtitle, meta, aside, trailing, onClick }) {
   return (
     <div className="relative pl-8">
@@ -2470,6 +2508,9 @@ function buildUpcomingItems(days, transports, accommodations, timezone) {
         kind: "activity", icon: categoryIcon(act.category), title: act.title,
         subtitle: act.location || act.category || "Activiteit", time: act.time || null, ref: act,
         weatherQuery: act.location || null,
+        // Alleen gezet als de ondertitel daadwerkelijk de locatie is; dan mag
+        // die regel een kaartlink worden zonder dat er iets anders verdwijnt.
+        location: act.location || null,
       });
     });
   });
@@ -2640,7 +2681,9 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                 {/* Midden: waar het om gaat. */}
                 <div className="flex-1 min-w-0">
                   <div className="text-[19px] font-semibold text-gray-800 truncate leading-snug">{item.title}</div>
-                  <div className="text-[13px] font-medium text-gray-500 truncate mt-0.5">{item.subtitle}</div>
+                  <div className="text-[13px] font-medium text-gray-500 truncate mt-0.5">
+                    {item.location ? <MapsLink query={item.location} /> : item.subtitle}
+                  </div>
                 </div>
                 {/* Rechts: weer boven, dag eronder. */}
                 <div className="shrink-0 text-right">
@@ -2773,7 +2816,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                           icon="bed"
                           meta={a.cost ? fmtMoney(a.cost, trip.currency) : null}
                           title={<>{a.name}{a.is_private && <Icon name="lock" size={12} className="inline text-gray-300 ml-1.5" />}</>}
-                          subtitle={a.address || null}
+                          subtitle={a.address ? <MapsLink query={a.address} /> : null}
                           trailing={tipsButton(a.address || a.name)}
                         />
                       );
@@ -2788,7 +2831,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         icon={categoryIcon(act.category)}
                         meta={[act.category || "Activiteit", act.cost ? fmtMoney(act.cost, trip.currency) : null].filter(Boolean).join(" · ")}
                         title={<>{act.title}{act.is_private && <Icon name="lock" size={12} className="inline text-gray-300 ml-1.5" />}</>}
-                        subtitle={act.location || null}
+                        subtitle={act.location ? <MapsLink query={act.location} /> : null}
                         aside={act.notes ? <div className="text-[15px] text-gray-500 mt-2 leading-relaxed">{act.notes}</div> : null}
                         trailing={!readOnly ? (
                           <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }}
