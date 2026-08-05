@@ -9337,6 +9337,9 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [previewViewer, setPreviewViewer] = useState(false);
+  // Budgetbalk op planning is standaard ingeklapt (klein) — de uitsplitsing per
+  // categorie komt pas als je 'm openklapt.
+  const [budgetExpanded, setBudgetExpanded] = useState(false);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -9474,6 +9477,10 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const heroDuration = tripDuration(trip.start_date, trip.end_date);
   const heroShowBudget = viewTrip.budget && tab !== "journal" && tab !== "photos";
   const heroShowActions = isOwnerActions && tab !== "journal" && tab !== "photos";
+  // Op de twee werk-tabs (planning en dagboek) is de grote fto-hero te fors — daar
+  // volstaat een slanke balk van één regel met de reisnaam, zonder omslagfoto.
+  const heroCompact = tab === "days" || tab === "journal";
+  const heroCompactInk = textOn(accent);
 
   return (
     <div className="pb-2">
@@ -9498,9 +9505,26 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         ← Alle reizen
       </button>
 
-      {/* Hero — de blikvanger van de pagina. Eén blok voor zowel een omslagfoto
-          als een effen omslagkleur; alleen de sluier en de inktkleur verschillen,
-          want bij een foto weten we de helderheid niet en bij een kleur wel. */}
+      {/* Op planning en dagboek: een slanke balk van één regel met de reisnaam,
+          zonder omslagfoto — de grote hero neemt daar te veel ruimte in weg van
+          de dagen/verhalen zelf. De datums staan er muted achteraan; op smal
+          krimpt de naam (truncate) en blijven de datums heel. */}
+      {heroCompact ? (
+        <div className="mb-6 rp-rise">
+          <div className="rounded-2xl shadow-sm px-5 h-14 flex items-center gap-3" style={{ background: accent, color: heroCompactInk }}>
+            {/* De reisnaam krijgt de volle regel; datums stonden hier eerst ook,
+                maar die duwden een langere naam in een afgekapt "Zomer i…". */}
+            <h2 className="font-display text-[19px] font-semibold truncate flex-1 min-w-0">{trip.name}</h2>
+            {trip.is_owner === false && (
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/90 text-gray-700 shrink-0">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>
+            )}
+            {isOwnerActions && tab === "days" && (
+              <div className="shrink-0"><TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} /></div>
+            )}
+          </div>
+          {trip.notes && <div className="text-[15px] text-gray-500 leading-relaxed mt-2 px-1">{trip.notes}</div>}
+        </div>
+      ) : (
       <div className="rounded-3xl overflow-hidden shadow-md mb-8 rp-rise">
         <div className="relative flex flex-col justify-end" style={{ height: 220 }}>
           {heroOnPhoto
@@ -9544,6 +9568,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           </div>
         )}
       </div>
+      )}
 
       {/* Desktop tabs — op mobiel navigeert de onderste balk al, en "· Dagplanning"
           naast de reisnaam hierboven is de subtiele snelkoppeling daar terug. */}
@@ -9567,38 +9592,51 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         const acPct = pct(activityTotal);
         const ePct = pct(expenseTotal);
         const overBudget = spent > total;
+        // Compacte balk: label + bedrag + een dunne balk op één regel, plus een
+        // chevron die de uitsplitsing per categorie in-/uitklapt. Het bedrag-deel
+        // blijft een knop naar het volledige budgetscherm; de chevron klapt alleen
+        // open, dus die twee bijten elkaar niet.
         return (
-          <button onClick={() => setTab("budget")} className="rp-press w-full mb-8 bg-white rounded-2xl shadow-sm px-6 py-6 text-left hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-baseline gap-4 mb-5">
-              <span className="text-[13px] font-semibold text-gray-400 uppercase tracking-[0.1em]">Budget</span>
-              <span className="text-[19px] font-semibold text-gray-800 tnum">
-                {fmtMoney(spent, trip.currency)}
-                <span className="text-[15px] font-medium text-gray-400"> / {fmtMoney(total, trip.currency)}</span>
-              </span>
+          <div className="w-full mb-8 bg-white rounded-2xl shadow-sm px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setTab("budget")} className="rp-press flex-1 min-w-0 text-left">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[13px] font-semibold text-gray-400 uppercase tracking-[0.1em]">Budget</span>
+                  <span className="text-[15px] font-semibold text-gray-800 tnum">
+                    {fmtMoney(spent, trip.currency)}
+                    <span className="text-[13px] font-medium text-gray-400"> / {fmtMoney(total, trip.currency)}</span>
+                  </span>
+                </div>
+                {/* Dunne, afgeronde balk met een haardun wit naadje tussen de vakken. */}
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden flex gap-px mt-2">
+                  <div style={{ width: `${tPct}%`, background: PALETTE.coralDeep }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
+                  <div style={{ width: `${aPct}%`, background: PALETTE.coral }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
+                  <div style={{ width: `${acPct}%`, background: PALETTE.success }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
+                  <div style={{ width: `${ePct}%`, background: PALETTE.info }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
+                </div>
+              </button>
+              <button onClick={() => setBudgetExpanded((v) => !v)} aria-label={budgetExpanded ? "Uitsplitsing inklappen" : "Uitsplitsing tonen"}
+                className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors self-center">
+                <Icon name="chevronDown" size={16} style={{ transform: budgetExpanded ? "rotate(180deg)" : "none" }} />
+              </button>
             </div>
-            {/* Dunne, afgeronde balk met een haardun wit naadje tussen de vakken,
-                zodat twee aangrenzende categorieën niet in elkaar overlopen. */}
-            <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex gap-px">
-              <div style={{ width: `${tPct}%`, background: PALETTE.coralDeep }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
-              <div style={{ width: `${aPct}%`, background: PALETTE.coral }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
-              <div style={{ width: `${acPct}%`, background: PALETTE.success }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
-              <div style={{ width: `${ePct}%`, background: PALETTE.info }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
-            </div>
-            {overBudget && <div className="text-[13px] font-medium text-red-600 mt-3">Boven budget</div>}
-            <div className="flex gap-x-5 gap-y-2 mt-4 flex-wrap">
-              {[
-                [transportTotal, PALETTE.coralDeep, "Vervoer"],
-                [accommodationTotal, PALETTE.coral, "Verblijf"],
-                [activityTotal, PALETTE.success, "Activiteiten"],
-                [expenseTotal, PALETTE.info, "Overig"],
-              ].filter(([v]) => v > 0).map(([value, color, label]) => (
-                <span key={label} className="text-[13px] font-medium text-gray-500 flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ background: color }} />
-                  {label} <span className="tnum text-gray-400">{fmtMoney(value, trip.currency)}</span>
-                </span>
-              ))}
-            </div>
-          </button>
+            {overBudget && <div className="text-[13px] font-medium text-red-600 mt-2">Boven budget</div>}
+            {budgetExpanded && (
+              <div className="flex gap-x-5 gap-y-2 mt-3 flex-wrap">
+                {[
+                  [transportTotal, PALETTE.coralDeep, "Vervoer"],
+                  [accommodationTotal, PALETTE.coral, "Verblijf"],
+                  [activityTotal, PALETTE.success, "Activiteiten"],
+                  [expenseTotal, PALETTE.info, "Overig"],
+                ].filter(([v]) => v > 0).map(([value, color, label]) => (
+                  <span key={label} className="text-[13px] font-medium text-gray-500 flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ background: color }} />
+                    {label} <span className="tnum text-gray-400">{fmtMoney(value, trip.currency)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         );
       })()}
 
