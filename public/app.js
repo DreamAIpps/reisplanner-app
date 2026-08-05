@@ -835,10 +835,6 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
 // vet/cursief/lettertype op een selectie toe te passen zonder een hele
 // rich-text-library toe te voegen.
 function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
-  // Staat standaard ingeklapt achter één "Aa"-knop — de volledige rij (vet/
-  // cursief/uitlijning/kleur/lettertype) nam veel ruimte in voor iets dat
-  // niet bij elke tik nodig is.
-  const [expanded, setExpanded] = useState(false);
   function run(cmd, value) {
     const el = getEl();
     if (!el) return;
@@ -861,21 +857,16 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
-  if (!expanded) {
-    return (
-      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(true)} title="Tekstopmaak"
-        className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors mb-1.5">
-        Aa
-      </button>
-    );
-  }
+  // De opmaakknoppen staan meteen open. Ze zaten achter één "Aa"-knop om
+  // ruimte te sparen, maar dat kostte bij elke tekstwijziging een extra tik.
+  //
+  // Wél in één rij die horizontaal schuift, niet omgebroken over meerdere
+  // regels: uitgeklapt over drie regels wordt het zwevende paneel zo hoog dat
+  // het over het tekstvak op de canvas valt, en dan is de tekst zelf niet meer
+  // aan te tikken. [&>*]:shrink-0 houdt de knoppen op maat in plaats van ze
+  // samen te persen.
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setExpanded(false)} title="Opmaak inklappen"
-        className="w-8 h-8 rounded-lg border border-sky-300 bg-sky-50 flex items-center justify-center text-xs font-semibold text-sky-700 transition-colors">
-        Aa
-      </button>
-      <div className="w-px h-6 bg-gray-200 mx-0.5" />
+    <div className="flex items-center gap-1.5 mb-1.5 overflow-x-auto [&>*]:shrink-0">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
@@ -6622,6 +6613,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [pages, setPages] = useState(null); // null = laden
   const [allPhotos, setAllPhotos] = useState([]);
   const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
+  const [pickerMode, setPickerMode] = useState("photos"); // "photos" = op de pagina zetten, "background" = als achtergrond
   const [pickerSelected, setPickerSelected] = useState(new Set());
   const [pickerSearch, setPickerSearch] = useState("");
   const [saving, setSaving] = useState(false);
@@ -6890,11 +6882,47 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setDirty(true);
   }
 
-  function openPicker(pageIndex) {
+  // De fotokiezer doet twee dingen: foto's op de pagina zetten (meerdere
+  // tegelijk) of één foto als achtergrond kiezen. Dat scheelt een tweede
+  // kiezer; alleen wat een tik doet verschilt, zie pickerMode.
+  function openPicker(pageIndex, mode = "photos") {
     setPickerForPage(pageIndex);
+    setPickerMode(mode);
     setPickerSelected(new Set());
     setPickerSearch("");
   }
+  // Foto's rechtstreeks vanaf het toestel toevoegen, zonder eerst via het
+  // dagboek te moeten. Ze komen in de reisbibliotheek terecht (zonder dag,
+  // want die context is er hier niet) en staan meteen in de kiezer. Zelfde
+  // verwerking als elders: verkleinen, EXIF uitlezen, een paar tegelijk.
+  const [pickerUploading, setPickerUploading] = useState(false);
+  async function handlePickerFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setPickerUploading(true);
+    const failed = [];
+    const uploaded = [];
+    await mapWithConcurrency(files, 3, async (file) => {
+      try {
+        const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        const base64 = image.dataUrl.split(",")[1];
+        if ((base64.length * 3) / 4 > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
+        uploaded.push(await api.addPhoto(tripId, {
+          image: { data: base64, mediaType: image.mediaType },
+          taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
+        }));
+      } catch (err) {
+        failed.push(`${file.name} (${err.message || "mislukt"})`);
+      }
+    });
+    try { setAllPhotos(await api.getPhotos(tripId)); } catch {}
+    // Meteen aangevinkt, want wie ze net koos wil ze vrijwel zeker gebruiken.
+    if (uploaded.length) setPickerSelected((s) => new Set([...s, ...uploaded.map((u) => u.id)]));
+    setPickerUploading(false);
+    if (failed.length) alert(`${files.length - failed.length} van ${files.length} foto's toegevoegd.\n\nNiet gelukt:\n${failed.join("\n")}`);
+  }
+
   function togglePick(id) {
     setPickerSelected((s) => {
       const copy = new Set(s);
@@ -7025,6 +7053,26 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     const haystack = `${p.label || ""} ${p.caption || ""}`.toLowerCase();
     return haystack.includes(pickerQuery);
   });
+
+  // Op reisdag gegroepeerd in plaats van één lange strook: bij een reis van
+  // twee weken is "de foto's van dag 3" anders alleen met scrollen te vinden.
+  // Foto's zonder dag sluiten achteraan aan, zodat ze niet verdwijnen.
+  // Bewust geen useMemo: dit staat ná de "Laden..."-return hierboven, en een
+  // hook achter een vroege return breekt de hook-volgorde (React-fout #310).
+  // Groeperen van een handvol foto's is sowieso niet duur genoeg om te cachen.
+  const pickableByDay = (() => {
+    const groups = new Map();
+    for (const p of pickable) {
+      const key = p.day_date ? String(p.day_date).slice(0, 10) : "";
+      if (!groups.has(key)) groups.set(key, { key, date: key, title: p.day_title || null, photos: [] });
+      groups.get(key).photos.push(p);
+    }
+    return [...groups.values()].sort((a, b) => {
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    });
+  })();
 
   const page = pages[currentPageIndex] || null;
   const photoSel = selectedPhoto?.page === currentPageIndex && page ? page.photos[selectedPhoto.photo] : null;
@@ -7161,6 +7209,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   <button type="button" onClick={() => { setShowAddMenu(false); openPicker(currentPageIndex); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="frame" size={15} className="text-gray-400" />Foto's
+                  </button>
+                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(currentPageIndex, "background"); }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                    <Icon name="camera" size={15} className="text-gray-400" />Achtergrondfoto
                   </button>
                   <button type="button" onClick={() => { setShowAddMenu(false); addTextBox(currentPageIndex); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
@@ -7448,26 +7500,49 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       </div>
 
       {pickerForPage != null && (
-        <Modal title="Foto's toevoegen" onClose={() => setPickerForPage(null)}>
-          {allPhotos.length === 0 ? (
-            <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's.</div>
-          ) : (
-            <>
-              <div className="relative mb-3">
-                <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
-                <Input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)}
-                  placeholder="Zoek in je foto's..." className="!pl-9" />
+        <Modal title={pickerMode === "background" ? "Achtergrondfoto kiezen" : "Foto's toevoegen"} onClose={() => setPickerForPage(null)}>
+          <>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="relative flex-1 min-w-0">
+                  <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
+                  <Input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)}
+                    placeholder="Zoeken..." className="!pl-9" />
+                </div>
+                {/* Foto's die nog niet in de reis zitten hoeven nu niet meer
+                    eerst via het dagboek toegevoegd te worden. */}
+                <label className={`rp-press shrink-0 inline-flex items-center gap-2 px-4 h-11 rounded-xl bg-sky-100 text-gray-800 text-sm font-semibold cursor-pointer hover:bg-sky-200 transition-colors ${pickerUploading ? "opacity-50 pointer-events-none" : ""}`}>
+                  <Icon name="plus" size={16} />
+                  {pickerUploading ? "Bezig..." : "Apparaat"}
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handlePickerFiles} disabled={pickerUploading} />
+                </label>
               </div>
-              {pickable.length === 0 ? (
+              {allPhotos.length === 0 ? (
+                <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's. Voeg er hierboven een toe vanaf je apparaat.</div>
+              ) : pickable.length === 0 ? (
                 <div className="text-sm text-gray-400 text-center py-6">Geen foto's gevonden.</div>
               ) : (
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  {pickable.map((p) => {
+                pickableByDay.map((groep) => (
+                <div key={groep.key} className="mb-4">
+                  {/* Kopje per reisdag; foto's zonder dag sluiten achteraan aan. */}
+                  <div className="text-[13px] font-semibold text-gray-500 mb-1.5 sticky top-0 bg-white py-1">
+                    {groep.date
+                      ? `${fmtShortDate(groep.date)}${groep.title ? ` · ${groep.title}` : ""}`
+                      : "Zonder dag"}
+                    <span className="text-gray-300 font-medium"> · {groep.photos.length}</span>
+                  </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {groep.photos.map((p) => {
                     const picked = pickerSelected.has(p.id);
                     const alreadyIn = photoPageNumbers.has(p.id);
                     return (
                       <div key={p.id} className="relative">
-                        <button type="button" onClick={() => togglePick(p.id)}
+                        <button type="button"
+                          onClick={() => {
+                            if (pickerMode === "background") {
+                              useAsBackground(pickerForPage, { photoId: p.id, url: p.url });
+                              setPickerForPage(null);
+                            } else togglePick(p.id);
+                          }}
                           className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors w-full ${picked ? "border-sky-500" : "border-gray-100"}`}>
                           <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                           {alreadyIn && !picked && (
@@ -7483,27 +7558,32 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                             </div>
                           )}
                         </button>
-                        {/* Direct als achtergrond zetten, los van het multi-
-                            select (toevoegen) hierboven — scheelt eerst zelf
-                            moeten toevoegen en daarna via het foto-paneel
-                            "Als achtergrond gebruiken" te moeten zoeken. */}
-                        <button type="button" title="Als achtergrond gebruiken"
-                          onClick={() => { useAsBackground(pickerForPage, { photoId: p.id, url: p.url }); setPickerForPage(null); }}
-                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-sky-600 transition-colors">
-                          <Icon name="frame" size={12} />
-                        </button>
+                        {/* In achtergrondmodus doet een tik op de tegel dit al,
+                            dus dan is dit knopje overbodig. */}
+                        {pickerMode !== "background" && (
+                          <button type="button" title="Als achtergrond gebruiken"
+                            onClick={() => { useAsBackground(pickerForPage, { photoId: p.id, url: p.url }); setPickerForPage(null); }}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-sky-600 transition-colors">
+                            <Icon name="camera" size={12} />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
                 </div>
+                </div>
+                ))
               )}
-              <div className="sticky bottom-0 -mx-6 px-6 pt-2 pb-1 bg-white">
-                <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
-                  Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
-                </Button>
-              </div>
-            </>
-          )}
+              {/* Achtergrond kiezen is één tik op een tegel; dan hoort er geen
+                  bevestigknop onder te staan die niets meer te doen heeft. */}
+              {pickerMode !== "background" && (
+                <div className="sticky bottom-0 -mx-6 px-6 pt-2 pb-1 bg-white">
+                  <Button onClick={confirmPicker} disabled={pickerSelected.size === 0}>
+                    Toevoegen{pickerSelected.size > 0 ? ` (${pickerSelected.size})` : ""}
+                  </Button>
+                </div>
+              )}
+          </>
         </Modal>
       )}
 
