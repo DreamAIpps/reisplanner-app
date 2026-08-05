@@ -62,6 +62,10 @@ const ICONS = {
   map: <><path d="M9 4.5 3.5 7v12.5L9 17l6 2.5 5.5-2.5V4.5L15 7z" /><path d="M9 4.5V17" /><path d="M15 7v12.5" /></>,
   // Twee pagina's naast elkaar — het overzicht van het fotoboek.
   grid: <><rect x="3.5" y="5" width="7.5" height="14" rx="1.2" /><rect x="13" y="5" width="7.5" height="14" rx="1.2" /></>,
+  // Rasterlijnen met een kader eromheen — "foto's op het raster uitlijnen".
+  alignGrid: <><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10.7h16" /><path d="M4 15.3h16" /><path d="M10.7 4v16" /><path d="M15.3 4v16" /></>,
+  // Een hoofdletter T — voor "Titel toevoegen".
+  titleText: <><path d="M5 6h14" /><path d="M12 6v13" /></>,
   globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17" /><path d="M12 3.5c2.3 2.4 3.5 5.3 3.5 8.5s-1.2 6.1-3.5 8.5c-2.3-2.4-3.5-5.3-3.5-8.5S9.7 5.9 12 3.5z" /></>,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
   dragHandle: <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></>,
@@ -6407,6 +6411,18 @@ function snapPhotobookValue(v) {
   }
   return Math.round(v / PHOTOBOOK_SNAP_STEP) * PHOTOBOOK_SNAP_STEP;
 }
+// Altijd naar de díchtstbijzijnde zichtbare rasterlijn, hoe ver ook — anders
+// dan snapPhotobookValue, dat pas binnen een marge vastklikt en daarbuiten op
+// een fijner (onzichtbaar) 0.02-raster afrondt. Voor de "foto's op het raster"-
+// knop wil je juist dat elke rand op een lijn belandt die de gebruiker ook echt
+// ziet, ook als een foto er nu ver naast staat.
+function nearestPhotobookGuide(v) {
+  let best = PHOTOBOOK_SNAP_GUIDES[0];
+  for (const g of PHOTOBOOK_SNAP_GUIDES) {
+    if (Math.abs(v - g) < Math.abs(best - v)) best = g;
+  }
+  return best;
+}
 // Bij verslepen telt niet alleen de linker-/bovenrand van een foto: je wilt
 // 'm net zo goed met de rechter-/onderrand tegen een lijn kunnen leggen.
 // Daarom worden beide randen langs het raster gelegd en wint de rand die het
@@ -6758,6 +6774,13 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
   const innerRef = useRef(null);
   usePhotobookAutoGrow({ innerRef, getPageEl, height: rect.height, onChangeRect, html: page.title, enabled: true });
 
+  // Een lege titel toont geen (leeg wit) vak meer: pas als er echt tekst staat,
+  // óf terwijl je 'm aan het bewerken bent (geselecteerd), verschijnt het vak.
+  // Zo kun je een titel echt weghalen — leegmaken laat 'm verdwijnen — en pak
+  // je 'm terug via "+ Titel". Losse tags zonder tekst tellen als leeg.
+  const hasTitle = !!(page.title && page.title.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim());
+  if (!selected && !hasTitle) return null;
+
   return (
     <div
       onPointerDown={selected ? undefined : (e) => beginDrag(e, "move")}
@@ -6866,6 +6889,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // canvas/titel/beschrijving-veld gemonteerd.
   const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
   const canvasAreaRef = useRef(null); // omringende vlak waarbinnen de canvas moet passen (voor canvasSize hieronder)
+  const swipeRef = useRef(null); // beginpunt van een veeg over de lege pagina/marge, voor bladeren tussen pagina's
   const titleRef = useRef(null); // titel-tekstveld van de geselecteerde titel, voor de opmaakknoppen
   const textBoxRef = useRef(null); // tekstveld van het geselecteerde zwevende tekstvak, idem
   const pagePanelDrag = usePhotobookPanelDrag(pagePanelOffset, setPagePanelOffset);
@@ -7012,6 +7036,48 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       ...p, photos: p.photos.map((ph, j) => (j < layout.slots.length ? { ...ph, ...layout.slots[j] } : ph)),
     })));
     setDirty(true);
+  }
+  // Legt elke foto op de pagina netjes op de rasterlijnen, zónder de indeling
+  // om te gooien: elke rand (links/rechts/boven/onder) schuift naar de
+  // dichtstbijzijnde rasterlijn, dus een foto blijft op zijn eigen plek staan —
+  // alleen recht uitgelijnd. Zo blijft de verdeling van de foto's over de
+  // pagina behouden. Hetzelfde snappen als tijdens het verslepen, nu in één keer
+  // op alles tegelijk (ook op foto's die scheef of net-naast-het-raster staan).
+  function snapPhotosToGrid(pageIndex) {
+    pushHistory();
+    setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
+      ...p,
+      photos: p.photos.map((ph) => {
+        const x = nearestPhotobookGuide(ph.x);
+        const right = nearestPhotobookGuide(ph.x + ph.width);
+        const y = nearestPhotobookGuide(ph.y);
+        const bottom = nearestPhotobookGuide(ph.y + ph.height);
+        return { ...ph, x, y, width: Math.max(0.05, right - x), height: Math.max(0.05, bottom - y) };
+      }),
+    })));
+    setDirty(true);
+  }
+  // Horizontaal vegen over de lege pagina of de marge eromheen bladert naar de
+  // vorige/volgende pagina. Alleen als de veeg op de achtergrond begint (niet
+  // op een foto of tekstvak — die hebben hun eigen sleepgedrag), zodat vegen en
+  // verslepen elkaar niet in de weg zitten. Verticaal vegen (scrollen) telt niet.
+  function onCanvasTouchStart(e) {
+    if (e.touches.length !== 1) { swipeRef.current = null; return; }
+    const onBackground = e.target === canvasRef.current || e.target === canvasAreaRef.current;
+    swipeRef.current = onBackground ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  }
+  function onCanvasTouchEnd(e) {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    if (!s || !e.changedTouches.length) return;
+    const dx = e.changedTouches[0].clientX - s.x;
+    const dy = e.changedTouches[0].clientY - s.y;
+    // Duidelijk horizontaal en ver genoeg, anders is het een tik of een scroll.
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    // Van links naar rechts (vinger beweegt naar rechts) → volgende pagina,
+    // zoals gevraagd; de andere kant op → vorige.
+    if (dx > 0) setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1));
+    else setCurrentPageIndex((p) => Math.max(0, p - 1));
   }
   function applyDesignPreset(pageIndex, preset) {
     pushHistory();
@@ -7342,10 +7408,20 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
           <Icon name="undo" size={16} />
         </button>
-        <button type="button" onClick={() => setSnapEnabled((s) => !s)} title="Uitlijnen op raster/marges tijdens verslepen"
+        <button type="button" onClick={() => setSnapEnabled((s) => !s)} title="Rasterlijnen tonen en eraan vastklikken tijdens verslepen"
           className={`shrink-0 px-2.5 h-8 rounded-full text-xs font-medium border transition-colors ${snapEnabled ? "border-sky-400 bg-sky-500/20 text-sky-300" : "border-white/20 text-white/50 hover:border-white/40"}`}>
           Raster
         </button>
+        {/* Direct naast de raster-schakelaar: alle foto's in één tik netjes op
+            de rasterlijnen zetten, zonder de indeling om te gooien. Alleen
+            zinvol op een pagina met foto's, dus in paginaweergave en niet leeg. */}
+        {viewMode === "pagina" && (
+          <button type="button" onClick={() => page && page.photos.length && snapPhotosToGrid(currentPageIndex)}
+            disabled={!page || page.photos.length === 0} title="Foto's op het raster uitlijnen"
+            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
+            <Icon name="alignGrid" size={16} />
+          </button>
+        )}
         <button type="button" onClick={() => setShowPreview(true)} aria-label="Voorbeeld bekijken"
           className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
           <Icon name="eye" size={16} />
@@ -7374,7 +7450,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
             onAddPage={addPage} />
         </div>
       ) : (
-      <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
+      <div ref={canvasAreaRef} onTouchStart={onCanvasTouchStart} onTouchEnd={onCanvasTouchEnd}
+        className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
         {!page ? (
           <div className="text-center text-white/60">
             <p className="text-sm mb-3">Nog geen pagina's in dit fotoboek.</p>
@@ -7498,6 +7575,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   <button type="button" onClick={() => { setShowAddMenu(false); addTextBox(currentPageIndex); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="alignLeft" size={15} className="text-gray-400" />Tekstvak
+                  </button>
+                  {/* Titel toevoegen: selecteert het (nu nog lege) titelvak zodat
+                      je meteen kunt typen. Een titel weghalen doe je met de
+                      prullenbak in het titelpaneel. */}
+                  <button type="button" onClick={() => { setShowAddMenu(false); setSelectedTitle({ page: currentPageIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                    <Icon name="titleText" size={15} className="text-gray-400" />Titel
                   </button>
                 </div>
               )}
@@ -7743,6 +7827,14 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   </button>
                   <RichTextToolbar getEl={() => titleRef.current} onChange={(v) => updatePage(currentPageIndex, { title: v })}
                     align={titleSel.titleAlign} onAlignChange={(a) => updatePage(currentPageIndex, { titleAlign: a })} />
+                  {/* Titel weghalen: leegt de tekst en deselecteert, waarna het
+                      titelvak verdwijnt (zie PhotobookCanvasTitle). Terug te
+                      halen via "+ Titel". */}
+                  <button type="button" onClick={() => { updatePage(currentPageIndex, { title: null }); setSelectedTitle(null); }}
+                    title="Titel verwijderen"
+                    className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors">
+                    <Icon name="trash" size={15} />
+                  </button>
                 </div>
               </div>
             )}
