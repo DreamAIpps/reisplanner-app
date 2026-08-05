@@ -3780,7 +3780,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const x = page.title_x * pageW, y = page.title_y * pageH;
       const w = page.title_width * pageW, h = page.title_height * pageH;
       doc.roundedRect(x, y, w, h, 8).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      drawFormattedText(doc, page.title, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align, ellipsis: true });
+      drawFormattedText(doc, page.title, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align });
     }
   }
 

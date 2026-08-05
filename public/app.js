@@ -762,9 +762,8 @@ function RichTextView({ html, align, className }) {
 }
 // contentEditable in plaats van een input/textarea, zodat vet/cursief/
 // lettertype meteen zichtbaar zijn terwijl je typt — geen **markers** die je
-// zelf moet interpreteren. `singleLine` voorkomt regeleinden (titel,
-// bijschrift); de beschrijving mag wel meerdere regels hebben.
-const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, singleLine, align }, ref) {
+// zelf moet interpreteren.
+const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, align }, ref) {
   const innerRef = useRef(null);
   const lastValue = useRef(value);
   React.useImperativeHandle(ref, () => innerRef.current);
@@ -803,9 +802,6 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
       document.execCommand("styleWithCSS", false, false);
     } catch {}
   }
-  function handleKeyDown(e) {
-    if (singleLine && e.key === "Enter") e.preventDefault();
-  }
   const isEmpty = !value || value === "<br>";
   return (
     // w-full/h-full zijn hier geen opsmuk: dit wrappertje staat op de
@@ -827,7 +823,7 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
           dit valt alleen op een telefoon op. Direct gezet wint het van de
           geërfde waarde. */}
       <div ref={innerRef} contentEditable suppressContentEditableWarning
-        onFocus={handleFocus} onInput={sync} onBlur={sync} onKeyDown={handleKeyDown}
+        onFocus={handleFocus} onInput={sync} onBlur={sync}
         style={{ textAlign: align || "left" }}
         className={`select-text w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
     </div>
@@ -6284,6 +6280,42 @@ function snapPhotobookStart(start, size) {
   return Math.abs(viaStart - start) <= Math.abs(viaEnd - start) ? viaStart : viaEnd;
 }
 
+// Laat een tekstvak meegroeien met zijn inhoud. Alleen groeien, nooit vanzelf
+// krimpen: een leeg vak zou anders tot een streepje ineenschrompelen, en
+// witruimte die iemand zelf onder de tekst heeft gelaten hoort te blijven
+// staan. Meten gebeurt op de scrollhoogte van het binnenste vlak — dat is de
+// hoogte die de tekst écht nodig heeft, inclusief de regels die nu buiten
+// beeld vallen.
+function usePhotobookAutoGrow({ innerRef, getPageEl, height, onChangeRect, html, enabled }) {
+  useEffect(() => {
+    if (!enabled) return;
+    const el = innerRef.current;
+    const page = getPageEl();
+    if (!el || !page) return;
+
+    function meet() {
+      const pageH = page.getBoundingClientRect().height;
+      // De canvas is bij de eerste render nog nul hoog (die krijgt zijn maat
+      // pas van de ResizeObserver in de editor). Meten heeft dan geen zin;
+      // de observer hieronder roept dit opnieuw aan zodra de maat er wél is.
+      if (!pageH) return;
+      // Meet het tékort (scrollHeight boven clientHeight), niet de gewenste
+      // hoogte zelf. Dat laatste ging mis: het binnenste veld is h-full, dus
+      // zijn hoogte volgt de doos, en "gewenst = hoogte + marge" was dan altijd
+      // nét groter dan wat er stond — het vak groeide zichzelf tot de hele
+      // pagina op. Zodra de tekst past is het tekort nul en gebeurt er niets.
+      const tekort = el.scrollHeight - el.clientHeight;
+      if (tekort <= 1) return;
+      onChangeRect({ height: Math.min(1, (el.getBoundingClientRect().height + tekort) / pageH) });
+    }
+
+    meet();
+    const observer = new ResizeObserver(meet);
+    observer.observe(page);
+    return () => observer.disconnect();
+  }, [html, height, enabled]);
+}
+
 // Waarschuwt als een foto te weinig pixels heeft om scherp afgedrukt te
 // worden op het formaat waarin 'm nu op de A4-pagina staat (net als de
 // resolutie-check bij professionele fotoboek-editors). Alleen te bepalen
@@ -6527,6 +6559,8 @@ const PHOTOBOOK_TEXTBOX_BACKGROUNDS = [
 // het vak verplaatsen in plaats van de cursor te zetten.
 function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChangeHtml, getPageEl, snap, richTextRef }) {
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: box, onChangeRect, getPageEl, snap, onSelect });
+  const innerRef = useRef(null);
+  usePhotobookAutoGrow({ innerRef, getPageEl, height: box.height, onChangeRect, html: box.html, enabled: true });
 
   return (
     <div
@@ -6550,7 +6584,7 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
           <Icon name="dragHandle" size={12} />
         </div>
       )}
-      <div className="w-full h-full overflow-auto p-0.5" onPointerDown={(e) => selected && e.stopPropagation()}>
+      <div ref={innerRef} className="w-full h-full overflow-auto p-0.5" onPointerDown={(e) => selected && e.stopPropagation()}>
         {selected ? (
           <RichTextEditable ref={richTextRef} value={box.html || ""} onChange={onChangeHtml} align={box.align}
             className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent text-sm" placeholder="Tekst..." />
@@ -6584,6 +6618,8 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
   // die eigenlijk voor de tekst bedoeld was (geen toetsenbord dan).
   const rect = { x: page.titleX ?? 0.15, y: page.titleY ?? 0.14, width: page.titleWidth ?? 0.7, height: page.titleHeight ?? 0.1 };
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect });
+  const innerRef = useRef(null);
+  usePhotobookAutoGrow({ innerRef, getPageEl, height: rect.height, onChangeRect, html: page.title, enabled: true });
 
   return (
     <div
@@ -6611,12 +6647,12 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
           <Icon name="dragHandle" size={12} />
         </div>
       )}
-      <div className="w-full h-full overflow-auto p-0.5 flex items-center" onPointerDown={(e) => selected && e.stopPropagation()}>
+      <div ref={innerRef} className="w-full h-full overflow-auto p-0.5 flex items-center" onPointerDown={(e) => selected && e.stopPropagation()}>
         {selected ? (
-          <RichTextEditable ref={richTextRef} value={page.title || ""} onChange={onChangeHtml} align={page.titleAlign} singleLine
+          <RichTextEditable ref={richTextRef} value={page.title || ""} onChange={onChangeHtml} align={page.titleAlign}
             className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent font-display text-base w-full" placeholder="Titel..." />
         ) : (
-          page.title ? <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base truncate w-full pointer-events-none" /> : null
+          page.title ? <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base w-full pointer-events-none" /> : null
         )}
       </div>
       {selected && (
