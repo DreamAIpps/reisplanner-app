@@ -1742,9 +1742,9 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
     mime_type: r.mime_type, caption: r.caption, taken_at: r.taken_at, latitude: r.latitude, longitude: r.longitude, created_at: r.created_at,
     width: r.width, height: r.height,
     label: photobookCaption(r),
-    // Dag erbij zodat de fotokiezer in het fotoboek op reisdag kan groeperen
-    // zonder daarvoor apart de dagen te moeten ophalen.
-    day_date: r.day_date, day_title: r.day_title,
+    // Dag en activiteit erbij zodat de fotokiezer in het fotoboek daarop kan
+    // groeperen zonder daarvoor apart de dagen/activiteiten op te halen.
+    day_date: r.day_date, day_title: r.day_title, activity_title: r.activity_title,
     url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb`,
   })));
 }, { tripScope: "param" });
@@ -3325,13 +3325,14 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   let pageCount = 0;
   for (let i = 0; i < photos.length; i += photosPerPage) {
     const group = photos.slice(i, i + photosPerPage);
-    // Alleen bij één foto per pagina valt er een zinnige titel te kiezen; bij
-    // vier foto's zijn er vier onderschriften en geen manier om die samen te
-    // vatten. Het eigen onderschrift uit het dagboek gaat voor, want dat heeft
-    // iemand zelf getypt; staat dat leeg, dan de afgeleide naam uit de planning.
-    const pageTitle = useJournalTitles && group.length === 1
-      ? ((group[0].caption && String(group[0].caption).trim()) || photobookCaption(group[0]))
-      : null;
+    // Het eigen onderschrift uit het dagboek gaat voor, want dat heeft iemand
+    // zelf getypt. Bij meerdere foto's op een pagina zijn er meerdere
+    // onderschriften en zou één ervan willekeurig zijn; dan wint de afgeleide
+    // naam (activiteit/dag) van de eerste foto, die voor de hele groep opgaat.
+    const pageTitle = !useJournalTitles ? null
+      : group.length === 1
+        ? ((group[0].caption && String(group[0].caption).trim()) || photobookCaption(group[0]))
+        : photobookCaption(group[0]);
     const { rows: pageRows } = await query(
       "INSERT INTO photobook_pages (photobook_id, position, title) VALUES ($1,$2,$3) RETURNING id",
       [bookId, pageCount, pageTitle]
@@ -3769,7 +3770,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
         // Zelfde afgeronde hoeken als de editor/preview (rounded-xl).
         try { doc.roundedRect(x, y, w, h, 8).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
       }
-      drawFormattedText(doc, tb.html, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 10, color: PALETTE.textPrimary, align: tb.align });
+      drawFormattedText(doc, tb.html, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 10, color: PALETTE.textPrimary, align: tb.align });
     }
 
     if (page.title) {
@@ -3779,7 +3780,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const x = page.title_x * pageW, y = page.title_y * pageH;
       const w = page.title_width * pageW, h = page.title_height * pageH;
       doc.roundedRect(x, y, w, h, 8).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      drawFormattedText(doc, page.title, x + 6, y + 6, { width: Math.max(1, w - 12), height: Math.max(1, h - 12), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align, ellipsis: true });
+      drawFormattedText(doc, page.title, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align, ellipsis: true });
     }
   }
 
