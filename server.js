@@ -3573,6 +3573,11 @@ function pdfParseRichHtml(html) {
         if (faceMatch) next.font = faceMatch[1];
         const colorMatch = /color="([^"]*)"/i.exec(m[3] || "");
         if (colorMatch) next.color = colorMatch[1];
+        // Nieuwe boeken zetten de grootte als font-size in punten; dat is
+        // dezelfde eenheid als pdfkit gebruikt, dus die waarde kan er zo in.
+        // Oudere tekst heeft nog size="1..7" — die schaal blijft werken.
+        const ptMatch = /font-size:\s*([\d.]+)pt/i.exec(m[3] || "");
+        if (ptMatch) next.sizePt = Number(ptMatch[1]);
         const sizeMatch = /size="([^"]*)"/i.exec(m[3] || "");
         if (sizeMatch) next.size = Number(sizeMatch[1]);
       }
@@ -3624,11 +3629,14 @@ function drawFormattedText(doc, html, x, y, opts = {}) {
   const lines = pdfParseRichHtml(String(html || ""));
   let first = true;
   lines.forEach((lineRuns, li) => {
-    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null, size: null }];
+    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null, size: null, sizePt: null }];
     runs.forEach((run, ri) => {
       const lastRunOfLine = ri === runs.length - 1;
       const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
-      doc.font(pdfFontFor(run)).fontSize(fontSize * (HTML_FONT_SIZE_RATIOS[run.size] || 1)).fillColor(run.color || color);
+      // Een gekozen puntgrootte is absoluut en gaat vóór op de oude
+      // verhoudingsschaal, die alleen nog voor bestaande tekst geldt.
+      const runSize = run.sizePt || fontSize * (HTML_FONT_SIZE_RATIOS[run.size] || 1);
+      doc.font(pdfFontFor(run)).fontSize(runSize).fillColor(run.color || color);
       const textOpts = { continued: !lastRunOfLine, width, align, ellipsis: lastRunOverall ? ellipsis : undefined };
       if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
       else doc.text(run.text, textOpts);
