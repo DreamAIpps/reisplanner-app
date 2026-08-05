@@ -804,7 +804,14 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
   }
   const isEmpty = !value || value === "<br>";
   return (
-    <div className="relative">
+    // w-full/h-full zijn hier geen opsmuk: dit wrappertje staat op de
+    // fotoboek-canvas in een flex-container. Zonder breedte krimpt het als
+    // flex-item mee met zijn inhoud, en bij een léég veld is dat nul — dan
+    // valt er niets aan te tikken en opent er dus ook geen toetsenbord. De
+    // w-full op het veld zelf hielp niet, want dat is 100% van nul. Bij een
+    // ouder zonder eigen hoogte is h-full simpelweg auto, dus elders schaadt
+    // het niet.
+    <div className="relative w-full h-full">
       {isEmpty && placeholder && (
         <div className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none truncate" style={{ textAlign: align || "left" }}>{placeholder}</div>
       )}
