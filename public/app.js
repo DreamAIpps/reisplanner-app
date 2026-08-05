@@ -6,21 +6,21 @@ const { useState, useEffect, useCallback, useRef } = React;
 // Leaflet, SVG-attributen en canvas. Losse hexcodes horen hier vandaan te
 // komen, zodat de palet-keuze op één plek ligt.
 const PALETTE = {
-  primary: "#F3C2B5",       // pastel perzik — draagt knoppen en accenten
-  primaryHover: "#E9AB9B",
-  primarySoft: "#FDF3F0",
-  background: "#FCFAF8",
+  primary: "#E9B7A6",       // zacht perzik — draagt knoppen en accenten
+  primaryHover: "#E2A792",
+  primarySoft: "#F8EFEB",   // lichte knop- en vlakachtergrond
+  background: "#FFF9F6",
   surface: "#FFFFFF",
-  surfaceSecondary: "#F8F5F3",
-  border: "#ECE6E2",
-  textPrimary: "#373432",
-  textSecondary: "#7B7571",
-  textDisabled: "#C7C1BC",
+  surfaceSecondary: "#F8EFEB",
+  border: "#F1E7E3",        // scheidingslijn
+  textPrimary: "#2F2A28",
+  textSecondary: "#7F7874",
+  textDisabled: "#CFC6C1",
   success: "#A8C7B3",
   info: "#B8D6E8",
   accent: "#F6E2A7",
-  coral: "#E98C7D",         // "nieuw" en "vandaag"
-  coralDeep: "#8C4A3F",     // dezelfde familie, maar donker genoeg voor tekst op wit
+  coral: "#E2A792",         // "nieuw" en "vandaag"
+  coralDeep: "#8A4B39",     // dezelfde familie, maar donker genoeg voor tekst op wit
 };
 
 // Alleen nodig voor pushmeldingen (zie PushToggle) — geen offline-cache, dus
@@ -67,6 +67,7 @@ const ICONS = {
   undo: <><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 1 1 0 12h-3" /></>,
   crop: <><path d="M6 1v15a2 2 0 0 0 2 2h15" /><path d="M1 6h15a2 2 0 0 1 2 2v15" /></>,
   chevronDown: <><path d="m5.5 9 6.5 6.5L18.5 9" /></>,
+  chevronRight: <><path d="m9 5.5 6.5 6.5L9 18.5" /></>,
 
   // vervoer
   plane: <><path d="M3 13.5 21 7l-4.5 12-3.2-5.1z" /><path d="M13.3 13.9 21 7" /></>,
@@ -642,6 +643,53 @@ function greeting(name) {
 }
 
 // ---------- UI Components ----------
+// Keuzeblad dat vanaf de onderkant omhoog glijdt — dichter bij hoe een
+// telefoon-app een lijstje acties aanbiedt dan een dialoog midden in beeld,
+// en het houdt de duim binnen bereik. Rijen komen als children binnen, zodat
+// dit alleen over presentatie gaat en niets over wat de acties doen.
+function BottomSheet({ title, subtitle, onClose, children }) {
+  useEffect(() => {
+    const h = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center rp-veil"
+      style={{ background: "rgba(47,42,40,0.28)" }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="rp-sheet bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {/* Greepje: puur een aanwijzing dat dit blad van onderen komt. */}
+        <div className="pt-3 pb-1 flex justify-center sm:hidden" aria-hidden="true">
+          <span className="w-10 h-1 rounded-full bg-gray-200" />
+        </div>
+        <div className="px-6 pt-4 pb-2">
+          <h2 className="font-display text-[26px] font-semibold text-gray-800 leading-tight">{title}</h2>
+          {subtitle && <p className="text-[15px] text-gray-500 mt-1 leading-relaxed">{subtitle}</p>}
+        </div>
+        <div className="overflow-y-auto px-4 pb-4 pt-2">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Eén rij in een BottomSheet: icoon in een zacht vlakje, titel, uitleg.
+function SheetAction({ icon, label, description, onClick }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="rp-press w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-left hover:bg-gray-50 transition-colors">
+      <span className="shrink-0 w-11 h-11 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center">
+        <Icon name={icon} size={19} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[19px] font-semibold text-gray-800 leading-snug">{label}</span>
+        {description && <span className="block text-[13px] font-medium text-gray-500 mt-0.5">{description}</span>}
+      </span>
+      <Icon name="chevronRight" size={16} className="shrink-0 text-gray-300" />
+    </button>
+  );
+}
+
 function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
@@ -882,7 +930,7 @@ function Select({ className = "", children, ...props }) {
 // hoofdactie (56px) — de standaard blijft compact genoeg voor knoppenrijen,
 // maar houdt 44px aan zodat het op een telefoon een eerlijk trefvlak is.
 function Button({ variant = "primary", size = "md", className = "", children, ...props }) {
-  const base = "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
+  const base = "rp-press inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
   const sizes = {
     md: "px-4 h-11 text-sm",
     lg: "px-6 h-14 text-base",
@@ -1231,7 +1279,7 @@ function PrivacyToggle({ value, onChange }) {
 }
 
 // ---------- Activity form ----------
-function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated }) {
+function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onClose, onImport, onDelete, photos, onPhotosChange, journalEntries, onJournalChange, currentUserId, readOnly, showPhotos = false, stayOpenAfterCreate = false, onCreated, presetCategory }) {
   // Once created, the activity behaves like an existing one for the rest of this
   // dialog, which is what unlocks the dagboek section below.
   const [created, setCreated] = useState(null);
@@ -1252,7 +1300,9 @@ function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onC
     // always wins. Today is only the default when no day was specified at all
     // (and only if today actually falls inside the trip).
     const todayDay = (days || []).find((d) => d.date && String(d.date).slice(0, 10) === todayIso(tripTimezone));
-    return { time: "", title: "", location: "", notes: "", category: "Bezienswaardigheid", cost: "", is_private: false, day_id: dayId ?? todayDay?.id ?? "" };
+    // presetCategory komt van het keuzeblad ("Restaurant" opent hetzelfde
+    // formulier, maar met die categorie al ingevuld) — verder verandert er niets.
+    return { time: "", title: "", location: "", notes: "", category: presetCategory || "Bezienswaardigheid", cost: "", is_private: false, day_id: dayId ?? todayDay?.id ?? "" };
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -2294,6 +2344,36 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
 const CATEGORY_ICONS = { Bezienswaardigheid: "landmark", Restaurant: "fork", Museum: "frame", Natuur: "leaf", Sport: "ball", Shopping: "bagShop", Anders: "flag" };
 function categoryIcon(cat) { return CATEGORY_ICONS[cat] || "flag"; }
 
+// Eén kaartje op de tijdlijn — vervoer, verblijf en activiteit zien er verder
+// hetzelfde uit, dus alleen de inhoud verschilt. Het stipje links valt precies
+// op de verticale lijn van de dag (zie de lijn in DayPlanningTab).
+function TimelineCard({ time, icon, title, subtitle, meta, aside, trailing, onClick }) {
+  return (
+    <div className="relative pl-8">
+      <span aria-hidden="true"
+        className="absolute left-0 top-7 w-2.5 h-2.5 rounded-full bg-sky-300 ring-4 ring-gray-50" />
+      <div onClick={onClick}
+        className="rp-press bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow cursor-pointer p-5">
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-[13px] font-medium text-gray-400">
+              <span className="tnum">{time || "—"}</span>
+              {meta && <span className="truncate">{meta}</span>}
+            </div>
+            <div className="flex items-center gap-2 mt-1.5">
+              <Icon name={icon} size={17} className="shrink-0 text-sky-700" />
+              <span className="text-[19px] font-semibold text-gray-800 leading-snug min-w-0">{title}</span>
+            </div>
+            {subtitle && <div className="text-[15px] text-gray-500 mt-1 leading-relaxed">{subtitle}</div>}
+            {aside}
+          </div>
+          {trailing && <div className="shrink-0 flex items-center gap-1">{trailing}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Combineert activiteiten, vervoer en verblijf tot één chronologische lijst
 // van wat er nog aan zit te komen — handig tijdens de reis zelf om in één
 // oogopslag te zien wat er hierna op de planning staat. Tijdsprecisie stopt
@@ -2378,6 +2458,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [addingAccommodation, setAddingAccommodation] = useState(false);
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
+  const [showAddSheet, setShowAddSheet] = useState(false);
   const didAutoScroll = useRef(false);
   const accent = trip.cover_color || PALETTE.primary;
 
@@ -2428,59 +2509,98 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     else setEditingAccommodation(item.ref);
   }
 
+  // Alle "toevoegen"-acties zaten als vijf losse knoppen op de pagina en namen
+  // meer ruimte in dan de planning zelf. Nu één primaire actie, met de keuze in
+  // een blad — dezelfde handelingen, alleen niet meer allemaal tegelijk in beeld.
+  const addActions = [
+    { key: "activity", icon: categoryIcon("Bezienswaardigheid"), label: "Activiteit", description: "Bezienswaardigheid, museum, wandeling",
+      run: () => setShowActivityForm({ dayId: todayDay?.id }) },
+    { key: "transport", icon: "plane", label: "Vervoer", description: "Vlucht, trein, auto of boot",
+      run: () => setAddingTransport(true) },
+    { key: "stay", icon: "bed", label: "Verblijf", description: "Hotel, appartement of camping",
+      run: () => setAddingAccommodation(true) },
+    { key: "restaurant", icon: categoryIcon("Restaurant"), label: "Restaurant", description: "Reservering of eetadres",
+      run: () => setShowActivityForm({ dayId: todayDay?.id, category: "Restaurant" }) },
+    { key: "import", icon: "mail", label: "Reisbevestiging uploaden", description: "Wij halen de gegevens er zelf uit",
+      run: () => setImporting(true) },
+    ...(onShareEditor ? [{ key: "share", icon: "share", label: "Reis delen met reisgenoot", description: "Samen plannen aan dezelfde reis",
+      run: () => onShareEditor() }] : []),
+  ];
+
   return (
     <div>
-      <h3 className="font-display text-[21px] text-gray-800 mb-4">Dagplanning</h3>
+      {/* Sectietitel krijgt lucht boven en onder; de datumspanne eronder vertelt
+          waar je naar kijkt zonder dat er een tweede regel chrome bij komt. */}
+      <div className="flex items-end justify-between gap-4 pt-2 pb-8">
+        <div className="min-w-0">
+          <h3 className="font-display text-[32px] font-semibold text-gray-800 leading-tight">Dagplanning</h3>
+          {days.length > 0 && (
+            <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
+              {days.length} dag{days.length === 1 ? "" : "en"}
+              {trip.destination ? ` in ${trip.destination}` : ""}
+            </p>
+          )}
+        </div>
+        {todayDay && (
+          <button type="button" onClick={scrollToToday}
+            className="rp-press shrink-0 text-[13px] font-medium text-gray-500 hover:text-gray-800 inline-flex items-center gap-1.5 px-3 h-10 rounded-xl hover:bg-gray-100 transition-colors">
+            <Icon name="pin" size={14} />Vandaag
+          </button>
+        )}
+      </div>
 
-      {/* Direct onder de titel, vóór de actieknoppen — dit is waarom je tijdens
-          de reis zelf op dit tabblad kijkt, en moet zonder scrollen te zien
-          zijn, ook als de knoppenrij eronder op mobiel over meerdere regels
-          uitvalt. */}
+      {/* Direct onder de titel — dit is waarom je tijdens de reis zelf op dit
+          tabblad kijkt, en moet zonder scrollen te zien zijn. */}
       {upcoming.length > 0 && (
-        <div className="rounded-2xl border border-gray-100 bg-white shadow-sm mb-4 overflow-hidden">
-          <div className="px-4 pt-3 pb-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-400">Binnenkort</div>
-          <div className="divide-y divide-gray-50">
-            {upcoming.map((item) => (
-              <div key={item.key} onClick={() => openUpcomingItem(item)}
-                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
-                <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">{item.time || "—"}</span>
-                <Icon name={item.icon} size={14} className="text-gray-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-gray-800 truncate">{item.title}</div>
-                  <div className="text-xs text-gray-500 truncate">{item.subtitle}</div>
+        <div className="rounded-2xl bg-white shadow-md mb-8 overflow-hidden">
+          <div className="px-6 pt-5 pb-1 text-[13px] font-semibold uppercase tracking-[0.1em] text-gray-400">Binnenkort</div>
+          <div className="px-2 pb-2">
+            {upcoming.map((item, i) => (
+              <React.Fragment key={item.key}>
+                {/* Losse streep in plaats van een border op de rij zelf: die zou
+                    de afgeronde hoeken volgen en als een boogje uitkomen. */}
+                {i > 0 && <div className="mx-4 h-px bg-gray-200" aria-hidden="true" />}
+              <div onClick={() => openUpcomingItem(item)}
+                className="rp-press flex items-center gap-4 px-4 py-4 rounded-2xl cursor-pointer hover:bg-gray-50 transition-colors">
+                {/* Links: tijd met klein icoon eronder. */}
+                <div className="shrink-0 w-12 text-center">
+                  <div className="text-[15px] font-semibold text-gray-800 tnum leading-none">{item.time || "—"}</div>
+                  <Icon name={item.icon} size={14} className="text-gray-400 mt-2" />
                 </div>
-                <DayWeatherBadge query={item.weatherQuery} date={item.dayStr} size={12} />
-                <span className="text-[10px] uppercase tracking-wide text-gray-300 shrink-0">
-                  {item.dayStr === todayIso(trip.timezone) ? "vandaag"
-                    : item.dayStr === tomorrowIso(trip.timezone) ? "morgen"
-                    : fmtShortDate(item.dayStr)}
-                </span>
+                {/* Midden: waar het om gaat. */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[19px] font-semibold text-gray-800 truncate leading-snug">{item.title}</div>
+                  <div className="text-[13px] font-medium text-gray-500 truncate mt-0.5">{item.subtitle}</div>
+                </div>
+                {/* Rechts: weer boven, dag eronder. */}
+                <div className="shrink-0 text-right">
+                  <DayWeatherBadge query={item.weatherQuery} date={item.dayStr} size={14} />
+                  <div className="text-[13px] font-medium text-gray-400 mt-1">
+                    {item.dayStr === todayIso(trip.timezone) ? "Vandaag"
+                      : item.dayStr === tomorrowIso(trip.timezone) ? "Morgen"
+                      : fmtShortDate(item.dayStr)}
+                  </div>
+                </div>
               </div>
+              </React.Fragment>
             ))}
           </div>
         </div>
       )}
 
-      <div className="flex justify-end items-center mb-6 gap-2 flex-wrap">
-        <div className="flex gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
-          {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
-          {/* Quick-add while on the trip: opens the form pre-set to today.
-              The per-day "+ Activiteit" buttons keep using their own day. */}
-          {!readOnly && todayDay && <Button onClick={() => setShowActivityForm({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>}
-          {!readOnly && <Button onClick={() => setAddingTransport(true)} variant="secondary">+ Vervoer/vlucht toevoegen</Button>}
-          {!readOnly && <Button onClick={() => setAddingAccommodation(true)} variant="secondary">+ Verblijf toevoegen</Button>}
-          {!readOnly && <Button onClick={() => setImporting(true)}><Icon name="mail" size={14} className="mr-1.5" />Reisbevestiging uploaden</Button>}
-          {onShareEditor && !readOnly && (
-            <Button onClick={onShareEditor} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Reis delen met reisgenoot</Button>
-          )}
+      {!readOnly && (
+        <div className="mb-8">
+          <Button size="lg" className="w-full" onClick={() => setShowAddSheet(true)}>
+            <Icon name="plus" size={19} />Toevoegen
+          </Button>
         </div>
-      </div>
+      )}
 
       {days.length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <Icon name="calendar" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
-          <div className="font-medium">Nog geen dagen gepland</div>
-          <div className="text-sm mt-1">Stel een vertrek- en terugkomstdatum in bij de reis om te beginnen</div>
+        <div className="text-center py-20 text-gray-400">
+          <Icon name="calendar" size={44} strokeWidth={1.2} className="mx-auto mb-4 text-gray-300" />
+          <div className="text-[19px] font-semibold text-gray-600">Nog geen dagen gepland</div>
+          <div className="text-[15px] mt-2 leading-relaxed">Stel een vertrek- en terugkomstdatum in bij de reis om te beginnen</div>
         </div>
       )}
 
@@ -2510,160 +2630,113 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
             const isToday = dayStr === todayIso(trip.timezone);
 
+            const tipsButton = (loc) => (
+              <button onClick={(e) => { e.stopPropagation(); setTipsLocation(loc); }}
+                className="rp-press w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-sky-700 hover:bg-sky-50 transition-colors"
+                title="Lokale tips" aria-label="Lokale tips">
+                <Icon name="bulb" size={17} />
+              </button>
+            );
+
             return (
-              <div key={day.id} id={`day-${day.id}`} className="relative flex gap-3" style={{ scrollMarginTop: "5rem" }}>
-                {/* Dagmarkering: het dagnummer draagt de dag, met gewicht in
-                    plaats van kleur. Alleen "vandaag" krijgt het koraal — de
-                    enige plek waar die kleur mag opduiken. */}
-                <div className="shrink-0 text-right pt-1" style={{ width: "3.4rem" }}>
-                  <div className={`font-display text-[33px] leading-none tnum ${isToday ? "text-sky-700 font-semibold" : "text-gray-800 font-medium"}`}>{dayNum}</div>
-                  <div className={`text-[10px] uppercase tracking-[0.12em] font-semibold mt-1.5 whitespace-nowrap ${isToday ? "text-sky-700" : "text-gray-400"}`}>
+              <div key={day.id} id={`day-${day.id}`} className="rp-rise"
+                style={{ scrollMarginTop: "5rem", animationDelay: `${Math.min(dayIndex, 6) * 40}ms` }}>
+                {/* Dagkop: het dagnummer draagt de dag, met gewicht in plaats van
+                    kleur. Alleen "vandaag" krijgt het perzik. */}
+                <div className="flex items-center gap-3 mb-5">
+                  <span className={`font-display text-[26px] font-bold leading-none tnum ${isToday ? "text-sky-700" : "text-gray-800"}`}>{dayNum}</span>
+                  <span className={`text-[13px] font-semibold uppercase tracking-[0.14em] ${isToday ? "text-sky-700" : "text-gray-400"}`}>
                     {dayName} {monthName}
-                  </div>
-                  {dayIndex === 0 && days.length > 1 && (
-                    <div className="text-[10px] text-gray-300 mt-1.5">Dag 1</div>
+                  </span>
+                  {isToday && (
+                    <span className="text-[13px] font-semibold px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-700">Vandaag</span>
                   )}
+                  <span className="ml-auto shrink-0"><DayWeatherBadge query={weatherQuery} date={dayStr} size={15} /></span>
                 </div>
 
-                {/* Day content — haarlijn in plaats van een streep van 2px, en
-                    ruimer eronder zodat de dagen lucht om zich heen krijgen. */}
-                <div className={`flex-1 min-w-0 border-l border-gray-200 pl-5 ${dayIndex === days.length - 1 ? "pb-2" : "pb-8"}`}>
-                  <div className="flex items-center justify-between flex-wrap gap-y-1 mb-2 pt-1">
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <div className="flex items-center gap-2">
-                        {isToday && (
-                          <span className="text-[10px] font-semibold uppercase tracking-[0.1em] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">Vandaag</span>
-                        )}
-                        {day.title && <span className="font-display text-gray-800 text-[17px]">{day.title}</span>}
-                        {totalItems === 0 && <span className="text-xs text-gray-400 italic">Leeg</span>}
+                {(day.title || nightAccommodation) && (
+                  <div className="pl-8 -mt-2 mb-4 space-y-1">
+                    {day.title && <div className="text-[19px] font-semibold text-gray-800 leading-snug">{day.title}</div>}
+                    {nightAccommodation && (
+                      <div className="text-[13px] font-medium text-gray-400 flex items-center gap-1.5">
+                        <Icon name="bed" size={14} />
+                        <span className="truncate">{nightAccommodation.address || nightAccommodation.name}</span>
                       </div>
-                      {nightAccommodation && (
-                        <span className="text-xs text-gray-500 flex items-center gap-1.5">
-                          <Icon name="bed" size={13} className="text-gray-400" />
-                          <span className="truncate max-w-[180px]">{nightAccommodation.address || nightAccommodation.name}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <DayWeatherBadge query={weatherQuery} date={dayStr} />
-                      {!readOnly && (
-                        <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:border-sky-300 hover:text-sky-700 transition-colors inline-flex items-center gap-1">
-                          <Icon name="plus" size={13} />Activiteit
-                        </button>
-                      )}
-                    </div>
+                    )}
                   </div>
+                )}
 
-                  <div className="space-y-2">
-                    {/* Transport cards */}
+                {/* De lijn loopt door achter de kaartjes; elk kaartje zet er zelf
+                    een stipje op (zie TimelineCard). */}
+                <div className={`relative ${dayIndex === days.length - 1 ? "pb-6" : "pb-12"}`}>
+                  {totalItems > 0 && (
+                    <span aria-hidden="true" className="absolute left-[5px] top-2 bottom-0 w-px bg-gray-200" />
+                  )}
+                  <div className="space-y-4">
+                    {/* Vervoer */}
                     {dayTransports.map((t) => {
                       const isArrival = isoDate(t.arrival_time) === dayStr && isoDate(t.departure_time) !== dayStr;
                       const time = isArrival ? t.arrival_time : t.departure_time;
                       return (
-                        <div key={t.id + (isArrival ? "-a" : "-d")}
+                        <TimelineCard
+                          key={t.id + (isArrival ? "-a" : "-d")}
                           onClick={() => setEditingTransport(t)}
-                          className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-white border border-gray-200 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all">
-                          <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">
-                            {time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            {/* Een route mag over twee regels; "Parijs CDG → Sha…" zegt niets. */}
-                            <div className="text-sm font-semibold text-gray-800 leading-snug">
-                              {t.from_location} → {t.to_location}
-                              {t.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
-                            </div>
-                            <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-                              <Icon name={transportIcon(t.type)} size={13} className="text-gray-400" />
-                              <span>{isArrival ? "Aankomst" : "Vertrek"}</span>
-                              {t.booking_ref && <span className="tnum text-gray-400 hidden sm:inline">#{t.booking_ref}</span>}
-                              {t.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(t.cost, trip.currency)}</span>}
-                            </div>
-                            {t.baggage_allowance && <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><Icon name="suitcase" size={12} className="text-gray-400" /><span className="truncate">{t.baggage_allowance}</span></div>}
-                          </div>
-                          {t.to_location && (
-                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(t.to_location); }}
-                              className="shrink-0 rounded-lg border border-gray-200 text-gray-500 hover:text-sky-700 hover:border-sky-300 transition-colors"
-                              title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap"><Icon name="bulb" size={13} />Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8"><Icon name="bulb" size={16} /></span>
-                            </button>
-                          )}
-                        </div>
+                          time={time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : null}
+                          icon={transportIcon(t.type)}
+                          meta={[isArrival ? "Aankomst" : "Vertrek", t.booking_ref ? `#${t.booking_ref}` : null, t.cost ? fmtMoney(t.cost, trip.currency) : null].filter(Boolean).join(" · ")}
+                          title={<>{t.from_location} → {t.to_location}{t.is_private && <Icon name="lock" size={12} className="inline text-gray-300 ml-1.5" />}</>}
+                          subtitle={t.baggage_allowance || null}
+                          trailing={t.to_location ? tipsButton(t.to_location) : null}
+                        />
                       );
                     })}
 
-                    {/* Accommodation cards */}
+                    {/* Verblijf */}
                     {dayAccommodations.map((a) => {
                       const isCheckIn = isoDate(a.check_in) === dayStr;
                       const isCheckOut = isoDate(a.check_out) === dayStr;
                       return (
-                        <div key={a.id}
+                        <TimelineCard
+                          key={a.id}
                           onClick={() => setEditingAccommodation(a)}
-                          className="rounded-xl bg-white border border-gray-200 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all">
-                          <div className="flex items-center gap-3 px-3 py-2.5">
-                            <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right">—</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm font-semibold text-gray-800 truncate">
-                                {a.name}
-                                {a.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
-                              </div>
-                              <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-                                <Icon name="bed" size={13} className="text-gray-400" />
-                                <span>{isCheckIn && isCheckOut ? "Check-in & uit" : isCheckIn ? "Check-in" : "Check-out"}</span>
-                                {a.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(a.cost, trip.currency)}</span>}
-                              </div>
-                              {a.address && <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><Icon name="pin" size={12} /><span className="truncate">{a.address}</span></div>}
-                            </div>
-                            <button onClick={(e) => { e.stopPropagation(); setTipsLocation(a.address || a.name); }}
-                              className="shrink-0 rounded-lg border border-gray-200 text-gray-500 hover:text-sky-700 hover:border-sky-300 transition-colors"
-                              title="Lokale tips">
-                              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 whitespace-nowrap"><Icon name="map" size={13} />Lokale tips</span>
-                              <span className="sm:hidden flex items-center justify-center w-8 h-8"><Icon name="map" size={16} /></span>
-                            </button>
-                          </div>
-                        </div>
+                          time={isCheckIn && isCheckOut ? "In & uit" : isCheckIn ? "Check-in" : "Check-out"}
+                          icon="bed"
+                          meta={a.cost ? fmtMoney(a.cost, trip.currency) : null}
+                          title={<>{a.name}{a.is_private && <Icon name="lock" size={12} className="inline text-gray-300 ml-1.5" />}</>}
+                          subtitle={a.address || null}
+                          trailing={tipsButton(a.address || a.name)}
+                        />
                       );
                     })}
 
-                    {/* Activity cards */}
-                    {day.activities.map((act) => {
-                      return (
-                        <div key={act.id}
-                          onClick={() => setEditingActivity(act)}
-                          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden group hover:shadow-md transition-shadow cursor-pointer">
-                          <div className="flex items-start gap-3 px-3 py-2.5">
-                            <span className="text-xs text-gray-500 tnum shrink-0 w-11 text-right pt-0.5">{act.time || "—"}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm font-semibold text-gray-800">
-                                {act.title}
-                                {act.is_private && <Icon name="lock" size={11} className="inline text-gray-300 ml-1" />}
-                              </div>
-                              <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-                                <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400" />
-                                <span className="truncate">{act.category || "Activiteit"}</span>
-                                {act.cost && <span className="tnum ml-auto pl-2 shrink-0">{fmtMoney(act.cost, trip.currency)}</span>}
-                              </div>
-                              {act.location && <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1"><Icon name="pin" size={12} /><span className="truncate">{act.location}</span></div>}
-                              {act.notes && <div className="text-xs text-gray-500 mt-1 leading-relaxed">{act.notes}</div>}
-                            </div>
-                            {!readOnly && (
-                              <div className="flex gap-1 shrink-0">
-                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-gray-300 hover:text-red-500 active:text-red-600 p-1" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {/* Activiteiten */}
+                    {day.activities.map((act) => (
+                      <TimelineCard
+                        key={act.id}
+                        onClick={() => setEditingActivity(act)}
+                        time={act.time}
+                        icon={categoryIcon(act.category)}
+                        meta={[act.category || "Activiteit", act.cost ? fmtMoney(act.cost, trip.currency) : null].filter(Boolean).join(" · ")}
+                        title={<>{act.title}{act.is_private && <Icon name="lock" size={12} className="inline text-gray-300 ml-1.5" />}</>}
+                        subtitle={act.location || null}
+                        aside={act.notes ? <div className="text-[15px] text-gray-500 mt-2 leading-relaxed">{act.notes}</div> : null}
+                        trailing={!readOnly ? (
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }}
+                            className="rp-press w-9 h-9 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            aria-label="Verwijderen"><Icon name="trash" size={17} /></button>
+                        ) : null}
+                      />
+                    ))}
 
                     {totalItems === 0 && !readOnly && (
                       <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                        className="w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
-                        + Activiteit toevoegen
+                        className="rp-press w-full rounded-2xl py-6 text-[15px] font-medium text-gray-400 bg-white/60 hover:bg-white hover:text-gray-600 transition-colors">
+                        + Iets toevoegen op deze dag
                       </button>
                     )}
-
+                    {totalItems === 0 && readOnly && (
+                      <div className="text-[15px] text-gray-400 py-2">Niets gepland.</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2672,8 +2745,18 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         </div>
       </div>
 
+      {showAddSheet && (
+        <BottomSheet title="Toevoegen" subtitle="Wat wil je aan deze reis toevoegen?" onClose={() => setShowAddSheet(false)}>
+          {addActions.map((a) => (
+            <SheetAction key={a.key} icon={a.icon} label={a.label} description={a.description}
+              onClick={() => { setShowAddSheet(false); a.run(); }} />
+          ))}
+        </BottomSheet>
+      )}
+
       {showActivityForm && (
         <ActivityForm dayId={showActivityForm.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days}
+          presetCategory={showActivityForm.category}
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
           onClose={() => setShowActivityForm(null)}
           onImport={() => { setShowActivityForm(null); setImporting(true); }} />
@@ -2706,8 +2789,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
       <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         title="Naar boven"
-        className="fixed right-4 z-40 w-12 h-12 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
-        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 6px 20px rgba(233,171,155,0.45)", bottom: "calc(68px + env(safe-area-inset-bottom) + 16px)" }}>
+        className="rp-press fixed right-5 z-40 w-11 h-11 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
+        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
         <Icon name="arrowUp" size={19} />
       </button>
     </div>
@@ -3509,8 +3592,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
       <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         title="Naar boven"
-        className="fixed right-4 z-40 w-12 h-12 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
-        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 6px 20px rgba(233,171,155,0.45)", bottom: "calc(68px + env(safe-area-inset-bottom) + 16px)" }}>
+        className="rp-press fixed right-5 z-40 w-11 h-11 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
+        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
         <Icon name="arrowUp" size={19} />
       </button>
     </div>
@@ -8703,6 +8786,20 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
+  // Hero: de bestemming is waar je heen gaat en hoort dus het grootst; de
+  // reisnaam blijft er als klein regeltje boven staan. "Kyoto, Japan" wordt
+  // gesplitst op de laatste komma, zodat het land eronder komt — staat er geen
+  // komma in, dan is de hele tekst de plaats en blijft het land weg.
+  const heroOnPhoto = !!trip.cover_image;
+  const heroInk = heroOnPhoto ? "#FFFFFF" : textOn(accent);
+  const heroDest = trip.destination || "";
+  const heroComma = heroDest.lastIndexOf(",");
+  const heroCity = heroComma > 0 ? heroDest.slice(0, heroComma).trim() : heroDest;
+  const heroCountry = heroComma > 0 ? heroDest.slice(heroComma + 1).trim() : null;
+  const heroDuration = tripDuration(trip.start_date, trip.end_date);
+  const heroShowBudget = viewTrip.budget && tab !== "journal" && tab !== "photos";
+  const heroShowActions = isOwnerActions && tab !== "journal" && tab !== "photos";
+
   return (
     <div className="pb-2">
       {previewViewer && (
@@ -8726,69 +8823,50 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         ← Alle reizen
       </button>
 
-      {/* Header */}
-      <div className="rounded-2xl shadow-md overflow-hidden mb-6" style={{ border: `1px solid ${accent}22` }}>
-        {trip.cover_image ? (
-          <>
-            <div className="relative h-32 sm:h-40 w-full overflow-hidden">
-              <img src={trip.cover_image} alt={trip.destination || trip.name} className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-              <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
-                <div className="flex items-start gap-2 mb-0.5">
-                  {trip.is_owner === false && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-black/30 text-white backdrop-blur-sm">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
-                </div>
-                <h2 className="text-lg sm:text-xl font-bold text-white drop-shadow-md">
-                  {trip.name}
-                  {!readOnly && tab !== "journal" && (
-                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-xs font-medium text-white/70 hover:text-white transition-colors">
-                      · Dagplanning
-                    </button>
-                  )}
-                </h2>
-                {trip.destination && <div className="text-white/85 mt-0.5 text-xs flex items-center gap-1"><Icon name="pin" size={11} />{trip.destination}</div>}
-                <div className="flex gap-3 mt-1 text-xs text-white/70 flex-wrap">
-                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={11} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={11} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
-                </div>
-                {trip.notes && <div className="text-white/60 text-[11px] mt-1">{trip.notes}</div>}
-              </div>
+      {/* Hero — de blikvanger van de pagina. Eén blok voor zowel een omslagfoto
+          als een effen omslagkleur; alleen de sluier en de inktkleur verschillen,
+          want bij een foto weten we de helderheid niet en bij een kleur wel. */}
+      <div className="rounded-3xl overflow-hidden shadow-md mb-8 rp-rise">
+        <div className="relative flex flex-col justify-end" style={{ height: 220 }}>
+          {heroOnPhoto
+            ? <img src={trip.cover_image} alt={heroDest || trip.name} className="absolute inset-0 w-full h-full object-cover" />
+            : <div className="absolute inset-0" style={{ background: `linear-gradient(150deg, ${accent}, ${accent}cc)` }} />}
+          {heroOnPhoto && <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />}
+
+          <div className="relative px-6 pb-6" style={{ color: heroInk }}>
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="text-[13px] font-medium" style={{ opacity: 0.85 }}>{trip.name}</span>
+              {trip.is_owner === false && (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/90 text-gray-700">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>
+              )}
+              {!readOnly && tab !== "journal" && (
+                <button onClick={() => setTab("days")} className="sm:hidden text-[13px] font-medium hover:opacity-100 transition-opacity" style={{ opacity: 0.75 }}>
+                  · Dagplanning
+                </button>
+              )}
             </div>
-            {isOwnerActions && tab !== "journal" && tab !== "photos" && (
-              <div className="bg-white px-3 py-1.5 border-t border-gray-100 flex justify-end">
-                <TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div className="relative h-20 w-full flex items-end px-5 pb-3" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
-              <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/25" />
-              <div className="relative flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  {trip.is_owner === false && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-black/25 text-white">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>}
-                </div>
-                <h2 className="text-lg font-bold drop-shadow text-white">
-                  {trip.name}
-                  {!readOnly && tab !== "journal" && (
-                    <button onClick={() => setTab("days")} className="sm:hidden ml-2 align-middle text-xs font-medium text-white/70 hover:text-white transition-colors">
-                      · Dagplanning
-                    </button>
-                  )}
-                </h2>
-                {trip.destination && <div className="text-xs mt-0.5 flex items-center gap-1 text-white/80"><Icon name="pin" size={11} />{trip.destination}</div>}
-              </div>
+            <h2 className="font-display text-[32px] font-semibold leading-tight">{heroCity || trip.name}</h2>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2.5 text-[13px] font-medium" style={{ opacity: 0.85 }}>
+              {heroCountry && <span>{heroCountry}</span>}
+              {trip.start_date && (
+                <span className="flex items-center gap-1.5">
+                  <Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>
+                </span>
+              )}
+              {heroDuration && <span>{heroDuration}</span>}
+              {heroShowBudget && (
+                <span className="flex items-center gap-1.5">
+                  <Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span>
+                </span>
+              )}
             </div>
-            <div className="bg-white px-4 py-2.5">
-              <div className="text-xs text-gray-500 flex gap-4 flex-wrap items-center justify-between">
-                <div className="flex gap-3 flex-wrap">
-                  {trip.start_date && <span className="flex items-center gap-1"><Icon name="calendar" size={11} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>{tripDuration(trip.start_date, trip.end_date) ? ` (${tripDuration(trip.start_date, trip.end_date)})` : ""}</span>}
-                  {viewTrip.budget && tab !== "journal" && tab !== "photos" && <span className="flex items-center gap-1"><Icon name="wallet" size={11} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span></span>}
-                </div>
-                {isOwnerActions && tab !== "journal" && tab !== "photos" && <TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} />}
-              </div>
-              {trip.notes && <div className="text-xs text-gray-500 mt-1.5">{trip.notes}</div>}
-            </div>
-          </>
+          </div>
+        </div>
+        {(trip.notes || heroShowActions) && (
+          <div className="bg-white px-6 py-4 flex items-center gap-4">
+            {trip.notes && <div className="text-[15px] text-gray-500 leading-relaxed min-w-0 flex-1">{trip.notes}</div>}
+            {heroShowActions && <div className="shrink-0 ml-auto"><TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} /></div>}
+          </div>
         )}
       </div>
 
@@ -8815,24 +8893,35 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         const ePct = pct(expenseTotal);
         const overBudget = spent > total;
         return (
-          <button onClick={() => setTab("budget")} className="w-full mb-5 bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 text-left hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-baseline mb-2">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Budget</span>
-              <span className={`text-xs font-semibold ${overBudget ? "text-red-500" : "text-gray-600"}`}>
-                {fmtMoney(spent, trip.currency)} <span className="text-gray-400 font-normal">/ {fmtMoney(total, trip.currency)}</span>
+          <button onClick={() => setTab("budget")} className="rp-press w-full mb-8 bg-white rounded-2xl shadow-sm px-6 py-6 text-left hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-baseline gap-4 mb-5">
+              <span className="text-[13px] font-semibold text-gray-400 uppercase tracking-[0.1em]">Budget</span>
+              <span className="text-[19px] font-semibold text-gray-800 tnum">
+                {fmtMoney(spent, trip.currency)}
+                <span className="text-[15px] font-medium text-gray-400"> / {fmtMoney(total, trip.currency)}</span>
               </span>
             </div>
-            <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
+            {/* Dunne, afgeronde balk met een haardun wit naadje tussen de vakken,
+                zodat twee aangrenzende categorieën niet in elkaar overlopen. */}
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex gap-px">
               <div style={{ width: `${tPct}%`, background: PALETTE.coralDeep }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
               <div style={{ width: `${aPct}%`, background: PALETTE.coral }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
               <div style={{ width: `${acPct}%`, background: PALETTE.success }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
               <div style={{ width: `${ePct}%`, background: PALETTE.info }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
             </div>
-            <div className="flex gap-3 mt-2 flex-wrap">
-              {transportTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:PALETTE.coralDeep}} />Vervoer {fmtMoney(transportTotal, trip.currency)}</span>}
-              {accommodationTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:PALETTE.coral}} />Verblijf {fmtMoney(accommodationTotal, trip.currency)}</span>}
-              {activityTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:PALETTE.success}} />Activiteiten {fmtMoney(activityTotal, trip.currency)}</span>}
-              {expenseTotal > 0 && <span className="text-xs text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:PALETTE.info}} />Overig {fmtMoney(expenseTotal, trip.currency)}</span>}
+            {overBudget && <div className="text-[13px] font-medium text-red-600 mt-3">Boven budget</div>}
+            <div className="flex gap-x-5 gap-y-2 mt-4 flex-wrap">
+              {[
+                [transportTotal, PALETTE.coralDeep, "Vervoer"],
+                [accommodationTotal, PALETTE.coral, "Verblijf"],
+                [activityTotal, PALETTE.success, "Activiteiten"],
+                [expenseTotal, PALETTE.info, "Overig"],
+              ].filter(([v]) => v > 0).map(([value, color, label]) => (
+                <span key={label} className="text-[13px] font-medium text-gray-500 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ background: color }} />
+                  {label} <span className="tnum text-gray-400">{fmtMoney(value, trip.currency)}</span>
+                </span>
+              ))}
             </div>
           </button>
         );
@@ -8930,8 +9019,8 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         <div className="flex">
           {bottomNavItems.map((item) => (
             <button key={item.key} onClick={() => setTab(item.key)}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 pt-2 pb-1.5 transition-colors min-w-0 ${tab === item.key ? "text-gray-800" : "text-gray-400 hover:text-gray-600"}`}
-              style={{ minHeight: 68 }}>
+              className={`rp-press flex-1 flex flex-col items-center justify-center gap-1.5 pt-3 pb-2 transition-colors min-w-0 ${tab === item.key ? "text-sky-700" : "text-gray-300 hover:text-gray-500"}`}
+              style={{ minHeight: 72 }}>
               <span className={`flex items-center justify-center h-8 px-4 rounded-full transition-colors ${tab === item.key ? "bg-sky-100" : ""}`}>
                 <Icon name={item.icon} size={20} />
               </span>
@@ -8939,8 +9028,8 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
             </button>
           ))}
           <button onClick={() => setShowMoreMenu((v) => !v)}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-2 pb-1.5 transition-colors min-w-0 ${isMoreActive || showMoreMenu ? "text-gray-800" : "text-gray-400 hover:text-gray-600"}`}
-            style={{ minHeight: 68 }}>
+            className={`rp-press flex-1 flex flex-col items-center justify-center gap-1.5 pt-3 pb-2 transition-colors min-w-0 ${isMoreActive || showMoreMenu ? "text-sky-700" : "text-gray-300 hover:text-gray-500"}`}
+            style={{ minHeight: 72 }}>
             <span className={`flex items-center justify-center h-8 px-4 rounded-full transition-colors ${isMoreActive || showMoreMenu ? "bg-sky-100" : ""}`}>
               <Icon name="more" size={20} />
             </span>
