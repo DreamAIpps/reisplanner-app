@@ -60,6 +60,8 @@ const ICONS = {
   camera: <><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.9l1.2-2h6.8l1.2 2h1.9A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" /><circle cx="12" cy="12.5" r="3.4" /></>,
   calendar: <><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17" /><path d="M8 3v4" /><path d="M16 3v4" /></>,
   map: <><path d="M9 4.5 3.5 7v12.5L9 17l6 2.5 5.5-2.5V4.5L15 7z" /><path d="M9 4.5V17" /><path d="M15 7v12.5" /></>,
+  // Twee pagina's naast elkaar — het overzicht van het fotoboek.
+  grid: <><rect x="3.5" y="5" width="7.5" height="14" rx="1.2" /><rect x="13" y="5" width="7.5" height="14" rx="1.2" /></>,
   globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17" /><path d="M12 3.5c2.3 2.4 3.5 5.3 3.5 8.5s-1.2 6.1-3.5 8.5c-2.3-2.4-3.5-5.3-3.5-8.5S9.7 5.9 12 3.5z" /></>,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
   dragHandle: <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></>,
@@ -6834,6 +6836,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [pdfProgress, setPdfProgress] = useState(null); // { phase: "generating"|"downloading", percent: number|null } | null
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // welke pagina fullscreen in beeld staat
+  // Het boek opent op het overzicht: eerst zien hoe het wordt, dan pas op een
+  // pagina inzoomen om te bewerken. Voorheen viel je meteen in pagina 1 en was
+  // er geen enkele plek waar het boek als geheel te zien was behalve het
+  // aparte voorbeeldscherm, dat je weer moest verlaten om iets te wijzigen.
+  const [viewMode, setViewMode] = useState("overzicht"); // "overzicht" | "pagina"
   const [showPagePanel, setShowPagePanel] = useState(false); // zwevend paneel: titel/beschrijving/achtergrond/indeling
   // Het paneel voor een geselecteerde foto/tekstvak kan de canvas eronder
   // (incl. de sleepgreep) aan het zicht onttrekken — bijv. bij een foto die
@@ -6898,7 +6905,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     const observer = new ResizeObserver(recompute);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [orientation, pagesLoaded]);
+    // viewMode hoort hier écht bij: in het overzicht bestaat canvasAreaRef nog
+    // niet, dus zonder deze afhankelijkheid hing de observer zich nergens aan
+    // en bleef canvasSize null zodra je daarna op een pagina inzoomde — de
+    // canvas viel dan terug op de onbetrouwbare aspect-ratio-noodgreep.
+  }, [orientation, pagesLoaded, viewMode]);
 
   // Blijft binnen de grenzen als de laatste pagina verwijderd wordt, en
   // wisselt van geselecteerd element als er naar een andere pagina genavigeerd
@@ -7356,6 +7367,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       {/* De pagina zelf blijft fullscreen in beeld; opmaak/instellingen liggen
           er als zwevende panelen overheen in plaats van in een scrollende
           lijst erboven/eronder — zo zie je altijd wat je aan het bewerken bent. */}
+      {viewMode === "overzicht" ? (
+        <div className="flex-1 overflow-y-auto pt-3">
+          <PhotobookOverview pages={pages} orientation={orientation}
+            onOpenPage={(i) => { setCurrentPageIndex(i); setViewMode("pagina"); }}
+            onAddPage={addPage} />
+        </div>
+      ) : (
       <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
         {!page ? (
           <div className="text-center text-white/60">
@@ -7731,6 +7749,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           </>
         )}
       </div>
+      )}
 
       </div>
 
@@ -7744,27 +7763,42 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         {/* In een kolom wijzen vorige/volgende omhoog en omlaag in plaats van
             naar links en rechts — anders staan de pijlen dwars op de richting
             waarin de knoppen zelf staan. */}
-        <button type="button" onClick={() => setCurrentPageIndex((p) => Math.max(0, p - 1))} disabled={currentPageIndex === 0}
-          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
-          <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "none" : "rotate(-90deg)" }} />
-        </button>
-        <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem] shrink-0">
-          {pages.length === 0 ? "Geen pagina's" : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
-        </span>
-        <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
-          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
-          <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "rotate(180deg)" : "rotate(90deg)" }} />
-        </button>
-        <div className={`bg-white/15 shrink-0 ${barsAside ? "h-px w-full my-0.5" : "w-px h-6 mx-0.5"}`} />
-        <button type="button" onClick={addPage} title="Nieuwe pagina"
-          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors self-center">
-          <Icon name="plus" size={16} />
-        </button>
-        {page && (
-          <button type="button" onClick={() => removePage(currentPageIndex)} title="Pagina verwijderen"
-            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors self-center">
-            <Icon name="trash" size={14} />
-          </button>
+        {viewMode === "pagina" ? (
+          <>
+            {/* Uitzoomen naar het hele boek. Dit is de tegenhanger van een tik
+                op een pagina in het overzicht, en staat daarom vooraan — het is
+                de weg terug, niet zomaar een van de acties. */}
+            <button type="button" onClick={() => setViewMode("overzicht")} title="Terug naar het overzicht"
+              className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors self-center">
+              <Icon name="grid" size={15} />
+            </button>
+            <button type="button" onClick={() => setCurrentPageIndex((p) => Math.max(0, p - 1))} disabled={currentPageIndex === 0}
+              className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
+              <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "none" : "rotate(-90deg)" }} />
+            </button>
+            <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem] shrink-0">
+              {pages.length === 0 ? "Geen pagina's" : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
+            </span>
+            <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
+              className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
+              <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "rotate(180deg)" : "rotate(90deg)" }} />
+            </button>
+            <div className={`bg-white/15 shrink-0 ${barsAside ? "h-px w-full my-0.5" : "w-px h-6 mx-0.5"}`} />
+            <button type="button" onClick={addPage} title="Nieuwe pagina"
+              className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors self-center">
+              <Icon name="plus" size={16} />
+            </button>
+            {page && (
+              <button type="button" onClick={() => removePage(currentPageIndex)} title="Pagina verwijderen"
+                className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors self-center">
+                <Icon name="trash" size={14} />
+              </button>
+            )}
+          </>
+        ) : (
+          <span className="text-white/70 text-xs tnum shrink-0 self-center px-1">
+            {pages.length === 0 ? "Geen pagina's" : `${pages.length} pagina's`}
+          </span>
         )}
         <div className="flex-1" />
         <Button onClick={handleSavePages} disabled={saving || !dirty} className={barsAside ? "w-full shrink-0" : ""}>{saving ? "Opslaan..." : "Opslaan"}</Button>
@@ -7889,6 +7923,56 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   );
 }
 
+// Eén pagina zoals hij wordt: achtergrond, foto's, tekstvakken, titel. Dit is
+// de enige plek waar dat opgebouwd wordt — het overzicht, het voorbeeld en
+// straks een miniatuur tekenen allemaal hetzelfde, zodat ze niet uit elkaar
+// kunnen lopen. Alles staat in fracties van de pagina, dus de component is
+// maatloos: hij vult wat de ouder hem geeft.
+function PhotobookPageView({ page, orientation, className = "", titleClassName = "font-display text-base text-gray-800", textClassName = "text-sm" }) {
+  return (
+    <div className={`overflow-hidden relative ${className}`}
+      style={{
+        aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
+        containerType: "size",
+        background: page.background?.type === "color" ? page.background.value
+          : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
+          : PALETTE.background,
+      }}>
+      {page.background?.type === "photo" && page.background.overlay > 0 && (
+        <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
+      )}
+      {page.photos.map((ph, j) => (
+        <div key={j} className="absolute overflow-hidden"
+          style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
+          <img src={ph.thumbUrl || ph.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
+            style={{
+              opacity: ph.opacity ?? 1,
+              borderRadius: photobookCornerCss(ph.cornerRadius),
+              objectPosition: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
+              transform: `scale(${ph.cropZoom ?? 1})`,
+              transformOrigin: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
+            }} />
+        </div>
+      ))}
+      {(page.textBoxes || []).map((box, k) => (
+        <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-0.5"
+          style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
+          <RichTextView html={box.html} align={box.align} className={textClassName} />
+        </div>
+      ))}
+      {page.title && (
+        <div className="absolute rounded-lg p-0.5 bg-white/85"
+          style={{
+            left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.14) * 100}%`,
+            width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
+          }}>
+          <RichTextView html={page.title} align={page.titleAlign} className={titleClassName} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotobookPreview({ title, pages, orientation, onClose }) {
   return (
     <div className="fixed inset-0 z-[70] bg-gray-900 overflow-y-auto">
@@ -7901,53 +7985,78 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
       </div>
       <div className="px-4 pb-10 space-y-4" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>
         {pages.map((page, i) => (
-          <div key={i} className="overflow-hidden shadow-2xl relative"
-            style={{
-              aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
-              containerType: "size",
-              background: page.background?.type === "color" ? page.background.value
-                : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
-                : PALETTE.background,
-            }}>
-            {page.background?.type === "photo" && page.background.overlay > 0 && (
-              <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
-            )}
-            {page.photos.map((ph, j) => (
-              <div key={j} className="absolute rounded-[2px] overflow-hidden bg-black/5"
-                style={{ left: `${ph.x * 100}%`, top: `${ph.y * 100}%`, width: `${ph.width * 100}%`, height: `${ph.height * 100}%` }}>
-                <img src={ph.url} alt="" className="w-full h-full object-cover"
-                  style={{
-                    opacity: ph.opacity ?? 1,
-                    borderRadius: photobookCornerCss(ph.cornerRadius),
-                    objectPosition: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
-                    transform: `scale(${ph.cropZoom ?? 1})`,
-                    transformOrigin: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
-                  }} />
-              </div>
-            ))}
-            {(page.textBoxes || []).map((box, k) => (
-              <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-0.5"
-                style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
-                <RichTextView html={box.html} align={box.align} className="text-sm" />
-              </div>
-            ))}
+          <div key={i} className="relative">
+            <PhotobookPageView page={page} orientation={orientation} className="shadow-2xl" />
             {page.photos.length === 0 && !page.title && (page.textBoxes || []).length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
-            )}
-            {page.title && (
-              <div className="absolute rounded-lg p-0.5 bg-white/85"
-                style={{
-                  left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.14) * 100}%`,
-                  width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
-                }}>
-                <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base text-gray-800" />
-              </div>
+              <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">Lege pagina</div>
             )}
             <div className="absolute bottom-3 right-4 text-xs px-2 py-0.5 rounded-full bg-black/40 text-white tnum">{i + 1} / {pages.length}</div>
           </div>
         ))}
         {pages.length === 0 && <div className="text-center text-white/50 py-20">Nog geen pagina's.</div>}
       </div>
+    </div>
+  );
+}
+
+// Het boek zoals het wordt: de kaft alleen, daarna steeds twee pagina's naast
+// elkaar zoals ze straks opengeslagen tegenover elkaar liggen. Een tik op een
+// pagina zoomt in naar de detail-editor — dat is hoe je hier vandaan komt, dus
+// de hele pagina is de knop, niet een klein pictogrammetje in een hoek.
+function photobookSpreads(pages) {
+  if (!pages.length) return [];
+  // Pagina 1 is de kaft en staat alleen; daarna vormen 2-3, 4-5, ... telkens
+  // een opengeslagen paar. Zo klopt wat je hier ziet met het gedrukte boek.
+  const spreads = [{ key: "kaft", label: "Kaft", items: [{ page: pages[0], index: 0 }] }];
+  for (let i = 1; i < pages.length; i += 2) {
+    const items = [{ page: pages[i], index: i }];
+    if (pages[i + 1]) items.push({ page: pages[i + 1], index: i + 1 });
+    spreads.push({ key: `spread-${i}`, label: null, items });
+  }
+  return spreads;
+}
+
+function PhotobookOverview({ pages, orientation, onOpenPage, onAddPage }) {
+  const spreads = photobookSpreads(pages);
+  return (
+    <div className="px-4 pb-6 space-y-6">
+      {spreads.map((spread) => (
+        // De kaft is één pagina breed, een opengeslagen paar twee — vandaar de
+        // halve breedte voor de kaft. Binnen die omhulling verdelen de pagina's
+        // zich met flex-1, zodat het nummerregeltje eronder exact dezelfde
+        // verdeling volgt en elk nummer onder zijn eigen pagina blijft staan.
+        <div key={spread.key} className="mx-auto" style={{ width: spread.items.length === 1 ? "50%" : "100%" }}>
+          <div className="flex gap-0.5">
+            {spread.items.map(({ page, index }) => (
+              <button key={index} type="button" onClick={() => onOpenPage(index)}
+                title={`Pagina ${index + 1} bewerken`}
+                className="rp-press relative block flex-1 min-w-0 shadow-2xl hover:ring-2 hover:ring-sky-400 transition-shadow">
+                <PhotobookPageView page={page} orientation={orientation}
+                  titleClassName="font-display text-[9px] text-gray-800"
+                  textClassName="text-[7px]" />
+                {page.photos.length === 0 && !page.title && (page.textBoxes || []).length === 0 && (
+                  <span className="absolute inset-0 flex items-center justify-center text-gray-400 text-xs">Leeg</span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-0.5 mt-1.5">
+            {spread.items.map(({ index }, i) => (
+              <div key={index} className="flex-1 min-w-0 text-[11px] text-white/50 tnum"
+                style={{ textAlign: spread.items.length === 1 ? "center" : i === 0 ? "left" : "right" }}>
+                {spread.label && i === 0 ? spread.label : index + 1}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {onAddPage && (
+        <button type="button" onClick={onAddPage}
+          className="rp-press w-full rounded-2xl border-2 border-dashed border-white/20 py-6 text-sm font-medium text-white/50 hover:border-white/40 hover:text-white/80 transition-colors">
+          + Nieuwe pagina
+        </button>
+      )}
+      {pages.length === 0 && <div className="text-center text-white/50 py-16">Nog geen pagina's.</div>}
     </div>
   );
 }
