@@ -859,7 +859,7 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
   // font-size in punten krijgen en het size-attribuut kwijtraken. Omdat dit
   // altijd op het hele veld werkt, worden meteen ook oude size="1..7"-restanten
   // in dat veld omgezet — bestaande boeken blijven verder ongemoeid.
-  function setSizePt(pt) {
+  function applySizePt(pt) {
     const el = getEl();
     if (!el) return;
     selectWhole(el);
@@ -868,22 +868,59 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
       f.removeAttribute("size");
       f.style.fontSize = `${pt}pt`;
     });
+    setCurrentPt(pt);
     onChange(sanitizeRichText(el.innerHTML));
   }
+  // De keuzelijst laat zien wat er nú staat in plaats van een lege plek. De
+  // browser rekent pt om naar px (1pt = 1/72 duim, 1px = 1/96), dus terug is
+  // maal 0,75. Zonder eigen grootte in het veld staat er de geërfde maat, en
+  // die valt lang niet altijd samen met een van de keuzes — dan blijft de
+  // lijst leeg staan in plaats van een verkeerde waarde aan te wijzen.
+  const [currentPt, setCurrentPt] = useState(null);
+  useEffect(() => {
+    const el = getEl();
+    if (!el) return;
+    const gemarkeerd = el.querySelector('[style*="font-size"]');
+    if (!gemarkeerd) { setCurrentPt(null); return; }
+    const px = parseFloat(getComputedStyle(gemarkeerd).fontSize);
+    setCurrentPt(Number.isFinite(px) ? Math.round(px * 0.75) : null);
+  }, [getEl]);
   // De opmaakknoppen staan meteen open. Ze zaten achter één "Aa"-knop om
   // ruimte te sparen, maar dat kostte bij elke tekstwijziging een extra tik.
   //
   // Wél in één rij die horizontaal schuift, niet omgebroken over meerdere
   // regels: uitgeklapt over drie regels wordt het zwevende paneel zo hoog dat
   // het over het tekstvak op de canvas valt, en dan is de tekst zelf niet meer
-  // aan te tikken. [&>*]:shrink-0 houdt de knoppen op maat in plaats van ze
-  // samen te persen.
+  // aan te tikken.
+  //
+  // Lettergrootte en lettertype zijn keuzelijsten en geen rijen losse knoppen.
+  // Als knoppen waren dat samen veertien stuks, en die duwden de puntgroottes —
+  // helemaal achteraan — op een telefoon volledig buiten beeld, zonder dat te
+  // zien was dat de rij nog doorliep. Als lijst kosten ze samen twee plekken,
+  // staat de grootte vooraan, en laat het bovendien zien wat er nú staat.
+  const CONTROL = "h-8 rounded-lg border border-gray-300 bg-white text-xs text-gray-700 hover:border-gray-400 transition-colors px-1.5";
   return (
     <div className="flex items-center gap-1.5 mb-1.5 overflow-x-auto [&>*]:shrink-0">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center italic text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">I</button>
+      <div className="w-px h-6 bg-gray-200 mx-0.5" />
+      {/* Het getal is de maat: wat hier staat is wat er in de PDF komt. */}
+      <select value={currentPt ?? ""} title="Lettergrootte in punten"
+        onMouseDown={(e) => e.stopPropagation()}
+        onChange={(e) => applySizePt(Number(e.target.value))}
+        className={`${CONTROL} tnum`}>
+        <option value="" disabled>pt</option>
+        {RICH_TEXT_SIZES_PT.map((pt) => <option key={pt} value={pt}>{pt} pt</option>)}
+      </select>
+      <select defaultValue="" title="Lettertype"
+        onMouseDown={(e) => e.stopPropagation()}
+        onChange={(e) => { const f = RICH_TEXT_FONTS.find((x) => x.key === e.target.value); if (f) run("fontName", f.family); }}
+        className={CONTROL}>
+        <option value="" disabled>Letter</option>
+        {RICH_TEXT_FONTS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+      </select>
       <div className="w-px h-6 bg-gray-200 mx-0.5" />
       {onAlignChange && RICH_TEXT_ALIGNMENTS.map((a) => (
         <button key={a.key} type="button" onClick={() => onAlignChange(a.key)} title={`Uitlijnen: ${a.key}`}
@@ -895,23 +932,6 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
       {RICH_TEXT_COLORS.map((c) => (
         <button key={c} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("foreColor", c)} title="Tekstkleur"
           className="w-6 h-6 rounded-full border border-gray-300 shrink-0" style={{ background: c }} />
-      ))}
-      <div className="w-px h-6 bg-gray-200 mx-0.5" />
-      {RICH_TEXT_FONTS.map((f) => (
-        <button key={f.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fontName", f.family)}
-          style={{ fontFamily: f.family }} title={f.label}
-          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">
-          {f.label}
-        </button>
-      ))}
-      <div className="w-px h-6 bg-gray-200 mx-0.5" />
-      {/* Het getal is de maat: wat hier staat is wat er in de PDF komt. */}
-      {RICH_TEXT_SIZES_PT.map((pt) => (
-        <button key={pt} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setSizePt(pt)}
-          title={`${pt} punten`}
-          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs tnum text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">
-          {pt}
-        </button>
       ))}
     </div>
   );
