@@ -13,6 +13,22 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("railway")
     ? { rejectUnauthorized: false }
     : false,
+  // Houdt de TCP-verbinding levend, zodat het netwerk tussen app en database
+  // hem niet als "inactief" opruimt. Dat verbreken is de aanleiding voor de
+  // fout die hieronder wordt opgevangen; dit maakt hem zeldzamer.
+  keepAlive: true,
+});
+
+// Zonder deze listener stopt Node het hele proces zodra een verbinding in de
+// pool wegvalt — een "unhandled 'error' event". De database verbreekt inactieve
+// verbindingen routinematig (onderhoud, herstart, een haperend netwerk), dus dit
+// gebeurde regelmatig, en dan kreeg iedereen die op dat moment iets aan het doen
+// was een 502 van de proxy. Foto's uploaden duurt van alles in de app het
+// langst en werd daarom het vaakst geraakt. De pool gooit de kapotte verbinding
+// zelf weg en maakt bij het volgende verzoek een nieuwe; er valt hier verder
+// niets te doen behalve het niet fataal laten zijn.
+pool.on("error", (err) => {
+  console.error("Databaseverbinding weggevallen (pool herstelt zichzelf):", err.message);
 });
 
 async function query(text, params) {
@@ -459,6 +475,11 @@ async function initDb() {
     -- kortste zijde, 0 = vierkant). Geldt als startwaarde voor elke foto die
     -- in dit boek belandt; per foto kan het daarna nog bijgesteld worden.
     ALTER TABLE photobooks ADD COLUMN IF NOT EXISTS corner_radius REAL NOT NULL DEFAULT 0;
+    -- Bij het aanmaken gekozen achtergrondkleur voor de pagina's. NULL betekent
+    -- geen kleur: dan blijft de pagina wit, zoals hij altijd was. Staat op het
+    -- boek en niet alleen op de pagina's, zodat een pagina die je later
+    -- toevoegt dezelfde kleur meekrijgt in plaats van er wit tussen te vallen.
+    ALTER TABLE photobooks ADD COLUMN IF NOT EXISTS background_color TEXT;
 
     -- Eén pagina kan meerdere foto's bevatten (zie photobook_page_photos
     -- hieronder), een titel/beschrijving, en een optionele achtergrond (een

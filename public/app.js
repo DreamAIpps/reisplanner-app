@@ -2063,9 +2063,31 @@ function PhotoCaption({ photo, readOnly, onChanged, maxWidth }) {
   );
 }
 
+// Voortgang tijdens het uploaden van foto's. Uploaden duurt per foto merkbaar
+// lang (verkleinen, versturen, opslaan), en een knop die alleen "Uploaden..."
+// zegt geeft geen enkel houvast of er nog iets gebeurt — zeker niet bij een
+// stapel foto's. Vandaar het aantal erbij en een balk die daadwerkelijk vult.
+function UploadProgress({ done, total, className = "" }) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>{done} van {total} {total === 1 ? "foto" : "foto's"} geüpload</span>
+        <span className="tnum">{pct}%</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden"
+        role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total}
+        aria-label="Voortgang uploaden">
+        <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [viewingIndex, setViewingIndex] = useState(null);
   // Los in het dagverhaal geüploade foto (nog aan geen activiteit gekoppeld)
   // krijgt meteen de vraag of hij tot een activiteit gepromoveerd moet worden.
@@ -2085,6 +2107,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     e.target.value = "";
     if (!files.length) return;
     setUploading(true);
+    setProgress({ done: 0, total: files.length });
     // Each file stands alone: one failure used to abort the whole batch AND skip
     // the refresh, so already-uploaded photos stayed invisible and the rest were
     // never attempted. Uploads run a few at a time instead of strictly one after
@@ -2108,6 +2131,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       } catch (err) {
         failed.push(`${file.name} (${err.message || "mislukt"})`);
       }
+      setProgress((p) => ({ ...p, done: p.done + 1 }));
     });
     setUploading(false);
     onChange();
@@ -2189,12 +2213,17 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           </button>
         )}
       </div>
-      {!readOnly && large && (
-        <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}
-          className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors disabled:opacity-50">
+      {!readOnly && large && !uploading && (
+        <button type="button" onClick={() => fileRef.current?.click()}
+          className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors">
           <span className="text-base leading-none">＋</span>
-          {uploading ? "Uploaden..." : "Foto toevoegen"}
+          Foto toevoegen
         </button>
+      )}
+      {!readOnly && uploading && (
+        <div className="mt-2" style={large ? { maxWidth: largeMaxWidth } : undefined}>
+          <UploadProgress done={progress.done} total={progress.total} />
+        </div>
       )}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
       {canOfferActivity && activityPromptPhoto && (
@@ -2348,10 +2377,11 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
               </div>
             ))}
           </div>
+          {uploading && <UploadProgress done={progress} total={uploadable.length} />}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose} disabled={uploading}>Annuleren</Button>
             <Button type="button" onClick={handleUploadAll} disabled={uploading || !uploadable.length}>
-              {uploading ? `Uploaden... ${progress}/${uploadable.length}` : `Uploaden (${uploadable.length})`}
+              {uploading ? "Uploaden..." : `Uploaden (${uploadable.length})`}
             </Button>
           </div>
         </div>
@@ -5960,11 +5990,13 @@ function PhotobookTab({ trip }) {
   const [creating, setCreating] = useState(false);
   const [openBookId, setOpenBookId] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  // 1 = staand/liggend, 2 = hoeken van de foto's, 3 = automatisch vullen?,
-  // 4 = hoeveel foto's per pagina?, 5 = paginatitels uit het dagboek?
+  // 1 = staand/liggend, 2 = hoeken van de foto's, 3 = achtergrondkleur,
+  // 4 = automatisch vullen?, 5 = hoeveel foto's per pagina?,
+  // 6 = paginatitels uit het dagboek?
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardOrientation, setWizardOrientation] = useState("portrait");
   const [wizardCorner, setWizardCorner] = useState(0);
+  const [wizardBackground, setWizardBackground] = useState(null); // null = wit laten
   const [wizardPerPage, setWizardPerPage] = useState(1);
 
   const load = useCallback(async () => {
@@ -6025,7 +6057,7 @@ function PhotobookTab({ trip }) {
           Stel samen een fotoboek van deze reis samen — een voorgestelde selectie, volgorde en bijschrift om mee te beginnen, die je zelf verder aanpast.
         </p>
         {error && !wizardOpen && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
-        <Button onClick={() => { setWizardStep(1); setWizardOrientation("portrait"); setWizardCorner(0); setWizardPerPage(1); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
+        <Button onClick={() => { setWizardStep(1); setWizardOrientation("portrait"); setWizardCorner(0); setWizardBackground(null); setWizardPerPage(1); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
       </div>
 
       {wizardOpen && (
@@ -6056,7 +6088,10 @@ function PhotobookTab({ trip }) {
                 {PHOTOBOOK_CORNER_PRESETS.map((p) => (
                   <button key={p.value} type="button" onClick={() => { setWizardCorner(p.value); setWizardStep(3); }} disabled={creating}
                     className="flex flex-col items-center gap-2 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
-                    <span className="w-10 h-10 bg-sky-200 shrink-0" style={{ borderRadius: `${p.value * 100}%` }} />
+                    {/* Het voorbeeldje is 40px; de presets zijn fracties van een
+                        paginazijde, dus hier omgerekend naar deze maat zodat het
+                        blokje toont wat je op de pagina krijgt. */}
+                    <span className="w-10 h-10 bg-sky-200 shrink-0" style={{ borderRadius: `${p.value * 40 * 4}px` }} />
                     <span className="text-xs font-medium text-gray-800">{p.label}</span>
                   </button>
                 ))}
@@ -6068,61 +6103,83 @@ function PhotobookTab({ trip }) {
           {wizardStep === 3 && (
             <div>
               <p className="text-sm text-gray-600 mb-4">
+                Wil je de pagina's een achtergrondkleur geven? Die geldt voor het hele boek — per pagina kun je 'm later nog wijzigen.
+              </p>
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                <button type="button" onClick={() => { setWizardBackground(null); setWizardStep(4); }} disabled={creating}
+                  className="flex flex-col items-center gap-2 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                  <span className="w-10 h-10 rounded-lg shrink-0 border border-gray-200 bg-white" />
+                  <span className="text-xs font-medium text-gray-800">Wit</span>
+                </button>
+                {PHOTOBOOK_BG_SWATCHES.map((c) => (
+                  <button key={c} type="button" onClick={() => { setWizardBackground(c); setWizardStep(4); }} disabled={creating}
+                    className="flex flex-col items-center gap-2 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                    <span className="w-10 h-10 rounded-lg shrink-0 border border-black/5" style={{ background: c }} />
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
+            </div>
+          )}
+          {wizardStep === 4 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-4">
                 Wil je een automatisch voorgevuld fotoboek maken, met de foto's van deze reis alvast verdeeld over de pagina's?
               </p>
               <div className="space-y-2">
-                <button type="button" onClick={() => setWizardStep(4)} disabled={creating}
+                <button type="button" onClick={() => setWizardStep(5)} disabled={creating}
                   className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Ja, vul automatisch</div>
                   <div className="text-xs text-gray-500 mt-0.5">Alle foto's van de reis worden verdeeld over pagina's, die je daarna zelf verder aanpast.</div>
                 </button>
-                <button type="button" onClick={() => handleCreate({ autofill: false, orientation: wizardOrientation, cornerRadius: wizardCorner })} disabled={creating}
+                <button type="button" onClick={() => handleCreate({ autofill: false, orientation: wizardOrientation, cornerRadius: wizardCorner, backgroundColor: wizardBackground })} disabled={creating}
                   className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Nee, ik begin leeg</div>
                   <div className="text-xs text-gray-500 mt-0.5">Een leeg fotoboek waar je zelf pagina's en foto's aan toevoegt.</div>
                 </button>
               </div>
-              <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(3)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors mt-3">← Terug</button>
             </div>
           )}
-          {wizardStep === 4 && (
+          {wizardStep === 5 && (
             <div>
               <p className="text-sm text-gray-600 mb-4">Hoeveel foto's per pagina?</p>
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
                   <button key={n} type="button" disabled={creating}
-                    onClick={() => { setWizardPerPage(n); setWizardStep(5); }}
+                    onClick={() => { setWizardPerPage(n); setWizardStep(6); }}
                     className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
                     <PhotobookLayoutThumb slots={layout.slots} orientation={wizardOrientation} />
                     <span className="text-sm font-medium text-gray-800">{n}</span>
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={() => setWizardStep(3)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(4)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
             </div>
           )}
-          {wizardStep === 5 && (
+          {wizardStep === 6 && (
             <div>
               <p className="text-sm text-gray-600 mb-4">
                 Wil je de paginatitels uit je dagboek overnemen? Dan krijgt elke pagina het onderschrift dat je bij die foto schreef, of anders de activiteit of dag waar hij bij hoort.
               </p>
               <div className="space-y-2">
                 <button type="button" disabled={creating}
-                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, useJournalTitles: true })}
+                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, backgroundColor: wizardBackground, useJournalTitles: true })}
                   className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Ja, neem ze over</div>
                   <div className="text-xs text-gray-500 mt-0.5">Titels staan er meteen in; je kunt ze per pagina aanpassen of weghalen.</div>
                 </button>
                 <button type="button" disabled={creating}
-                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, useJournalTitles: false })}
+                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, backgroundColor: wizardBackground, useJournalTitles: false })}
                   className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Nee, laat ze leeg</div>
                   <div className="text-xs text-gray-500 mt-0.5">Pagina's zonder titel, zodat je zelf bepaalt wat erbij komt.</div>
                 </button>
               </div>
-              <button type="button" onClick={() => setWizardStep(4)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(5)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors mt-3">← Terug</button>
             </div>
           )}
@@ -6162,19 +6219,34 @@ const PHOTOBOOK_BG_SWATCHES = [
 ];
 
 // Doorzicht en hoekafronding per foto — net als bij professionele
-// fotoboek-editors. cornerRadius is een fractie van de kortste zijde van de
-// foto (0 = vierkante hoeken, 0.5 = volledig rond/pil-vorm).
+// fotoboek-editors.
+//
+// cornerRadius is een fractie van de kórtste zijde van de pagina, niet van de
+// foto. Dat is het verschil tussen "alle hoeken op deze pagina zijn even rond"
+// en wat het eerder was: een grote foto kreeg een grote ronding en een kleine
+// foto een kleine, en omdat een percentage in border-radius per as apart telt
+// werden de hoeken bij een niet-vierkante foto ook nog eens ovaal. Paginamaat
+// als maatstaf geeft één ronding voor de hele pagina, ongeacht formaat of
+// verhouding van de foto.
 const PHOTOBOOK_OPACITY_PRESETS = [
   { value: 1, label: "100%" },
   { value: 0.75, label: "75%" },
   { value: 0.5, label: "50%" },
 ];
+// Op A4 (kortste zijde 210 mm) komt dit neer op ongeveer 1,7 / 3 / 5 mm —
+// ingetogen genoeg om als afwerking te lezen in plaats van als vormgeving.
 const PHOTOBOOK_CORNER_PRESETS = [
   { value: 0, label: "Geen" },
-  { value: 0.1, label: "Rond" },
-  { value: 0.25, label: "Sterk" },
-  { value: 0.5, label: "Rondje" },
+  { value: 0.008, label: "Zacht" },
+  { value: 0.015, label: "Rond" },
+  { value: 0.025, label: "Sterk" },
 ];
+// Container-query-eenheid: 1cqmin is 1% van de kortste zijde van de pagina.
+// Daardoor hoeft geen enkele render-plek de paginamaat zelf op te meten, en
+// blijft de ronding automatisch kloppen als de canvas van formaat verandert.
+function photobookCornerCss(cornerRadius) {
+  return `${(cornerRadius ?? 0) * 100}cqmin`;
+}
 // Witte sluier over een achtergrondfoto, zodat voorgrondtekst/-foto's
 // leesbaar blijven op een drukke achtergrond — zelfde idee als de
 // opacity-presets, maar dan als vast wit vlak boven de achtergrond.
@@ -6488,7 +6560,7 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
           de vergrote (ingezoomde) foto anders over de hoekgreep/badges heen
           zou uitsteken — en overflow-hidden op de buitenste div zou zelf weer
           de greep afsnijden, die er juist net buiten hoort te steken. */}
-      <div className="w-full h-full overflow-hidden" style={{ borderRadius: `${(photo.cornerRadius ?? 0) * 100}%` }}>
+      <div className="w-full h-full overflow-hidden" style={{ borderRadius: photobookCornerCss(photo.cornerRadius) }}>
         <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none"
           style={{
             opacity: photo.opacity ?? 1,
@@ -6672,6 +6744,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [orientation, setOrientation] = useState("portrait"); // bij aanmaken gekozen, geldt voor heel het boek
   const [bookCorner, setBookCorner] = useState(0); // idem: de hoekstijl uit de wizard, als startwaarde voor nieuwe foto's
+  const [bookBackground, setBookBackground] = useState(null); // idem: de achtergrondkleur uit de wizard, voor pagina's die je later toevoegt
   // Balken opzij kosten breedte, en die is er alleen als het scherm breder is
   // dan hoog. Zonder deze voorwaarde hielden twee kolommen van 144px op een
   // rechtop gehouden telefoon nog geen 150px over voor de pagina zelf.
@@ -6795,7 +6868,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
 
   useEffect(() => {
-    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); });
+    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); setBookBackground(b.backgroundColor ?? null); });
     api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
   }, [bookId, tripId]);
 
@@ -6850,7 +6923,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function addPage() {
     pushHistory();
-    setPages((ps) => [...ps, { title: null, background: null, photos: [] }]);
+    setPages((ps) => [...ps, {
+      title: null,
+      background: bookBackground ? { type: "color", value: bookBackground } : null,
+      photos: [],
+    }]);
     setDirty(true);
   }
   // Legt de eerste N foto's (N = aantal vakken in de indeling) in de gekozen
@@ -6968,11 +7045,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // want die context is er hier niet) en staan meteen in de kiezer. Zelfde
   // verwerking als elders: verkleinen, EXIF uitlezen, een paar tegelijk.
   const [pickerUploading, setPickerUploading] = useState(false);
+  const [pickerProgress, setPickerProgress] = useState({ done: 0, total: 0 });
   async function handlePickerFiles(e) {
     const files = [...e.target.files];
     e.target.value = "";
     if (!files.length) return;
     setPickerUploading(true);
+    setPickerProgress({ done: 0, total: files.length });
     const failed = [];
     const uploaded = [];
     await mapWithConcurrency(files, 3, async (file) => {
@@ -6987,6 +7066,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       } catch (err) {
         failed.push(`${file.name} (${err.message || "mislukt"})`);
       }
+      setPickerProgress((p) => ({ ...p, done: p.done + 1 }));
     });
     try { setAllPhotos(await api.getPhotos(tripId)); } catch {}
     // Meteen aangevinkt, want wie ze net koos wil ze vrijwel zeker gebruiken.
@@ -7232,6 +7312,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 // hoogte) als bottleneck te kiezen zodra het beschikbare vlak
                 // zelf van vorm wisselt (bijv. de telefoon kantelen).
                 width: `${canvasSize.width}px`, height: `${canvasSize.height}px`,
+                // Maakt de pagina de maatstaf voor cqmin, waarmee de hoeken van
+                // alle foto's even rond zijn. De maat staat hier al vast in
+                // pixels, dus de size-containment die hierbij hoort verandert
+                // niets aan de opmaak.
+                containerType: "size",
                 background: page.background?.type === "color" ? page.background.value
                   : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                   : PALETTE.background,
@@ -7240,6 +7325,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 // dezelfde oude aanpak als noodgreep, maar dan maar heel even.
                 aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
                 maxWidth: "100%", maxHeight: "100%",
+                containerType: "size",
                 background: page.background?.type === "color" ? page.background.value
                   : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                   : PALETTE.background,
@@ -7638,6 +7724,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   <input type="file" accept="image/*" multiple className="hidden" onChange={handlePickerFiles} disabled={pickerUploading} />
                 </label>
               </div>
+              {pickerUploading && <UploadProgress done={pickerProgress.done} total={pickerProgress.total} className="mb-3" />}
               {allPhotos.length === 0 ? (
                 <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's. Voeg er hierboven een toe vanaf je apparaat.</div>
               ) : pickable.length === 0 ? (
@@ -7754,6 +7841,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
           <div key={i} className="overflow-hidden shadow-2xl relative"
             style={{
               aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
+              containerType: "size",
               background: page.background?.type === "color" ? page.background.value
                 : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
                 : PALETTE.background,
@@ -7767,7 +7855,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
                 <img src={ph.url} alt="" className="w-full h-full object-cover"
                   style={{
                     opacity: ph.opacity ?? 1,
-                    borderRadius: `${(ph.cornerRadius ?? 0) * 100}%`,
+                    borderRadius: photobookCornerCss(ph.cornerRadius),
                     objectPosition: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
                     transform: `scale(${ph.cropZoom ?? 1})`,
                     transformOrigin: `${(ph.cropX ?? 0.5) * 100}% ${(ph.cropY ?? 0.5) * 100}%`,
