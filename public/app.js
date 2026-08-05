@@ -808,10 +808,17 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
       {isEmpty && placeholder && (
         <div className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none truncate" style={{ textAlign: align || "left" }}>{placeholder}</div>
       )}
+      {/* select-text is hier geen detail maar noodzaak: dit veld hangt op de
+          fotoboek-canvas in een container met select-none (nodig om te kunnen
+          slepen zonder dat je tekst selecteert). iOS weigert de cursor én het
+          toetsenbord in een contentEditable waar -webkit-user-select: none op
+          van kracht is — op de desktop krijgt het veld wél gewoon focus, dus
+          dit valt alleen op een telefoon op. Direct gezet wint het van de
+          geërfde waarde. */}
       <div ref={innerRef} contentEditable suppressContentEditableWarning
         onFocus={handleFocus} onInput={sync} onBlur={sync} onKeyDown={handleKeyDown}
         style={{ textAlign: align || "left" }}
-        className={`w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
+        className={`select-text w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
     </div>
   );
 });
