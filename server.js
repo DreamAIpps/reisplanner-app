@@ -3283,19 +3283,23 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const autofill = body?.autofill !== false;
   const photosPerPage = Math.min(4, Math.max(1, parseInt(body?.photosPerPage, 10) || 1));
   const orientation = body?.orientation === "landscape" ? "landscape" : "portrait";
+  const cornerRadius = Math.min(0.5, Math.max(0, Number(body?.cornerRadius) || 0));
+  // Paginatitels uit het dagboek halen. Standaard aan, zodat een aanroep zonder
+  // deze sleutel zich gedraagt zoals het altijd deed: wel een paginatitel.
+  const useJournalTitles = body?.useJournalTitles !== false;
 
   const { rows: bookRows } = await query(
-    "INSERT INTO photobooks (trip_id, title, created_by, orientation) VALUES ($1,$2,$3,$4) RETURNING id",
-    [params.id, title, req.user.id, orientation]
+    "INSERT INTO photobooks (trip_id, title, created_by, orientation, corner_radius) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+    [params.id, title, req.user.id, orientation, cornerRadius]
   );
   const bookId = bookRows[0].id;
 
   if (!autofill) {
-    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation });
+    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation, cornerRadius });
   }
 
   const { rows: photos } = await query(
-    `SELECT p.id,
+    `SELECT p.id, p.caption,
             a.title AS activity_title, a.location AS activity_location,
             tr.type AS transport_type, tr.from_location, tr.to_location,
             ac.name AS accommodation_name,
@@ -3318,7 +3322,13 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   let pageCount = 0;
   for (let i = 0; i < photos.length; i += photosPerPage) {
     const group = photos.slice(i, i + photosPerPage);
-    const pageTitle = group.length === 1 ? photobookCaption(group[0]) : null;
+    // Alleen bij één foto per pagina valt er een zinnige titel te kiezen; bij
+    // vier foto's zijn er vier onderschriften en geen manier om die samen te
+    // vatten. Het eigen onderschrift uit het dagboek gaat voor, want dat heeft
+    // iemand zelf getypt; staat dat leeg, dan de afgeleide naam uit de planning.
+    const pageTitle = useJournalTitles && group.length === 1
+      ? ((group[0].caption && String(group[0].caption).trim()) || photobookCaption(group[0]))
+      : null;
     const { rows: pageRows } = await query(
       "INSERT INTO photobook_pages (photobook_id, position, title) VALUES ($1,$2,$3) RETURNING id",
       [bookId, pageCount, pageTitle]
@@ -3328,14 +3338,14 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     for (let j = 0; j < group.length; j++) {
       const r = rects[j];
       await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [pageId, group[j].id, j, r.x, r.y, r.width, r.height]
+        "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height, corner_radius) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [pageId, group[j].id, j, r.x, r.y, r.width, r.height, cornerRadius]
       );
     }
     pageCount++;
   }
 
-  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation });
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation, cornerRadius });
 }, { tripScope: "param", allowViewer: true });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
@@ -3419,6 +3429,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
   }
   sendJson(res, 200, {
     id: bookRows[0].id, title: bookRows[0].title, status: bookRows[0].status, orientation: bookRows[0].orientation,
+    cornerRadius: bookRows[0].corner_radius ?? 0,
     pages: pages.map((pg) => ({
       id: pg.id, title: pg.title, titleAlign: pg.title_align,
       titleX: pg.title_x, titleY: pg.title_y, titleWidth: pg.title_width, titleHeight: pg.title_height,

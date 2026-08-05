@@ -5955,8 +5955,14 @@ function PhotobookTab({ trip }) {
   const [creating, setCreating] = useState(false);
   const [openBookId, setOpenBookId] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardStep, setWizardStep] = useState(1); // 1 = staand/liggend, 2 = automatisch vullen?, 3 = hoeveel foto's per pagina?
+  // 1 = staand/liggend, 2 = hoeken van de foto's, 3 = automatisch vullen?,
+  // 4 = hoeveel foto's per pagina?, 5 = paginatitels uit het dagboek?
+  // Stap 5 komt alleen bij één foto per pagina: met meer foto's op een pagina
+  // valt er geen zinnige titel uit te kiezen, dus dan is de vraag zinloos.
+  const [wizardStep, setWizardStep] = useState(1);
   const [wizardOrientation, setWizardOrientation] = useState("portrait");
+  const [wizardCorner, setWizardCorner] = useState(0);
+  const [wizardPerPage, setWizardPerPage] = useState(1);
 
   const load = useCallback(async () => {
     try { setBooks(await api.getPhotobooks(trip.id)); }
@@ -6016,7 +6022,7 @@ function PhotobookTab({ trip }) {
           Stel samen een fotoboek van deze reis samen — een voorgestelde selectie, volgorde en bijschrift om mee te beginnen, die je zelf verder aanpast.
         </p>
         {error && !wizardOpen && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-4 text-left">{error}</div>}
-        <Button onClick={() => { setWizardStep(1); setWizardOrientation("portrait"); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
+        <Button onClick={() => { setWizardStep(1); setWizardOrientation("portrait"); setWizardCorner(0); setWizardPerPage(1); setWizardOpen(true); setError(null); }} disabled={creating}>+ Nieuw fotoboek</Button>
       </div>
 
       {wizardOpen && (
@@ -6041,38 +6047,86 @@ function PhotobookTab({ trip }) {
           {wizardStep === 2 && (
             <div>
               <p className="text-sm text-gray-600 mb-4">
+                Welke hoeken wil je voor de foto's? Dit geldt voor het hele boek — per foto kun je het later nog bijstellen.
+              </p>
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {PHOTOBOOK_CORNER_PRESETS.map((p) => (
+                  <button key={p.value} type="button" onClick={() => { setWizardCorner(p.value); setWizardStep(3); }} disabled={creating}
+                    className="flex flex-col items-center gap-2 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
+                    <span className="w-10 h-10 bg-sky-200 shrink-0" style={{ borderRadius: `${p.value * 100}%` }} />
+                    <span className="text-xs font-medium text-gray-800">{p.label}</span>
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setWizardStep(1)} disabled={creating}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
+            </div>
+          )}
+          {wizardStep === 3 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-4">
                 Wil je een automatisch voorgevuld fotoboek maken, met de foto's van deze reis alvast verdeeld over de pagina's?
               </p>
               <div className="space-y-2">
-                <button type="button" onClick={() => setWizardStep(3)} disabled={creating}
+                <button type="button" onClick={() => setWizardStep(4)} disabled={creating}
                   className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Ja, vul automatisch</div>
                   <div className="text-xs text-gray-500 mt-0.5">Alle foto's van de reis worden verdeeld over pagina's, die je daarna zelf verder aanpast.</div>
                 </button>
-                <button type="button" onClick={() => handleCreate({ autofill: false, orientation: wizardOrientation })} disabled={creating}
+                <button type="button" onClick={() => handleCreate({ autofill: false, orientation: wizardOrientation, cornerRadius: wizardCorner })} disabled={creating}
                   className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
                   <div className="font-medium text-gray-800">Nee, ik begin leeg</div>
                   <div className="text-xs text-gray-500 mt-0.5">Een leeg fotoboek waar je zelf pagina's en foto's aan toevoegt.</div>
                 </button>
               </div>
-              <button type="button" onClick={() => setWizardStep(1)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors mt-3">← Terug</button>
             </div>
           )}
-          {wizardStep === 3 && (
+          {wizardStep === 4 && (
             <div>
               <p className="text-sm text-gray-600 mb-4">Hoeveel foto's per pagina?</p>
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
-                  <button key={n} type="button" onClick={() => handleCreate({ autofill: true, photosPerPage: n, orientation: wizardOrientation })} disabled={creating}
+                  <button key={n} type="button" disabled={creating}
+                    onClick={() => {
+                      setWizardPerPage(n);
+                      // Alleen bij één foto per pagina is een paginatitel te
+                      // herleiden; anders die vraag overslaan.
+                      if (n === 1) setWizardStep(5);
+                      else handleCreate({ autofill: true, photosPerPage: n, orientation: wizardOrientation, cornerRadius: wizardCorner });
+                    }}
                     className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
                     <PhotobookLayoutThumb slots={layout.slots} orientation={wizardOrientation} />
                     <span className="text-sm font-medium text-gray-800">{n}</span>
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={() => setWizardStep(2)} disabled={creating}
+              <button type="button" onClick={() => setWizardStep(3)} disabled={creating}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← Terug</button>
+            </div>
+          )}
+          {wizardStep === 5 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-4">
+                Wil je de paginatitels uit je dagboek overnemen? Dan krijgt elke pagina het onderschrift dat je bij die foto schreef, of anders de activiteit of dag waar hij bij hoort.
+              </p>
+              <div className="space-y-2">
+                <button type="button" disabled={creating}
+                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, useJournalTitles: true })}
+                  className="w-full text-left p-3 rounded-xl border border-sky-200 bg-sky-50 hover:border-sky-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Ja, neem ze over</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Titels staan er meteen in; je kunt ze per pagina aanpassen of weghalen.</div>
+                </button>
+                <button type="button" disabled={creating}
+                  onClick={() => handleCreate({ autofill: true, photosPerPage: wizardPerPage, orientation: wizardOrientation, cornerRadius: wizardCorner, useJournalTitles: false })}
+                  className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors disabled:opacity-50">
+                  <div className="font-medium text-gray-800">Nee, laat ze leeg</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Pagina's zonder titel, zodat je zelf bepaalt wat erbij komt.</div>
+                </button>
+              </div>
+              <button type="button" onClick={() => setWizardStep(4)} disabled={creating}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors mt-3">← Terug</button>
             </div>
           )}
           {error && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mt-4">{error}</div>}
@@ -6564,6 +6618,7 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
 function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [orientation, setOrientation] = useState("portrait"); // bij aanmaken gekozen, geldt voor heel het boek
+  const [bookCorner, setBookCorner] = useState(0); // idem: de hoekstijl uit de wizard, als startwaarde voor nieuwe foto's
   const [pages, setPages] = useState(null); // null = laden
   const [allPhotos, setAllPhotos] = useState([]);
   const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
@@ -6676,7 +6731,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
 
   useEffect(() => {
-    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); });
+    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); });
     api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
   }, [bookId, tripId]);
 
@@ -6852,18 +6907,25 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setPages((ps) => ps.map((p, i) => {
       if (i !== pickerForPage) return p;
       const startCount = p.photos.length;
-      // Trapsgewijs verschoven zodat meerdere nieuwe foto's niet precies
-      // boven op elkaar landen — de gebruiker verschuift ze daarna zelf naar
-      // hun plek.
       const added = chosen.map((c, k) => {
+        // Trapsgewijs is de terugval voor pagina's waar geen raster voor
+        // bestaat (meer dan vier foto's); de gebruiker schuift die zelf goed.
         const cascade = (startCount + k) % 6;
         return {
           photoId: c.id, url: c.url, thumbUrl: c.thumb_url,
           nativeWidth: c.width, nativeHeight: c.height,
           x: 0.08 + cascade * 0.05, y: 0.08 + cascade * 0.05, width: 0.38, height: 0.3,
+          cornerRadius: bookCorner,
         };
       });
-      return { ...p, photos: [...p.photos, ...added] };
+      // Foto's meteen netjes neerzetten in plaats van los over elkaar heen:
+      // past het totaal binnen een bestaand raster, dan krijgt de hele pagina
+      // die indeling. Bestaande foto's schuiven dus mee — dat is de bedoeling,
+      // anders zou een nieuwe foto boven op een bestaande belanden.
+      const all = [...p.photos, ...added];
+      const grid = PHOTOBOOK_LAYOUTS.find((l) => l.slots.length === all.length);
+      if (!grid) return { ...p, photos: all };
+      return { ...p, photos: all.map((ph, k) => ({ ...ph, ...grid.slots[k] })) };
     }));
     setDirty(true);
     setPickerForPage(null);
