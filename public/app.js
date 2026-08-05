@@ -715,7 +715,11 @@ function Modal({ title, onClose, children, wide }) {
 // direct zichtbaar terwijl je typt. DOMPurify is de enige plek die bepaalt
 // wat er ooit gerenderd wordt, dus dat is waar de echte veiligheidsgrens zit.
 const RICH_TEXT_ALLOWED_TAGS = ["b", "i", "font", "br", "div"];
-const RICH_TEXT_ALLOWED_ATTR = ["face", "color", "size"];
+// "style" mag erbij voor de lettergrootte in punten; DOMPurify ontleedt de CSS
+// zelf en gooit er alles uit wat geen nette eigenschap is, dus dit opent geen
+// deur naar url()/expression-trucs. size blijft toegestaan zodat tekst uit
+// oudere boeken (<font size="1..7">) gewoon blijft werken.
+const RICH_TEXT_ALLOWED_ATTR = ["face", "color", "size", "style"];
 function sanitizeRichText(html) {
   return window.DOMPurify
     ? window.DOMPurify.sanitize(html || "", { ALLOWED_TAGS: RICH_TEXT_ALLOWED_TAGS, ALLOWED_ATTR: RICH_TEXT_ALLOWED_ATTR })
@@ -744,12 +748,11 @@ const RICH_TEXT_ALIGNMENTS = [
 // t/m 7 (3 = standaard) en wikkelt de selectie in <font size="N">, dezelfde
 // aanpak als de lettertype- en kleurknoppen hierboven — de browser (en de
 // PDF-export, zie pdfParseRichHtml op de server) kennen dat attribuut al.
-const RICH_TEXT_SIZES = [
-  { key: "1", label: "Klein" },
-  { key: "3", label: "Normaal" },
-  { key: "5", label: "Groot" },
-  { key: "7", label: "Extra groot" },
-];
+// Lettergrootte in punten, dezelfde eenheid als de PDF gebruikt — zo staat er
+// in het boek ook echt wat je kiest. Opgeslagen als font-size op een <font>,
+// niet als de oude size="1..7"; die schaal had maar zeven stappen en zei niets
+// over de uiteindelijke afdruk.
+const RICH_TEXT_SIZES_PT = [8, 10, 12, 14, 18, 24, 32, 48];
 // Alleen-lezen weergave van opgeslagen fotoboek-tekst — altijd door de
 // sanitizer heen, ook al is er clientside al gesaneerd vóór het opslaan (de
 // databasewaarde is niet per se te vertrouwen als enige bron).
@@ -842,10 +845,13 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
-  // Lettergrootte geldt vrijwel altijd voor het hele veld (titel, bijschrift-
-  // achtige velden) — niks selecteren voordat je 'm kunt toepassen is een
-  // onnodige stap, dus dit selecteert eerst alles in het veld zelf.
-  function runOnWhole(cmd, value) {
+  // Lettergrootte in punten. execCommand kent alleen de schaal 1..7, dus die
+  // wordt gebruikt om de selectie in <font>-elementen te laten verpakken (dat
+  // is precies wat de browser goed doet) waarna die elementen hier een echte
+  // font-size in punten krijgen en het size-attribuut kwijtraken. Omdat dit
+  // altijd op het hele veld werkt, worden meteen ook oude size="1..7"-restanten
+  // in dat veld omgezet — bestaande boeken blijven verder ongemoeid.
+  function setSizePt(pt) {
     const el = getEl();
     if (!el) return;
     el.focus();
@@ -854,7 +860,11 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
-    document.execCommand(cmd, false, value);
+    document.execCommand("fontSize", false, "7");
+    el.querySelectorAll("font[size]").forEach((f) => {
+      f.removeAttribute("size");
+      f.style.fontSize = `${pt}pt`;
+    });
     onChange(sanitizeRichText(el.innerHTML));
   }
   // De opmaakknoppen staan meteen open. Ze zaten achter één "Aa"-knop om
@@ -892,11 +902,12 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
         </button>
       ))}
       <div className="w-px h-6 bg-gray-200 mx-0.5" />
-      {RICH_TEXT_SIZES.map((s) => (
-        <button key={s.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runOnWhole("fontSize", s.key)} title={s.label}
-          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors"
-          style={{ fontSize: `${10 + Number(s.key)}px` }}>
-          A
+      {/* Het getal is de maat: wat hier staat is wat er in de PDF komt. */}
+      {RICH_TEXT_SIZES_PT.map((pt) => (
+        <button key={pt} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setSizePt(pt)}
+          title={`${pt} punten`}
+          className="px-2 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-xs tnum text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">
+          {pt}
         </button>
       ))}
     </div>
