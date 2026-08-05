@@ -6610,6 +6610,16 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [title, setTitle] = useState("");
   const [orientation, setOrientation] = useState("portrait"); // bij aanmaken gekozen, geldt voor heel het boek
   const [bookCorner, setBookCorner] = useState(0); // idem: de hoekstijl uit de wizard, als startwaarde voor nieuwe foto's
+  // Balken opzij kosten breedte, en die is er alleen als het scherm breder is
+  // dan hoog. Zonder deze voorwaarde hielden twee kolommen van 144px op een
+  // rechtop gehouden telefoon nog geen 150px over voor de pagina zelf.
+  const [screenWide, setScreenWide] = useState(() => window.innerWidth > window.innerHeight);
+  useEffect(() => {
+    const onResize = () => setScreenWide(window.innerWidth > window.innerHeight);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [pages, setPages] = useState(null); // null = laden
   const [allPhotos, setAllPhotos] = useState([]);
   const [pickerForPage, setPickerForPage] = useState(null); // index van de pagina waar de gekozen foto's bij komen
@@ -7078,18 +7088,26 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const photoSel = selectedPhoto?.page === currentPageIndex && page ? page.photos[selectedPhoto.photo] : null;
   const textBoxSel = selectedTextBox?.page === currentPageIndex && page ? page.textBoxes?.[selectedTextBox.box] : null;
   const titleSel = selectedTitle?.page === currentPageIndex ? page : null;
+  const barsAside = orientation === "landscape" && screenWide;
 
   return (
-    <div className="fixed inset-0 z-10 flex flex-col bg-gray-800">
-      {/* Bovenbalk: vast, niet zwevend — titel en boek-brede acties horen
-          niet bij een specifieke pagina, dus die verdienen geen overlay. */}
-      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gray-900"
-        style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
+    // Bij een liggend boek staan de balken links en rechts in plaats van boven
+    // en onder. Een liggende pagina is breed en laag, en het scherm eromheen
+    // ook: de hoogte is dan de knellende maat, dus horizontale balken kosten
+    // precies de ruimte die de pagina het hardst nodig heeft.
+    <div className={`fixed inset-0 z-10 flex bg-gray-800 ${barsAside ? "flex-row" : "flex-col"}`}>
+      {/* Bovenbalk (liggend: linkerkolom): vast, niet zwevend — titel en
+          boek-brede acties horen niet bij een specifieke pagina, dus die
+          verdienen geen overlay. */}
+      <div className={`shrink-0 flex gap-2 bg-gray-900 ${barsAside ? "flex-col w-36 px-2 py-3 overflow-y-auto" : "items-center px-3 py-2"}`}
+        style={barsAside
+          ? { paddingLeft: "calc(0.5rem + env(safe-area-inset-left))" }
+          : { paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
         <button onClick={onBack} aria-label="Alle fotoboeken" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
           <Icon name="arrowLeft" size={16} />
         </button>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
-          className="!text-sm !bg-white/10 !border-white/20 !text-white flex-1" placeholder="Titel van het fotoboek" />
+          className={`!text-sm !bg-white/10 !border-white/20 !text-white ${barsAside ? "w-full shrink-0" : "flex-1"}`} placeholder="Titel van het fotoboek" />
         <button type="button" onClick={undo} disabled={history.length === 0} title="Ongedaan maken"
           className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
           <Icon name="undo" size={16} />
@@ -7110,6 +7128,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           <Icon name="trash" size={15} />
         </button>
       </div>
+      {/* Middenkolom: foutmelding boven de canvas. Apart omhuld zodat de
+          buitenste flex precies drie kinderen houdt (balk, midden, balk) en
+          liggend/staand alleen een kwestie van richting is. */}
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
       {error && <div className="shrink-0 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>}
 
       {/* De pagina zelf blijft fullscreen in beeld; opmaak/instellingen liggen
@@ -7469,34 +7491,42 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         )}
       </div>
 
-      {/* Onderbalk: paginanavigatie en boek-brede acties, ook vast (niet
-          zwevend) zodat 'm nooit per ongeluk de canvas overlapt. */}
-      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gray-900"
-        style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom))" }}>
+      </div>
+
+      {/* Onderbalk (liggend: rechterkolom): paginanavigatie en boek-brede
+          acties, ook vast (niet zwevend) zodat 'm nooit per ongeluk de canvas
+          overlapt. */}
+      <div className={`shrink-0 flex gap-2 bg-gray-900 ${barsAside ? "flex-col w-36 px-2 py-3 overflow-y-auto" : "items-center px-3 py-2"}`}
+        style={barsAside
+          ? { paddingRight: "calc(0.5rem + env(safe-area-inset-right))" }
+          : { paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom))" }}>
+        {/* In een kolom wijzen vorige/volgende omhoog en omlaag in plaats van
+            naar links en rechts — anders staan de pijlen dwars op de richting
+            waarin de knoppen zelf staan. */}
         <button type="button" onClick={() => setCurrentPageIndex((p) => Math.max(0, p - 1))} disabled={currentPageIndex === 0}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
-          <Icon name="arrowUp" size={14} style={{ transform: "rotate(-90deg)" }} />
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
+          <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "none" : "rotate(-90deg)" }} />
         </button>
-        <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem]">
+        <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem] shrink-0">
           {pages.length === 0 ? "Geen pagina's" : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
         </span>
         <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
-          <Icon name="arrowUp" size={14} style={{ transform: "rotate(90deg)" }} />
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
+          <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "rotate(180deg)" : "rotate(90deg)" }} />
         </button>
-        <div className="w-px h-6 bg-white/15 mx-0.5" />
+        <div className={`bg-white/15 shrink-0 ${barsAside ? "h-px w-full my-0.5" : "w-px h-6 mx-0.5"}`} />
         <button type="button" onClick={addPage} title="Nieuwe pagina"
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors self-center">
           <Icon name="plus" size={16} />
         </button>
         {page && (
           <button type="button" onClick={() => removePage(currentPageIndex)} title="Pagina verwijderen"
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors">
+            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors self-center">
             <Icon name="trash" size={14} />
           </button>
         )}
         <div className="flex-1" />
-        <Button onClick={handleSavePages} disabled={saving || !dirty}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        <Button onClick={handleSavePages} disabled={saving || !dirty} className={barsAside ? "w-full shrink-0" : ""}>{saving ? "Opslaan..." : "Opslaan"}</Button>
       </div>
 
       {pickerForPage != null && (
