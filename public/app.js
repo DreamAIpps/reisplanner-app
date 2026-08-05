@@ -6891,6 +6891,38 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setPickerSelected(new Set());
     setPickerSearch("");
   }
+  // Foto's rechtstreeks vanaf het toestel toevoegen, zonder eerst via het
+  // dagboek te moeten. Ze komen in de reisbibliotheek terecht (zonder dag,
+  // want die context is er hier niet) en staan meteen in de kiezer. Zelfde
+  // verwerking als elders: verkleinen, EXIF uitlezen, een paar tegelijk.
+  const [pickerUploading, setPickerUploading] = useState(false);
+  async function handlePickerFiles(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    if (!files.length) return;
+    setPickerUploading(true);
+    const failed = [];
+    const uploaded = [];
+    await mapWithConcurrency(files, 3, async (file) => {
+      try {
+        const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        const base64 = image.dataUrl.split(",")[1];
+        if ((base64.length * 3) / 4 > MAX_PHOTO_BYTES) { failed.push(`${file.name} (te groot, max 8 MB)`); return; }
+        uploaded.push(await api.addPhoto(tripId, {
+          image: { data: base64, mediaType: image.mediaType },
+          taken_at: exif.taken_at || null, latitude: exif.latitude ?? null, longitude: exif.longitude ?? null,
+        }));
+      } catch (err) {
+        failed.push(`${file.name} (${err.message || "mislukt"})`);
+      }
+    });
+    try { setAllPhotos(await api.getPhotos(tripId)); } catch {}
+    // Meteen aangevinkt, want wie ze net koos wil ze vrijwel zeker gebruiken.
+    if (uploaded.length) setPickerSelected((s) => new Set([...s, ...uploaded.map((u) => u.id)]));
+    setPickerUploading(false);
+    if (failed.length) alert(`${files.length - failed.length} van ${files.length} foto's toegevoegd.\n\nNiet gelukt:\n${failed.join("\n")}`);
+  }
+
   function togglePick(id) {
     setPickerSelected((s) => {
       const copy = new Set(s);
@@ -7021,6 +7053,26 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     const haystack = `${p.label || ""} ${p.caption || ""}`.toLowerCase();
     return haystack.includes(pickerQuery);
   });
+
+  // Op reisdag gegroepeerd in plaats van één lange strook: bij een reis van
+  // twee weken is "de foto's van dag 3" anders alleen met scrollen te vinden.
+  // Foto's zonder dag sluiten achteraan aan, zodat ze niet verdwijnen.
+  // Bewust geen useMemo: dit staat ná de "Laden..."-return hierboven, en een
+  // hook achter een vroege return breekt de hook-volgorde (React-fout #310).
+  // Groeperen van een handvol foto's is sowieso niet duur genoeg om te cachen.
+  const pickableByDay = (() => {
+    const groups = new Map();
+    for (const p of pickable) {
+      const key = p.day_date ? String(p.day_date).slice(0, 10) : "";
+      if (!groups.has(key)) groups.set(key, { key, date: key, title: p.day_title || null, photos: [] });
+      groups.get(key).photos.push(p);
+    }
+    return [...groups.values()].sort((a, b) => {
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    });
+  })();
 
   const page = pages[currentPageIndex] || null;
   const photoSel = selectedPhoto?.page === currentPageIndex && page ? page.photos[selectedPhoto.photo] : null;
@@ -7449,20 +7501,37 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
 
       {pickerForPage != null && (
         <Modal title={pickerMode === "background" ? "Achtergrondfoto kiezen" : "Foto's toevoegen"} onClose={() => setPickerForPage(null)}>
-          {allPhotos.length === 0 ? (
-            <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's.</div>
-          ) : (
-            <>
-              <div className="relative mb-3">
-                <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
-                <Input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)}
-                  placeholder="Zoek in je foto's..." className="!pl-9" />
+          <>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="relative flex-1 min-w-0">
+                  <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
+                  <Input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)}
+                    placeholder="Zoeken..." className="!pl-9" />
+                </div>
+                {/* Foto's die nog niet in de reis zitten hoeven nu niet meer
+                    eerst via het dagboek toegevoegd te worden. */}
+                <label className={`rp-press shrink-0 inline-flex items-center gap-2 px-4 h-11 rounded-xl bg-sky-100 text-gray-800 text-sm font-semibold cursor-pointer hover:bg-sky-200 transition-colors ${pickerUploading ? "opacity-50 pointer-events-none" : ""}`}>
+                  <Icon name="plus" size={16} />
+                  {pickerUploading ? "Bezig..." : "Apparaat"}
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handlePickerFiles} disabled={pickerUploading} />
+                </label>
               </div>
-              {pickable.length === 0 ? (
+              {allPhotos.length === 0 ? (
+                <div className="text-sm text-gray-400 text-center py-6">Deze reis heeft nog geen foto's. Voeg er hierboven een toe vanaf je apparaat.</div>
+              ) : pickable.length === 0 ? (
                 <div className="text-sm text-gray-400 text-center py-6">Geen foto's gevonden.</div>
               ) : (
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  {pickable.map((p) => {
+                pickableByDay.map((groep) => (
+                <div key={groep.key} className="mb-4">
+                  {/* Kopje per reisdag; foto's zonder dag sluiten achteraan aan. */}
+                  <div className="text-[13px] font-semibold text-gray-500 mb-1.5 sticky top-0 bg-white py-1">
+                    {groep.date
+                      ? `${fmtShortDate(groep.date)}${groep.title ? ` · ${groep.title}` : ""}`
+                      : "Zonder dag"}
+                    <span className="text-gray-300 font-medium"> · {groep.photos.length}</span>
+                  </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {groep.photos.map((p) => {
                     const picked = pickerSelected.has(p.id);
                     const alreadyIn = photoPageNumbers.has(p.id);
                     return (
@@ -7502,6 +7571,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     );
                   })}
                 </div>
+                </div>
+                ))
               )}
               {/* Achtergrond kiezen is één tik op een tegel; dan hoort er geen
                   bevestigknop onder te staan die niets meer te doen heeft. */}
@@ -7512,8 +7583,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   </Button>
                 </div>
               )}
-            </>
-          )}
+          </>
         </Modal>
       )}
 

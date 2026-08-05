@@ -1742,6 +1742,9 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
     mime_type: r.mime_type, caption: r.caption, taken_at: r.taken_at, latitude: r.latitude, longitude: r.longitude, created_at: r.created_at,
     width: r.width, height: r.height,
     label: photobookCaption(r),
+    // Dag erbij zodat de fotokiezer in het fotoboek op reisdag kan groeperen
+    // zonder daarvoor apart de dagen te moeten ophalen.
+    day_date: r.day_date, day_title: r.day_title,
     url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb`,
   })));
 }, { tripScope: "param" });
