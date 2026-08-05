@@ -762,9 +762,8 @@ function RichTextView({ html, align, className }) {
 }
 // contentEditable in plaats van een input/textarea, zodat vet/cursief/
 // lettertype meteen zichtbaar zijn terwijl je typt — geen **markers** die je
-// zelf moet interpreteren. `singleLine` voorkomt regeleinden (titel,
-// bijschrift); de beschrijving mag wel meerdere regels hebben.
-const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, singleLine, align }, ref) {
+// zelf moet interpreteren.
+const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onChange, placeholder, className, align }, ref) {
   const innerRef = useRef(null);
   const lastValue = useRef(value);
   React.useImperativeHandle(ref, () => innerRef.current);
@@ -803,9 +802,6 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
       document.execCommand("styleWithCSS", false, false);
     } catch {}
   }
-  function handleKeyDown(e) {
-    if (singleLine && e.key === "Enter") e.preventDefault();
-  }
   const isEmpty = !value || value === "<br>";
   return (
     // w-full/h-full zijn hier geen opsmuk: dit wrappertje staat op de
@@ -827,7 +823,7 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
           dit valt alleen op een telefoon op. Direct gezet wint het van de
           geërfde waarde. */}
       <div ref={innerRef} contentEditable suppressContentEditableWarning
-        onFocus={handleFocus} onInput={sync} onBlur={sync} onKeyDown={handleKeyDown}
+        onFocus={handleFocus} onInput={sync} onBlur={sync}
         style={{ textAlign: align || "left" }}
         className={`select-text w-full min-h-[2.5rem] border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent whitespace-pre-wrap break-words ${className || ""}`} />
     </div>
@@ -838,10 +834,22 @@ const RichTextEditable = React.forwardRef(function RichTextEditable({ value, onC
 // vet/cursief/lettertype op een selectie toe te passen zonder een hele
 // rich-text-library toe te voegen.
 function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
+  // Alles in het veld selecteren voordat een opdracht wordt uitgevoerd. Deze
+  // tekstvakken zijn klein en staan op een canvas; eerst met je vinger een
+  // stuk tekst aanwijzen om het daarna vet te maken is een omweg die niemand
+  // wil. Een tik op een opmaakknop geldt dus voor het hele vak.
+  function selectWhole(el) {
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   function run(cmd, value) {
     const el = getEl();
     if (!el) return;
-    el.focus();
+    selectWhole(el);
     document.execCommand(cmd, false, value);
     onChange(sanitizeRichText(el.innerHTML));
   }
@@ -854,12 +862,7 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
   function setSizePt(pt) {
     const el = getEl();
     if (!el) return;
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
+    selectWhole(el);
     document.execCommand("fontSize", false, "7");
     el.querySelectorAll("font[size]").forEach((f) => {
       f.removeAttribute("size");
@@ -5959,8 +5962,6 @@ function PhotobookTab({ trip }) {
   const [wizardOpen, setWizardOpen] = useState(false);
   // 1 = staand/liggend, 2 = hoeken van de foto's, 3 = automatisch vullen?,
   // 4 = hoeveel foto's per pagina?, 5 = paginatitels uit het dagboek?
-  // Stap 5 komt alleen bij één foto per pagina: met meer foto's op een pagina
-  // valt er geen zinnige titel uit te kiezen, dus dan is de vraag zinloos.
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardOrientation, setWizardOrientation] = useState("portrait");
   const [wizardCorner, setWizardCorner] = useState(0);
@@ -6091,13 +6092,7 @@ function PhotobookTab({ trip }) {
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {PHOTOBOOK_AUTOFILL_CHOICES.map(({ n, layout }) => (
                   <button key={n} type="button" disabled={creating}
-                    onClick={() => {
-                      setWizardPerPage(n);
-                      // Alleen bij één foto per pagina is een paginatitel te
-                      // herleiden; anders die vraag overslaan.
-                      if (n === 1) setWizardStep(5);
-                      else handleCreate({ autofill: true, photosPerPage: n, orientation: wizardOrientation, cornerRadius: wizardCorner });
-                    }}
+                    onClick={() => { setWizardPerPage(n); setWizardStep(5); }}
                     className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-gray-200 hover:border-sky-300 hover:bg-sky-50 transition-colors disabled:opacity-50">
                     <PhotobookLayoutThumb slots={layout.slots} orientation={wizardOrientation} />
                     <span className="text-sm font-medium text-gray-800">{n}</span>
@@ -6262,7 +6257,11 @@ function PhotobookDesignPresetThumb({ layout, background }) {
 // Rooster/magneetpunten voor het verslepen en schalen — dezelfde gedachte
 // als "Raster aan/uit" bij professionele fotoboek-editors: makkelijk precies
 // tegen de marge/het midden aan leggen, zonder te moeten pixelen.
-const PHOTOBOOK_SNAP_GUIDES = [0, 0.05, 0.5, 0.95, 1];
+// Deze lijnen worden ook echt getekend zodra "Raster" aanstaat (zie de overlay
+// op de canvas). Dat is de hele truc: waar je op mikt is waar het aan plakt.
+// Eerder waren er alleen marges en het midden, en werd er verder naar een fijne
+// stap van 0.02 afgerond — onzichtbaar én te fijn om als raster te voelen.
+const PHOTOBOOK_SNAP_GUIDES = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1];
 const PHOTOBOOK_SNAP_THRESHOLD = 0.015;
 const PHOTOBOOK_SNAP_STEP = 0.02;
 function snapPhotobookValue(v) {
@@ -6270,6 +6269,51 @@ function snapPhotobookValue(v) {
     if (Math.abs(v - g) < PHOTOBOOK_SNAP_THRESHOLD) return g;
   }
   return Math.round(v / PHOTOBOOK_SNAP_STEP) * PHOTOBOOK_SNAP_STEP;
+}
+// Bij verslepen telt niet alleen de linker-/bovenrand van een foto: je wilt
+// 'm net zo goed met de rechter-/onderrand tegen een lijn kunnen leggen.
+// Daarom worden beide randen langs het raster gelegd en wint de rand die het
+// dichtst bij een lijn zit — anders bleef de overkant altijd net los hangen.
+function snapPhotobookStart(start, size) {
+  const viaStart = snapPhotobookValue(start);
+  const viaEnd = snapPhotobookValue(start + size) - size;
+  return Math.abs(viaStart - start) <= Math.abs(viaEnd - start) ? viaStart : viaEnd;
+}
+
+// Laat een tekstvak meegroeien met zijn inhoud. Alleen groeien, nooit vanzelf
+// krimpen: een leeg vak zou anders tot een streepje ineenschrompelen, en
+// witruimte die iemand zelf onder de tekst heeft gelaten hoort te blijven
+// staan. Meten gebeurt op de scrollhoogte van het binnenste vlak — dat is de
+// hoogte die de tekst écht nodig heeft, inclusief de regels die nu buiten
+// beeld vallen.
+function usePhotobookAutoGrow({ innerRef, getPageEl, height, onChangeRect, html, enabled }) {
+  useEffect(() => {
+    if (!enabled) return;
+    const el = innerRef.current;
+    const page = getPageEl();
+    if (!el || !page) return;
+
+    function meet() {
+      const pageH = page.getBoundingClientRect().height;
+      // De canvas is bij de eerste render nog nul hoog (die krijgt zijn maat
+      // pas van de ResizeObserver in de editor). Meten heeft dan geen zin;
+      // de observer hieronder roept dit opnieuw aan zodra de maat er wél is.
+      if (!pageH) return;
+      // Meet het tékort (scrollHeight boven clientHeight), niet de gewenste
+      // hoogte zelf. Dat laatste ging mis: het binnenste veld is h-full, dus
+      // zijn hoogte volgt de doos, en "gewenst = hoogte + marge" was dan altijd
+      // nét groter dan wat er stond — het vak groeide zichzelf tot de hele
+      // pagina op. Zodra de tekst past is het tekort nul en gebeurt er niets.
+      const tekort = el.scrollHeight - el.clientHeight;
+      if (tekort <= 1) return;
+      onChangeRect({ height: Math.min(1, (el.getBoundingClientRect().height + tekort) / pageH) });
+    }
+
+    meet();
+    const observer = new ResizeObserver(meet);
+    observer.observe(page);
+    return () => observer.disconnect();
+  }, [html, height, enabled]);
 }
 
 // Waarschuwt als een foto te weinig pixels heeft om scherp afgedrukt te
@@ -6344,7 +6388,10 @@ function usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect 
     if (d.mode === "move") {
       let x = Math.min(1 - d.startRect.width, Math.max(0, d.startRect.x + fx));
       let y = Math.min(1 - d.startRect.height, Math.max(0, d.startRect.y + fy));
-      if (snap) { x = snapPhotobookValue(x); y = snapPhotobookValue(y); }
+      if (snap) {
+        x = Math.min(1 - d.startRect.width, Math.max(0, snapPhotobookStart(x, d.startRect.width)));
+        y = Math.min(1 - d.startRect.height, Math.max(0, snapPhotobookStart(y, d.startRect.height)));
+      }
       onChangeRect({ x, y });
     } else {
       let width = Math.min(1 - d.startRect.x, Math.max(0.05, d.startRect.width + fx));
@@ -6512,6 +6559,8 @@ const PHOTOBOOK_TEXTBOX_BACKGROUNDS = [
 // het vak verplaatsen in plaats van de cursor te zetten.
 function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChangeHtml, getPageEl, snap, richTextRef }) {
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect: box, onChangeRect, getPageEl, snap, onSelect });
+  const innerRef = useRef(null);
+  usePhotobookAutoGrow({ innerRef, getPageEl, height: box.height, onChangeRect, html: box.html, enabled: true });
 
   return (
     <div
@@ -6535,7 +6584,7 @@ function PhotobookCanvasTextBox({ box, selected, onSelect, onChangeRect, onChang
           <Icon name="dragHandle" size={12} />
         </div>
       )}
-      <div className="w-full h-full overflow-auto p-1.5" onPointerDown={(e) => selected && e.stopPropagation()}>
+      <div ref={innerRef} className="w-full h-full overflow-auto p-0.5" onPointerDown={(e) => selected && e.stopPropagation()}>
         {selected ? (
           <RichTextEditable ref={richTextRef} value={box.html || ""} onChange={onChangeHtml} align={box.align}
             className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent text-sm" placeholder="Tekst..." />
@@ -6569,6 +6618,8 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
   // die eigenlijk voor de tekst bedoeld was (geen toetsenbord dan).
   const rect = { x: page.titleX ?? 0.15, y: page.titleY ?? 0.14, width: page.titleWidth ?? 0.7, height: page.titleHeight ?? 0.1 };
   const { beginDrag, onDrag, endDrag } = usePhotobookDragResize({ rect, onChangeRect, getPageEl, snap, onSelect });
+  const innerRef = useRef(null);
+  usePhotobookAutoGrow({ innerRef, getPageEl, height: rect.height, onChangeRect, html: page.title, enabled: true });
 
   return (
     <div
@@ -6596,12 +6647,12 @@ function PhotobookCanvasTitle({ page, selected, onSelect, onChangeRect, onChange
           <Icon name="dragHandle" size={12} />
         </div>
       )}
-      <div className="w-full h-full overflow-auto p-1.5 flex items-center" onPointerDown={(e) => selected && e.stopPropagation()}>
+      <div ref={innerRef} className="w-full h-full overflow-auto p-0.5 flex items-center" onPointerDown={(e) => selected && e.stopPropagation()}>
         {selected ? (
-          <RichTextEditable ref={richTextRef} value={page.title || ""} onChange={onChangeHtml} align={page.titleAlign} singleLine
+          <RichTextEditable ref={richTextRef} value={page.title || ""} onChange={onChangeHtml} align={page.titleAlign}
             className="!border-none !ring-0 !p-0 !min-h-0 h-full !bg-transparent font-display text-base w-full" placeholder="Titel..." />
         ) : (
-          page.title ? <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base truncate w-full pointer-events-none" /> : null
+          page.title ? <RichTextView html={page.title} align={page.titleAlign} className="font-display text-base w-full pointer-events-none" /> : null
         )}
       </div>
       {selected && (
@@ -7085,14 +7136,28 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     const groups = new Map();
     for (const p of pickable) {
       const key = p.day_date ? String(p.day_date).slice(0, 10) : "";
-      if (!groups.has(key)) groups.set(key, { key, date: key, title: p.day_title || null, photos: [] });
-      groups.get(key).photos.push(p);
+      if (!groups.has(key)) groups.set(key, { key, date: key, title: p.day_title || null, photos: [], blokken: new Map() });
+      const dag = groups.get(key);
+      dag.photos.push(p);
+      // Binnen de dag ook per activiteit bij elkaar: foto's van dezelfde
+      // bezienswaardigheid horen naast elkaar te staan. Losse foto's van die
+      // dag komen in één blok zonder kop, achter de activiteiten aan.
+      const actKey = p.activity_id ? `a${p.activity_id}` : "";
+      if (!dag.blokken.has(actKey)) dag.blokken.set(actKey, { key: actKey, title: p.activity_title || null, photos: [] });
+      dag.blokken.get(actKey).photos.push(p);
     }
-    return [...groups.values()].sort((a, b) => {
-      if (!a.date) return 1;
-      if (!b.date) return -1;
-      return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
-    });
+    return [...groups.values()]
+      .map((d) => ({
+        ...d,
+        // De volgorde binnen een dag volgt de eerste foto van elk blok, en dat
+        // is de opnametijd — zo blijft de dag chronologisch lopen.
+        blokken: [...d.blokken.values()].sort((a, b) => (a.key ? 0 : 1) - (b.key ? 0 : 1)),
+      }))
+      .sort((a, b) => {
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+      });
   })();
 
   const page = pages[currentPageIndex] || null;
@@ -7159,7 +7224,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
             <div
               ref={canvasRef}
               onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); setSelectedTitle(null); }}
-              className="relative rounded-lg overflow-hidden shadow-2xl"
+              className="relative overflow-hidden shadow-2xl"
               style={canvasSize ? {
                 // Uitgerekende pixelmaat (zie canvasSize hierboven) i.p.v.
                 // CSS aspect-ratio + max-width/max-height: die laatste bleek
@@ -7180,6 +7245,22 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   : PALETTE.background,
               }}
             >
+              {/* Het raster echt laten zien zolang "Raster" aanstaat. Zonder
+                  lijnen leek de knop niets te doen: het snappen werkte wel,
+                  maar er was niets om op te mikken. De lijnen staan precies op
+                  de punten waar een foto aan blijft plakken. */}
+              {snapEnabled && (
+                <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+                  {PHOTOBOOK_SNAP_GUIDES.map((g) => (
+                    <React.Fragment key={g}>
+                      <span className="absolute top-0 bottom-0 w-px"
+                        style={{ left: `${g * 100}%`, background: g === 0.5 ? "rgba(47,42,40,0.16)" : "rgba(47,42,40,0.07)" }} />
+                      <span className="absolute left-0 right-0 h-px"
+                        style={{ top: `${g * 100}%`, background: g === 0.5 ? "rgba(47,42,40,0.16)" : "rgba(47,42,40,0.07)" }} />
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
               {page.background?.type === "photo" && page.background.overlay > 0 && (
                 <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
               )}
@@ -7571,8 +7652,15 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                       : "Zonder dag"}
                     <span className="text-gray-300 font-medium"> · {groep.photos.length}</span>
                   </div>
+                {groep.blokken.map((blok) => (
+                <div key={blok.key} className="mb-2">
+                  {/* Alleen een kopje als de dag echt meerdere blokken heeft;
+                      bij één blok zou het de dagkop hierboven herhalen. */}
+                  {blok.title && groep.blokken.length > 1 && (
+                    <div className="text-[13px] font-medium text-gray-400 mb-1 truncate">{blok.title}</div>
+                  )}
                 <div className="grid grid-cols-3 gap-2">
-                  {groep.photos.map((p) => {
+                  {blok.photos.map((p) => {
                     const picked = pickerSelected.has(p.id);
                     const alreadyIn = photoPageNumbers.has(p.id);
                     return (
@@ -7612,6 +7700,8 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                     );
                   })}
                 </div>
+                </div>
+                ))}
                 </div>
                 ))
               )}
@@ -7661,7 +7751,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
       </div>
       <div className="px-4 pb-10 space-y-4" style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}>
         {pages.map((page, i) => (
-          <div key={i} className="rounded-2xl overflow-hidden shadow-2xl relative"
+          <div key={i} className="overflow-hidden shadow-2xl relative"
             style={{
               aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
               background: page.background?.type === "color" ? page.background.value
@@ -7685,7 +7775,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
               </div>
             ))}
             {(page.textBoxes || []).map((box, k) => (
-              <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-1.5"
+              <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-0.5"
                 style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
                 <RichTextView html={box.html} align={box.align} className="text-sm" />
               </div>
@@ -7694,7 +7784,7 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
               <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">Lege pagina</div>
             )}
             {page.title && (
-              <div className="absolute rounded-lg p-1.5 bg-white/85"
+              <div className="absolute rounded-lg p-0.5 bg-white/85"
                 style={{
                   left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.14) * 100}%`,
                   width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
