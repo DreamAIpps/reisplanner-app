@@ -32,6 +32,84 @@ const PORT = process.env.PORT || 3002;
 const STARTED_AT = new Date();
 const PUBLIC_DIR = path.join(__dirname, "public");
 
+// ---------- App-assets: zelf hosten in plaats van via een CDN ----------
+// De app haalde React, Leaflet, DOMPurify, exif-js, qrcode, Babel, Tailwind en
+// het lettertype bij elke start op bij unpkg/cdn.tailwindcss/Google Fonts. Voor
+// een reisapp is dat de verkeerde afhankelijkheid: in het vliegtuig, op slechte
+// hotel-wifi, met roaming uit of in een land dat Google blokkeert, laadde er
+// helemaal niets — en omdat de scripts nooit binnenkwamen, was er ook geen
+// JavaScript meer om dat te melden. Je kreeg een leeg wit scherm.
+//
+// Alles komt nu uit node_modules (versies staan vast in package.json), en de
+// twee dingen die vroeger in de browser gebeurden — JSX vertalen en de
+// stylesheet genereren — gebeuren één keer bij het opstarten van de server.
+// Dat scheelt de bezoeker ~3,6 MB downloaden en seconden rekenwerk per start,
+// en houdt tegelijk de werkwijze van dit project intact: public/app.js blijft
+// gewoon het bestand dat je bewerkt, er is geen aparte bouwstap bijgekomen.
+const VENDOR_FILES = {
+  "react.js": "react/umd/react.production.min.js",
+  "react-dom.js": "react-dom/umd/react-dom.production.min.js",
+  "leaflet.js": "leaflet/dist/leaflet.js",
+  "leaflet.css": "leaflet/dist/leaflet.css",
+  "purify.js": "dompurify/dist/purify.min.js",
+  "exif.js": "exif-js/exif.js",
+  "qrcode.js": "qrcode-generator/qrcode.js",
+  "font-400.woff2": "@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-400-normal.woff2",
+  "font-500.woff2": "@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-500-normal.woff2",
+  "font-600.woff2": "@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-600-normal.woff2",
+  "font-700.woff2": "@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-700-normal.woff2",
+};
+const VENDOR_MIME = { ".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2" };
+
+// Gegenereerd bij het opstarten; tot die tijd leeg.
+const built = { js: null, css: null, jsEtag: null, cssEtag: null };
+
+function buildAppScript() {
+  const babel = require("@babel/core");
+  const src = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const out = babel.transformSync(src, {
+    presets: [[require("@babel/preset-react"), { runtime: "classic" }]],
+    configFile: false, babelrc: false, filename: "app.js",
+  });
+  return out.code;
+}
+
+async function buildStylesheet() {
+  const postcss = require("postcss");
+  const tailwind = require("tailwindcss");
+  const src = fs.readFileSync(path.join(__dirname, "assets", "app.css"), "utf8");
+  const result = await postcss([tailwind(require("./tailwind.config.js"))])
+    .process(src, { from: path.join(__dirname, "assets", "app.css"), to: "/app.css" });
+  return result.css;
+}
+
+async function buildAssets() {
+  const t0 = Date.now();
+  built.js = buildAppScript();
+  built.jsEtag = `"${crypto.createHash("md5").update(built.js).digest("hex")}"`;
+  built.css = await buildStylesheet();
+  built.cssEtag = `"${crypto.createHash("md5").update(built.css).digest("hex")}"`;
+  // Eén versiestempel over script + stylesheet samen. De service worker gebruikt
+  // dit als cachenaam, zodat een uitrol automatisch een verse cache krijgt en er
+  // nooit een oude versie kan blijven plakken.
+  built.version = crypto.createHash("md5").update(built.js).update(built.css).digest("hex").slice(0, 12);
+  built.sw = fs.readFileSync(path.join(PUBLIC_DIR, "sw.js"), "utf8").replace("__ASSET_VERSIE__", built.version);
+  console.log(`App-assets gebouwd in ${Date.now() - t0} ms — script ${Math.round(built.js.length / 1024)} KB, stylesheet ${Math.round(built.css.length / 1024)} KB, versie ${built.version}.`);
+}
+
+function sendBuilt(req, res, body, etag, type) {
+  if (req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
+  res.writeHead(200, {
+    "Content-Type": type,
+    // De inhoud zit in de ETag, dus de browser mag hard cachen zolang die klopt;
+    // must-revalidate zorgt dat een nieuwe uitrol meteen wordt opgepikt.
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    ETag: etag,
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js":   "application/javascript; charset=utf-8",
@@ -56,9 +134,15 @@ const MIME = {
 // zolang 'unsafe-inline' toch nodig is.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://appleid.cdn-apple.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com",
-  "font-src 'self' data: https://fonts.gstatic.com",
+  // 'unsafe-eval' is verdwenen: dat stond er alleen omdat Babel de JSX in de
+  // browser vertaalde. Nu dat op de server gebeurt, mag de scherpste regel van
+  // een CSP weer aan staan. De CDN-hosts zijn weg omdat alles zelf gehost wordt;
+  // alleen Apple's aanmeld-SDK blijft extern — die hoort bij Sign in with Apple
+  // en is niet zelf te hosten. 'unsafe-inline' blijft nodig voor de paar inline
+  // scripts in index.html/login.html en de inline stijlen door de hele app.
+  "script-src 'self' 'unsafe-inline' https://appleid.cdn-apple.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' data: blob: https:",
   "connect-src 'self' https:",
   "frame-src https://appleid.apple.com",
@@ -4091,6 +4175,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Bij het opstarten gebouwde app-assets (zie buildAssets hierboven).
+  if (pathname === "/app.js" && built.js) {
+    sendBuilt(req, res, built.js, built.jsEtag, "application/javascript; charset=utf-8");
+    return;
+  }
+  if (pathname === "/app.css" && built.css) {
+    sendBuilt(req, res, built.css, built.cssEtag, "text/css; charset=utf-8");
+    return;
+  }
+  // De service worker met de versie van deze uitrol erin. Nooit cachen: dit is
+  // het bestand waarmee de browser mérkt dat er een nieuwe versie is.
+  if (pathname === "/sw.js" && built.sw) {
+    res.writeHead(200, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Content-Length": Buffer.byteLength(built.sw),
+    });
+    res.end(built.sw);
+    return;
+  }
+  // Bibliotheken uit node_modules. Alleen wat in VENDOR_FILES staat — de sleutel
+  // is een vaste naam, dus er valt niets uit het pad te construeren.
+  if (pathname.startsWith("/vendor/")) {
+    const naam = pathname.slice("/vendor/".length);
+    const doel = VENDOR_FILES[naam];
+    if (!doel) { res.writeHead(404); res.end("Not found"); return; }
+    fs.readFile(path.join(__dirname, "node_modules", doel), (err, data) => {
+      if (err) { res.writeHead(404); res.end("Not found"); return; }
+      res.writeHead(200, {
+        "Content-Type": VENDOR_MIME[path.extname(naam)] || "application/octet-stream",
+        // Vaste versies uit package.json, dus deze mogen lang gecacht worden.
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Length": data.length,
+      });
+      res.end(data);
+    });
+    return;
+  }
+
   // Static files
   if (pathname === "/login") { serveStatic(res, path.join(PUBLIC_DIR, "login.html")); return; }
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
@@ -4112,6 +4235,7 @@ const server = http.createServer(async (req, res) => {
 // made every deploy stall the server for minutes and retried permanent failures
 // on every single boot.
 initDb()
+  .then(buildAssets)
   .then(() => {
     server.listen(PORT, () => console.log(`Reisplanner draait op http://localhost:${PORT}`));
     console.log(mailProvider()

@@ -11,12 +11,23 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.54.0",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-react": "^7.23.3",
+    "@fontsource/plus-jakarta-sans": "^5.1.0",
+    "dompurify": "^3.1.6",
     "dotenv": "^17.4.2",
+    "exif-js": "^2.3.0",
     "heic-decode": "^2.1.0",
     "jpeg-js": "^0.4.4",
     "jsonwebtoken": "^9.0.2",
+    "leaflet": "^1.9.4",
     "pdfkit": "^0.19.1",
     "pg": "^8.21.0",
+    "postcss": "^8.4.49",
+    "qrcode-generator": "^1.4.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.17",
     "web-push": "^3.6.7"
   },
   "optionalDependencies": {
