@@ -392,6 +392,42 @@ async function geocode(query) {
   }
 }
 
+// Andersom: van coördinaten naar een plaatsnaam. Foto's dragen wel een
+// GPS-positie maar geen plaatsnaam, en op de dagboekkaart hoort bij een etappe
+// "Osaka → Tokio" te staan — niet het bijschrift van een willekeurige foto die
+// daar toevallig genomen is.
+//
+// Zelfde afspraken als hierboven: cache in localStorage, één verzoek per seconde
+// en gelijktijdige vragen om dezelfde plek delen één antwoord. Afronden op drie
+// decimalen (ruim honderd meter) maakt de cache bruikbaar: foto's van dezelfde
+// plek hebben nooit exact dezelfde coördinaten, en zonder afronding zou elke
+// foto een eigen verzoek zijn.
+const _reverseInFlight = new Map();
+async function reverseGeocodeCity(lat, lon) {
+  if (lat == null || lon == null) return null;
+  const rond = (v) => Number(v).toFixed(3);
+  const sleutel = `${rond(lat)},${rond(lon)}`;
+  const key = `revgeo1_${sleutel}`;
+  try {
+    const c = localStorage.getItem(key);
+    if (c) return c === "-" ? null : c;
+  } catch {}
+  if (_reverseInFlight.has(sleutel)) return _reverseInFlight.get(sleutel);
+  const promise = (async () => {
+    await new Promise((r) => setTimeout(r, 1100));
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
+    const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
+    const data = await res.json();
+    const addr = data?.address || {};
+    const naam = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state || null;
+    try { localStorage.setItem(key, naam || "-"); } catch {}
+    return naam;
+  })();
+  _reverseInFlight.set(sleutel, promise);
+  try { return await promise; } catch { return null; }
+  finally { _reverseInFlight.delete(sleutel); }
+}
+
 // Nominatim's addressdetails levert niet altijd het niveau dat je wilt (soms
 // een wijk, soms een regio) en soms geen bruikbare naam voor een klein
 // verblijfsadres. Laat Claude de plaatsnaam uit de ruwe naam/adrestekst
@@ -1206,6 +1242,8 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       const foto = (s.photos || [])[0] || null;
       return {
         ...s,
+        // De echte plaatsnaam wordt hieronder opgezocht en komt er los bij; dit
+        // is wat er staat zolang dat nog loopt (of niet lukt).
         naam: s.query || foto?.activity_title || foto?.label || foto?.day_title || `Dag ${s.dayNumber}`,
         thumb: foto?.thumb_url || foto?.url || null,
         fotoAantal: (s.photos || []).length,
@@ -1224,6 +1262,31 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
   // ligt — anders dekt het precies af waar je naar wijst.
   const [kaartjeBoven, setKaartjeBoven] = useState(false);
   const laagRef = useRef({ stops: [], etappes: [] });
+  const volledigeBoundsRef = useRef(null);
+  const [ingezoomd, setIngezoomd] = useState(false);
+
+  // Plaatsnamen bij de stops die alleen coördinaten hebben (die komen uit de
+  // GPS van een foto). Eén voor één, want Nominatim wil hoogstens één verzoek
+  // per seconde; de cache in reverseGeocodeCity zorgt dat dit bij een tweede
+  // bezoek meteen klaar staat.
+  const [plaatsnamen, setPlaatsnamen] = useState({});
+  useEffect(() => {
+    const teDoen = route.filter((s) => !s.query && s.lat != null);
+    if (!teDoen.length) return;
+    let vervallen = false;
+    (async () => {
+      for (const s of teDoen) {
+        const naam = await reverseGeocodeCity(s.lat, s.lon);
+        if (vervallen) return;
+        if (naam) setPlaatsnamen((p) => (p[s.dayNumber] === naam ? p : { ...p, [s.dayNumber]: naam }));
+      }
+    })();
+    return () => { vervallen = true; };
+  }, [route]);
+  // De plaatsnaam wint van het foto-bijschrift zodra hij binnen is. "Heel veel
+  // electrische auto's" is een leuk bijschrift maar geen antwoord op de vraag
+  // waar deze etappe naartoe ging.
+  const naamVan = (s) => (s ? (s.query ? s.naam : plaatsnamen[s.dayNumber] || s.naam) : "");
 
   useEffect(() => {
     if (!mapRef.current || route.length === 0) return;
@@ -1293,12 +1356,47 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       map.on("click", () => setActief(null));
 
       const bounds = route.map((p) => [p.lat, p.lon]);
+      volledigeBoundsRef.current = bounds;
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [36, 36] });
+      setIngezoomd(false);
     })();
 
     return () => { cancelled = true; };
   }, [route]);
+
+  // Inzoomen op wat je koos. Bij een reis die van Nederland naar Japan loopt
+  // staat de hele route zo ver uitgezoomd dat een dagtocht van vijf kilometer
+  // samenvalt met de stip ernaast — precies de plek waar de meeste bewegingen
+  // zitten is dan het minst te zien. Kies je een etappe of stop, dan schuift de
+  // kaart naar díe twee punten toe, en met "Hele reis" ga je weer terug.
+  //
+  // Alleen bij een tik, niet bij het zweven met de muis: een kaart die
+  // meebeweegt met elke muisbeweging is niet te volgen.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !actief?.vast) return;
+    const naar = route[actief.index];
+    const van = actief.soort === "etappe" ? route[actief.index - 1] : naar?.vanaf;
+    if (!naar) return;
+    const punten = van ? [[van.lat, van.lon], [naar.lat, naar.lon]] : [[naar.lat, naar.lon]];
+    if (punten.length === 1) map.flyTo(punten[0], 11, { duration: 0.6 });
+    // maxZoom: twee foto's van dezelfde stad liggen soms honderd meter uit
+    // elkaar; zonder grens zou de kaart tot straatniveau inzoomen en ben je de
+    // rest van de reis helemaal kwijt.
+    else map.flyToBounds(punten, { padding: [50, 50], maxZoom: 12, duration: 0.6 });
+    setIngezoomd(true);
+  }, [actief, route]);
+
+  function toonHeleReis() {
+    const map = mapInstanceRef.current;
+    const bounds = volledigeBoundsRef.current;
+    if (!map || !bounds?.length) return;
+    setActief(null);
+    if (bounds.length === 1) map.setView(bounds[0], 13);
+    else map.flyToBounds(bounds, { padding: [36, 36], duration: 0.6 });
+    setIngezoomd(false);
+  }
 
   // Het uitlichten gebeurt hier, los van het opbouwen hierboven: bij elke
   // muisbeweging de hele kaart opnieuw tekenen zou hem laten haperen én de
@@ -1364,7 +1462,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       if (!s) return null;
       const heen = s.vanaf ? haversineMeters(s.vanaf, s) : 0;
       return {
-        titel: `Dag ${s.dayNumber} · ${s.naam}`,
+        titel: `Dag ${s.dayNumber} · ${naamVan(s)}`,
         regel: [
           s.aanstaand ? "nog te gaan" : null,
           heen > 0 ? `${fmtDistance(heen)} vanaf dag ${s.vanaf.dayNumber}` : "begin van de reis",
@@ -1379,7 +1477,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       const van = route[actief.index - 1], naar = route[actief.index];
       if (!van || !naar) return null;
       return {
-        titel: `${van.naam} → ${naar.naam}`,
+        titel: `${naamVan(van)} → ${naamVan(naar)}`,
         regel: `${fmtDistance(haversineMeters(van, naar))} · dag ${van.dayNumber} naar dag ${naar.dayNumber}${naar.aanstaand ? " · nog te gaan" : ""}`,
         thumb: naar.thumb,
         dayId: naar.dayId,
@@ -1399,6 +1497,17 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
     <div className="mb-6">
       <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 280 }}>
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+        {/* Alleen zichtbaar zodra je ergens op ingezoomd bent — dan is het ook
+            de enige weg terug, want slepen staat op deze ingebedde kaart uit.
+            Staat aan de tegenovergestelde kant van het kaartje: allebei
+            rechtsboven betekent dat het kaartje deze knop afdekt, en dan is de
+            weg terug precies wat je niet meer ziet. */}
+        {ingezoomd && (
+          <button type="button" onClick={toonHeleReis}
+            className={`absolute right-2 z-[1000] px-3 py-1.5 rounded-full bg-white/95 backdrop-blur shadow-lg border border-gray-100 text-xs font-semibold text-gray-700 hover:bg-white transition-colors inline-flex items-center gap-1.5 ${kaartjeBoven ? "bottom-7" : "top-2"}`}>
+            <Icon name="globe" size={13} className="text-gray-400" />Hele reis
+          </button>
+        )}
         {/* Het kaartje ligt óver de kaart in plaats van eronder: zo blijft de
             kaart even hoog, of je nu iets aanwijst of niet, en springt de pagina
             niet op en neer terwijl je met de muis over de route beweegt. */}
