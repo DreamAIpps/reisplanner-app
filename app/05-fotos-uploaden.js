@@ -459,20 +459,14 @@ function PhotoCaption({ photo, readOnly, onChanged, maxWidth }) {
 // lang (verkleinen, versturen, opslaan), en een knop die alleen "Uploaden..."
 // zegt geeft geen enkel houvast of er nog iets gebeurt — zeker niet bij een
 // stapel foto's. Vandaar het aantal erbij en een balk die daadwerkelijk vult.
+// Alleen nog de tekst; de balk zelf staat als Voortgangsbalk bij de andere
+// bouwstenen, zodat het uploaden en het opzoeken van de route er hetzelfde
+// uitzien in plaats van elk een eigen variant te hebben.
 function UploadProgress({ done, total, className = "" }) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
   return (
-    <div className={`space-y-1.5 ${className}`}>
-      <div className="flex items-center justify-between text-xs text-gray-500">
-        <span>{done} van {total} {total === 1 ? "foto" : "foto's"} geüpload</span>
-        <span className="tnum">{pct}%</span>
-      </div>
-      <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden"
-        role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total}
-        aria-label="Voortgang uploaden">
-        <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${pct}%` }} />
-      </div>
-    </div>
+    <Voortgangsbalk done={done} total={total} className={className}
+      label={`${done} van ${total} ${total === 1 ? "foto" : "foto's"} geüpload`}
+      ariaLabel="Voortgang uploaden" />
   );
 }
 
