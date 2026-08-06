@@ -2454,7 +2454,10 @@ function MapsLink({ query, className = "" }) {
       target="_blank" rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
       title={`${query} openen in Google Maps`}
-      className={`inline-flex items-baseline gap-1.5 hover:text-sky-700 hover:underline transition-colors ${className}`}>
+      className={`inline-flex items-baseline gap-1.5 text-sky-700 hover:underline transition-colors ${className}`}>
+      {/* Speldje én tekst in accentkleur: op mobiel is er geen hover, dus zonder
+          kleur zag het eruit als gewone tekst en was niet te zien dat je erop
+          kon tikken om de kaart te openen. */}
       <Icon name="pin" size={14} className="shrink-0 self-center" />
       <span className="min-w-0">{query}</span>
     </a>
