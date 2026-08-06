@@ -371,3 +371,50 @@ function Tabs({ tabs, active, onChange, accentColor }) {
     </div>
   );
 }
+
+// Naar een dag of activiteit springen. Ziet eruit als één regel werk, maar is
+// het niet: dagblokken buiten beeld worden door de browser overgeslagen (zie
+// content-visibility in app.css) en hebben zolang alleen een gescháátte hoogte.
+// Spring je naar een dag verderop, dan worden de blokken die je onderweg
+// passeert alsnog getekend, blijkt hun echte hoogte af te wijken van die
+// schatting, en schuift het doel onder je vandaan.
+//
+// Gemeten op een reis van drie weken, met "Vandaag" vanaf de bovenkant van het
+// dagboek: je kwam op dag 8 uit in plaats van dag 11, en vanaf een andere
+// beginpositie zelfs tussen twee dagen in. Vanaf beneden naar boven klopte het
+// wél — vandaar dat het "soms" leek.
+//
+// Daarom niet één keer springen maar bijsturen tot het stil ligt: opnieuw meten,
+// nog eens richten, en dat herhalen tot het doel twee keer achter elkaar op
+// dezelfde plek staat. Een bovengrens op het aantal rondes zodat dit nooit kan
+// blijven doorlopen.
+function scrollNaarElement(id, opties = {}) {
+  const { blok = "start" } = opties;
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  // Een zachte glijbeweging over tienduizenden pixels is niet prettig én maakt
+  // het bijsturen zichtbaar als een sprong achteraf. Dichtbij dus zacht,
+  // veraf direct.
+  const afstand = Math.abs(el.getBoundingClientRect().top);
+  const zacht = afstand < window.innerHeight * 3;
+  el.scrollIntoView({ behavior: zacht ? "smooth" : "auto", block: blok });
+
+  let rondes = 0;
+  let vorigeTop = null;
+  const bijsturen = () => {
+    const doel = document.getElementById(id);
+    if (!doel || rondes++ > 40) return;
+    const top = Math.round(doel.getBoundingClientRect().top);
+    // Twee keer dezelfde uitkomst betekent dat alles eronder is uitgerekend en
+    // er niets meer verschuift.
+    if (vorigeTop !== null && Math.abs(top - vorigeTop) <= 1) return;
+    vorigeTop = top;
+    doel.scrollIntoView({ block: blok });
+    requestAnimationFrame(bijsturen);
+  };
+  // Pas na de zachte beweging bijsturen; anders breekt de eerste correctie de
+  // animatie meteen af. Bij een directe sprong kan het volgende frame al.
+  if (zacht) setTimeout(() => requestAnimationFrame(bijsturen), 450);
+  else requestAnimationFrame(bijsturen);
+}

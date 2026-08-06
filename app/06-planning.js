@@ -139,7 +139,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
   function scrollToToday() {
     if (!todayDay) return;
-    document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollNaarElement(`day-${todayDay.id}`);
   }
 
   // Land op vandaag zodra de dagplanning opent — net als bij het dagboek is
@@ -151,7 +151,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     if (didAutoScroll.current || !todayDay) return;
     didAutoScroll.current = true;
     requestAnimationFrame(() => {
-      document.getElementById(`day-${todayDay.id}`)?.scrollIntoView({ block: "start" });
+      scrollNaarElement(`day-${todayDay.id}`);
     });
   }, [todayDay, trip.id]);
 

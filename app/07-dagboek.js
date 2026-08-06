@@ -278,13 +278,13 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     if (didAutoScroll.current || !entriesLoaded || !todayDay) return;
     didAutoScroll.current = true;
     requestAnimationFrame(() => {
-      document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ block: "start" });
+      scrollNaarElement(`journal-day-${todayDay.id}`);
     });
   }, [entriesLoaded, todayDay, trip.id]);
 
   function scrollToToday() {
     if (!todayDay) return;
-    document.getElementById(`journal-day-${todayDay.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollNaarElement(`journal-day-${todayDay.id}`);
   }
 
   // Anything written by someone else since this user's previous visit. The
@@ -321,7 +321,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
     const dayId = effective.day_id
       || days.find((d) => (d.activities || []).some((a) => a.id === effective.activity_id))?.id
       || days.find((d) => isoDate(d.date) === fallbackDateStr)?.id;
-    document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollNaarElement(`journal-day-${dayId}`);
   }
 
   // Everything a block needs to show and post reactions for its own slot.

@@ -95,7 +95,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     setSharing(null);
     setTab("journal");
     setTimeout(() => {
-      document.getElementById(`journal-day-${dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollNaarElement(`journal-day-${dayId}`);
     }, 50);
   }
 

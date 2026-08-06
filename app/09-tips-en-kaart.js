@@ -954,7 +954,7 @@ function DayMiniMap({ places, accommodation }) {
         // waar iemand op tikt. Alleen bij een plek zonder activiteit (losse
         // dagfoto's) blijft de oude foto-preview over als enige zinvolle actie.
         marker.on("click", () => {
-          if (pl.activityId) document.getElementById(`journal-activity-${pl.activityId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (pl.activityId) scrollNaarElement(`journal-activity-${pl.activityId}`, { blok: "center" });
           else setViewing({ photos: pl.photos, index: 0 });
         });
         if (pl.label) {
@@ -1531,7 +1531,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
               </div>
               {kaartje.dayId && (
                 <button type="button"
-                  onClick={() => document.getElementById(`journal-day-${kaartje.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  onClick={() => scrollNaarElement(`journal-day-${kaartje.dayId}`)}
                   className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-300 text-gray-800 hover:bg-sky-200 transition-colors">
                   Dag {kaartje.dayNumber}
                 </button>
