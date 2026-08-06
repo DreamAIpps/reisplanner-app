@@ -2491,84 +2491,39 @@ function TimelineCard({ time, icon, title, subtitle, meta, aside, trailing, onCl
   );
 }
 
-// Combineert activiteiten, vervoer en verblijf tot één chronologische lijst
-// van wat er nog aan zit te komen — handig tijdens de reis zelf om in één
-// oogopslag te zien wat er hierna op de planning staat. Tijdsprecisie stopt
-// bij "vandaag": voor toekomstige dagen telt alleen de datum mee, voor vandaag
-// wordt ook de klok van het toestel gebruikt om al gepasseerde items over te
-// slaan. Vervoer heeft een echte timestamp (en wordt, net als elders in de
-// app, als "wandkloktijd in UTC" gelezen — geen tijdzone-omrekening); verblijf
-// heeft geen tijd, dus check-in/check-out tellen zodra hun datum is aangebroken.
-function buildUpcomingItems(days, transports, accommodations, timezone) {
-  const todayStr = todayIso(timezone);
-  const now = new Date();
-  const nowHM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const isPastToday = (dayStr, hm) => dayStr === todayStr && !!hm && hm < nowHM;
-
-  const items = [];
-
-  (days || []).forEach((day) => {
-    const dayStr = day.date ? String(day.date).slice(0, 10) : null;
-    if (!dayStr || dayStr < todayStr) return;
-    (day.activities || []).forEach((act) => {
-      if (isPastToday(dayStr, act.time)) return;
-      items.push({
-        key: `act-${act.id}`, dayStr, sortKey: `${dayStr}T${act.time || "23:59"}`,
-        kind: "activity", icon: categoryIcon(act.category), title: act.title,
-        subtitle: act.location || act.category || "Activiteit", time: act.time || null, ref: act,
-        weatherQuery: act.location || null,
-        // Alleen gezet als de ondertitel daadwerkelijk de locatie is; dan mag
-        // die regel een kaartlink worden zonder dat er iets anders verdwijnt.
-        location: act.location || null,
-      });
-    });
-  });
-
-  (transports || []).forEach((t) => {
-    if (!t.departure_time) return;
-    const dep = new Date(t.departure_time);
-    const dayStr = dep.toISOString().slice(0, 10);
-    const hm = dep.toISOString().slice(11, 16);
-    if (dayStr < todayStr || isPastToday(dayStr, hm)) return;
-    items.push({
-      key: `t-${t.id}`, dayStr, sortKey: `${dayStr}T${hm}`,
-      kind: "transport", icon: transportIcon(t.type), title: `${t.from_location} → ${t.to_location}`,
-      subtitle: t.type, time: hm, ref: t,
-      weatherQuery: t.to_location || t.from_location || null,
-    });
-  });
-
-  (accommodations || []).forEach((a) => {
-    if (a.check_in) {
-      const dayStr = String(a.check_in).slice(0, 10);
-      if (dayStr >= todayStr) {
-        items.push({
-          key: `a-in-${a.id}`, dayStr, sortKey: `${dayStr}T15:00`,
-          kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-in", time: null, ref: a,
-          weatherQuery: a.address || a.name,
-        });
-      }
-    }
-    if (a.check_out) {
-      const dayStr = String(a.check_out).slice(0, 10);
-      if (dayStr >= todayStr) {
-        items.push({
-          key: `a-out-${a.id}`, dayStr, sortKey: `${dayStr}T11:00`,
-          kind: "accommodation", icon: "bed", title: a.name, subtitle: "Check-out", time: null, ref: a,
-          weatherQuery: a.address || a.name,
-        });
-      }
-    }
-  });
-
-  items.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  return items;
-}
 
 const DAY_NAMES = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 const MONTH_NAMES = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
-function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId, onShareEditor }) {
+// Naar-boven-knop die zich gedraagt: hij verschijnt pas als je daadwerkelijk
+// een eind naar beneden bent. Eerder stond hij er altijd — ook op een lege
+// pagina die helemaal niet scrolt, waar hij dan over de tekst heen zweefde en
+// nergens heen kon. Stond twee keer bijna identiek in het bestand (dagplanning
+// en dagboek); nu één keer.
+function ScrollTopButton() {
+  const [zichtbaar, setZichtbaar] = useState(false);
+  useEffect(() => {
+    function kijk() {
+      const kanScrollen = document.documentElement.scrollHeight > window.innerHeight + 200;
+      setZichtbaar(kanScrollen && window.scrollY > 400);
+    }
+    kijk();
+    window.addEventListener("scroll", kijk, { passive: true });
+    window.addEventListener("resize", kijk);
+    return () => { window.removeEventListener("scroll", kijk); window.removeEventListener("resize", kijk); };
+  }, []);
+  if (!zichtbaar) return null;
+  return (
+    <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+      title="Naar boven" aria-label="Naar boven"
+      className="rp-press rp-rise fixed right-5 z-40 w-11 h-11 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
+      style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
+      <Icon name="arrowUp" size={19} />
+    </button>
+  );
+}
+
+function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId, onShareEditor, onEditTrip }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editingTransport, setEditingTransport] = useState(null);
@@ -2617,18 +2572,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
     });
   }, [todayDay, trip.id]);
 
-  // Alleen zinvol terwijl de reis loopt — vóór vertrek of ná thuiskomst is er
-  // geen "hierna" om te tonen.
-  const upcoming = React.useMemo(
-    () => todayDay ? buildUpcomingItems(days, transports, accommodations, trip.timezone).slice(0, 5) : [],
-    [todayDay, days, transports, accommodations, trip.timezone]
-  );
-  function openUpcomingItem(item) {
-    if (item.kind === "activity") setEditingActivity(item.ref);
-    else if (item.kind === "transport") setEditingTransport(item.ref);
-    else setEditingAccommodation(item.ref);
-  }
-
   // Alle "toevoegen"-acties zaten als vijf losse knoppen op de pagina en namen
   // meer ruimte in dan de planning zelf. Nu één primaire actie, met de keuze in
   // een blad — dezelfde handelingen, alleen niet meer allemaal tegelijk in beeld.
@@ -2669,46 +2612,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         )}
       </div>
 
-      {/* Direct onder de titel — dit is waarom je tijdens de reis zelf op dit
-          tabblad kijkt, en moet zonder scrollen te zien zijn. */}
-      {upcoming.length > 0 && (
-        <div className="rounded-2xl bg-white shadow-md mb-8 overflow-hidden">
-          <div className="px-6 pt-5 pb-1 text-[13px] font-semibold uppercase tracking-[0.1em] text-gray-400">Binnenkort</div>
-          <div className="px-2 pb-2">
-            {upcoming.map((item, i) => (
-              <React.Fragment key={item.key}>
-                {/* Losse streep in plaats van een border op de rij zelf: die zou
-                    de afgeronde hoeken volgen en als een boogje uitkomen. */}
-                {i > 0 && <div className="mx-4 h-px bg-gray-200" aria-hidden="true" />}
-              <div onClick={() => openUpcomingItem(item)}
-                className="rp-press flex items-center gap-4 px-4 py-4 rounded-2xl cursor-pointer hover:bg-gray-50 transition-colors">
-                {/* Links: tijd met klein icoon eronder. */}
-                <div className="shrink-0 w-12 text-center">
-                  <div className="text-[15px] font-semibold text-gray-800 tnum leading-none">{item.time || "—"}</div>
-                  <Icon name={item.icon} size={14} className="text-gray-400 mt-2" />
-                </div>
-                {/* Midden: waar het om gaat. */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[19px] font-semibold text-gray-800 truncate leading-snug">{item.title}</div>
-                  <div className="text-[13px] font-medium text-gray-500 truncate mt-0.5">
-                    {item.location ? <MapsLink query={item.location} /> : item.subtitle}
-                  </div>
-                </div>
-                {/* Rechts: weer boven, dag eronder. */}
-                <div className="shrink-0 text-right">
-                  <DayWeatherBadge query={item.weatherQuery} date={item.dayStr} size={14} />
-                  <div className="text-[13px] font-medium text-gray-400 mt-1">
-                    {item.dayStr === todayIso(trip.timezone) ? "Vandaag"
-                      : item.dayStr === tomorrowIso(trip.timezone) ? "Morgen"
-                      : fmtShortDate(item.dayStr)}
-                  </div>
-                </div>
-              </div>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Hier stond een "Binnenkort"-kaart met de eerstvolgende vijf items. Die
+          verscheen alleen tijdens een lopende reis — en juist dán opent de
+          dagplanning al op de dag van vandaag (zie het effect hierboven), dus
+          je landde er altijd onder en kreeg 'm nooit te zien. Wat hij toonde
+          staat bovendien direct daaronder in de dagenlijst zelf: dezelfde
+          activiteiten, met dezelfde tijden en hetzelfde weer. Twee lijsten van
+          hetzelfde, waarvan er één onzichtbaar was. */}
 
       {!readOnly && (
         <div className="mb-8">
@@ -2718,11 +2628,22 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         </div>
       )}
 
+      {/* Deze melding vertelde je wat je moest doen ("stel data in bij de reis")
+          maar bracht je er niet heen — je moest zelf bedenken dat dat achter het
+          "..."-menu zit. Een lege staat hoort de knop te zijn die je verder helpt,
+          niet alleen een aanwijzing. */}
       {days.length === 0 && (
         <div className="text-center py-20 text-gray-400">
           <Icon name="calendar" size={44} strokeWidth={1.2} className="mx-auto mb-4 text-gray-300" />
           <div className="text-[19px] font-semibold text-gray-600">Nog geen dagen gepland</div>
-          <div className="text-[15px] mt-2 leading-relaxed">Stel een vertrek- en terugkomstdatum in bij de reis om te beginnen</div>
+          <div className="text-[15px] mt-2 leading-relaxed">
+            Zodra deze reis een vertrek- en terugkomstdatum heeft, staan de dagen hier vanzelf.
+          </div>
+          {!readOnly && onEditTrip && (
+            <Button onClick={onEditTrip} className="mt-5 !w-auto !inline-flex">
+              <Icon name="calendar" size={17} />Reisdata instellen
+            </Button>
+          )}
         </div>
       )}
 
@@ -2921,14 +2842,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
         <TipsModal tripId={trip.id} trip={trip} location={tipsLocation} onClose={() => setTipsLocation(null)} />
       )}
 
-      {/* Altijd bereikbaar, ongeacht hoever je bent doorgescrold — snel terug
-          naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
-      <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        title="Naar boven"
-        className="rp-press fixed right-5 z-40 w-11 h-11 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
-        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
-        <Icon name="arrowUp" size={19} />
-      </button>
+      <ScrollTopButton />
     </div>
   );
 }
@@ -3428,7 +3342,7 @@ function JournalActivityTitle({ act, readOnly, onSave }) {
   );
 }
 
-function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer, onShare }) {
+function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer, onShare, onGoToPlanning }) {
   const [entries, setEntries] = useState([]);
   const [comments, setComments] = useState([]);
   const [slotLikes, setSlotLikes] = useState({});
@@ -3537,7 +3451,12 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
       <div className="text-center py-16 text-gray-400">
         <Icon name="book" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
         <div className="font-medium">Nog geen dagen gepland</div>
-        <div className="text-sm mt-1">Voeg dagen toe op de Dagplanning-tab om je dagboek te beginnen</div>
+        <div className="text-sm mt-1">Het dagboek volgt de dagen van je reis. Zodra die er zijn, kun je hier schrijven.</div>
+        {onGoToPlanning && (
+          <Button onClick={onGoToPlanning} className="mt-4 !w-auto !inline-flex">
+            <Icon name="calendar" size={17} />Naar de dagplanning
+          </Button>
+        )}
       </div>
     );
   }
@@ -3724,14 +3643,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           onClose={() => setAddingActivity(null)} />
       )}
 
-      {/* Altijd bereikbaar, ongeacht hoever je bent doorgescrold — snel terug
-          naar de reisoverzicht-kaart bovenaan, boven de mobiele navigatiebalk. */}
-      <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        title="Naar boven"
-        className="rp-press fixed right-5 z-40 w-11 h-11 rounded-full flex items-center justify-center transition-colors hover:brightness-95"
-        style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
-        <Icon name="arrowUp" size={19} />
-      </button>
+      <ScrollTopButton />
     </div>
   );
 }
@@ -9667,11 +9579,11 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           </div>
           {tab === "map"
             ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
-            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
+            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />}
         </>
       ) : (
         <>
-          {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} />}
+          {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} onEditTrip={isOwnerActions ? () => setEditing(true) : null} />}
           {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
           {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
