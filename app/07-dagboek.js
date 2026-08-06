@@ -115,14 +115,20 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
   async function handleSave() {
     if (!text.trim()) return;
     setSaving(true);
+    // finally zonder catch: het opslaan faalde, het invoerveld bleef netjes
+    // openstaan met de tekst er nog in — maar niemand kreeg te horen dát het
+    // mislukt was, dus het las als opgeslagen.
     try { await onSave(text.trim()); setEditing(false); }
+    catch (err) { toonMelding(err.message || "Opslaan is niet gelukt"); }
     finally { setSaving(false); }
   }
 
   async function handleDelete() {
     if (!confirm("Verhaal verwijderen?")) return;
-    await onDelete(myEntry.id);
-    setText(""); setEditing(false);
+    try {
+      await onDelete(myEntry.id);
+      setText(""); setEditing(false);
+    } catch (err) { toonMelding(err.message || "Verwijderen is niet gelukt"); }
   }
 
 

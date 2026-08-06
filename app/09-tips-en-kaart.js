@@ -91,10 +91,18 @@ function TipsModal({ tripId, trip, location, onClose }) {
       const cached = localStorage.getItem(dykKey);
       if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
     } catch {}
+    // Het weetje hangt aan één plaats. Wissel je van plaats terwijl het vorige
+    // verzoek nog loopt, dan kan dat antwoord ná het nieuwe binnenkomen en zet
+    // het een weetje over de vorige stad onder de nieuwe naam.
+    let vervallen = false;
     apiFetch(`/api/trips/${tripId}/tips?location=${encodeURIComponent(location)}`)
-      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
+      .then((d) => {
+        try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {}
+        if (!vervallen) setDidYouKnow(d.did_you_know || null);
+      })
       .catch(() => {})
-      .finally(() => setDykLoading(false));
+      .finally(() => { if (!vervallen) setDykLoading(false); });
+    return () => { vervallen = true; };
   }, [location]);
 
   return (
@@ -136,10 +144,15 @@ function TipsTab({ trip }) {
       const cached = localStorage.getItem(dykKey);
       if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
     } catch {}
+    let vervallen = false;
     apiFetch(`/api/trips/${trip.id}/tips`)
-      .then((d) => { setDidYouKnow(d.did_you_know || null); try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {} })
+      .then((d) => {
+        try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {}
+        if (!vervallen) setDidYouKnow(d.did_you_know || null);
+      })
       .catch(() => {})
-      .finally(() => setDykLoading(false));
+      .finally(() => { if (!vervallen) setDykLoading(false); });
+    return () => { vervallen = true; };
   }, [trip.id, trip.destination]);
 
   if (!trip.destination) return (
@@ -595,7 +608,17 @@ function MapTab({ trip, accommodations, transports, days }) {
 
       // Init Leaflet map
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      // Leaflet komt uit een los <script> in index.html. Laadt dat er om wat
+      // voor reden dan ook niet bij (haperend netwerk op de eerste start,
+      // blokkade onderweg), dan is window.L er niet en liep dit blok stuk op
+      // "Cannot read properties of undefined" — een onafgevangen rejection
+      // binnen de async-IIFE, dus zonder foutscherm maar wel met een halve
+      // opruiming. Alle vijf de kaarten in dit bestand hebben dezelfde
+      // afhankelijkheid en daarom dezelfde controle; zonder kaartbibliotheek
+      // blijft het kaartvlak gewoon leeg, net als voorheen, maar de rest van
+      // het scherm blijft heel.
       const L = window.L;
+      if (!L) return;
       const map = L.map(mapRef.current);
       mapInstanceRef.current = map;
       addBaseLayer(L, map, await mapConfig());
@@ -743,6 +766,7 @@ function VisitedMap({ trip }) {
       const cfg = await mapConfig();
       if (cancelled || !mapRef.current) return;
       const L = window.L;
+      if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
       const map = L.map(mapRef.current, { scrollWheelZoom: false });
       mapInstanceRef.current = map;
@@ -872,6 +896,7 @@ function DayMiniMap({ places, accommodation }) {
       const accGeo = accQuery ? await geocode(accQuery).catch(() => null) : null;
       if (cancelled || !mapRef.current) return;
       const L = window.L;
+      if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
       const map = L.map(mapRef.current, {
         scrollWheelZoom: false, dragging: false, zoomControl: false,
@@ -1009,6 +1034,7 @@ function AccommodationTransition({ current, previous, date }) {
       const cfg = await mapConfig();
       if (cancelled || !mapRef.current) return;
       const L = window.L;
+      if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
       const map = L.map(mapRef.current, {
         scrollWheelZoom: false, dragging: false, zoomControl: false,
@@ -1153,6 +1179,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       const cfg = await mapConfig();
       if (cancelled || !mapRef.current) return;
       const L = window.L;
+      if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
       // dragging/tap uit: dit kaartje staat ingebed in een scrollende pagina, en
       // een sleepgebaar dat wordt onderbroken (bv. door een tik die de kaart
