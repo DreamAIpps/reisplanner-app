@@ -48,6 +48,19 @@
 }
 
 .leaflet-reisplanner-icon { background: none !important; border: none !important; }
+/* Dagstip op de dagboekkaart. De maat en de kleuren staan per stip in de HTML
+   (bezocht of nog te gaan); dit is wat ze allemaal delen. Het uitlichten
+   gebeurt met een schaling op ditzelfde element — vandaar de transition, en
+   vandaar dat de vorm hier staat en niet per stip herhaald wordt. */
+.rp-stop {
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(55,52,50,.35);
+  transition: transform .14s ease-out, box-shadow .14s ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .rp-stop { transition: none; } }
 /* Compact activiteit-label op de dagboek-kaart — Leaflets standaard tooltip
    is te fors (6px padding, schaduw, pijltje) voor een klein kaartje vol stippen. */
 .leaflet-reisplanner-tooltip {

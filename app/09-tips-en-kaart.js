@@ -1098,6 +1098,28 @@ function AccommodationTransition({ current, previous, date }) {
 // plaats van rechte lijnen. Een tik op een dagnummer springt direct naar dat
 // dagkaartje verderop in het dagboek, zodat de kaart een navigatiemiddel is,
 // niet alleen een plaatje.
+// De stip van één stop op de dagboekkaart. Bezocht is gevuld, nog te gaan is hol
+// en gestippeld.
+//
+// Het uitlichten gebeurt later met een schaling op ditzelfde element, niet met
+// een nieuw icoon. Dat is een bewuste keuze: setIcon() vervangt het DOM-element
+// van de marker, en dan verliest de browser het element waar de muis op stond.
+// De bijbehorende mouseout kwam daardoor nooit aan en het kaartje bleef hangen
+// nadat je allang weggewezen was. Nu blijft het element staan en verandert
+// alleen zijn opmaak.
+function stopIcoon(L, pl) {
+  const maat = pl.aanstaand ? 26 : 30;
+  const vulling = pl.aanstaand
+    ? `background:#fff;border:2.5px dashed ${PALETTE.coralDeep};color:${PALETTE.coralDeep};`
+    : `background:${PALETTE.coralDeep};border:2.5px solid #fff;color:#fff;`;
+  return L.divIcon({
+    className: "leaflet-reisplanner-icon",
+    html: `<div class="rp-stop" style="width:${maat}px;height:${maat}px;${vulling}">${pl.dayNumber}</div>`,
+    iconSize: [maat, maat],
+    iconAnchor: [maat / 2, maat / 2],
+  });
+}
+
 function JournalOverviewMap({ trip, days, photos, accommodations }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -1171,8 +1193,40 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
     return () => { cancelled = true; };
   }, [upcomingItems]);
 
+  // Eén doorlopende route van dag 1 tot de laatste geplande dag. Bezochte en nog
+  // te gaan stops stonden als twee losse lijstjes op de kaart; als één rij op
+  // dagnummer is de reis pas echt een lijn die je kunt volgen, en kan elke
+  // etappe naar de stop ervóór verwijzen.
+  const route = React.useMemo(() => {
+    const stops = [
+      ...dayMarkers.map((m) => ({ ...m, aanstaand: false })),
+      ...upcomingGeo.map((m) => ({ ...m, aanstaand: true, photos: [] })),
+    ].sort((a, b) => a.dayNumber - b.dayNumber);
+    return stops.map((s, i) => {
+      const foto = (s.photos || [])[0] || null;
+      return {
+        ...s,
+        naam: s.query || foto?.activity_title || foto?.label || foto?.day_title || `Dag ${s.dayNumber}`,
+        thumb: foto?.thumb_url || foto?.url || null,
+        fotoAantal: (s.photos || []).length,
+        // Afstand vanaf de vorige stop: dít is de "reisbeweging" die de gebruiker
+        // wil kunnen zien. De eerste stop heeft er geen, daar begint de reis.
+        vanaf: i > 0 ? stops[i - 1] : null,
+      };
+    });
+  }, [dayMarkers, upcomingGeo]);
+
+  // Welke stop of etappe op dit moment uitgelicht is. `vast` betekent: met een
+  // tik gekozen en blijft staan; anders is het een zweefbeweging met de muis die
+  // vanzelf weer verdwijnt.
+  const [actief, setActief] = useState(null); // { soort: "stop"|"etappe", index, vast } | null
+  // Het kaartje springt naar boven zodra de aangewezen stop in de onderste helft
+  // ligt — anders dekt het precies af waar je naar wijst.
+  const [kaartjeBoven, setKaartjeBoven] = useState(false);
+  const laagRef = useRef({ stops: [], etappes: [] });
+
   useEffect(() => {
-    if (!mapRef.current || (dayMarkers.length === 0 && upcomingGeo.length === 0)) return;
+    if (!mapRef.current || route.length === 0) return;
     let cancelled = false;
 
     (async () => {
@@ -1189,62 +1243,107 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       const map = L.map(mapRef.current, { scrollWheelZoom: false, dragging: false, tap: false });
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
+      laagRef.current = { stops: [], etappes: [] };
 
-      for (let i = 1; i < dayMarkers.length; i++) {
-        L.polyline(arcLatLngs(dayMarkers[i - 1], dayMarkers[i]), { color: PALETTE.coralDeep, weight: 2.5, opacity: 0.75 }).addTo(map);
-      }
-      // Route die nog moet komen: lichter en gestippeld — nog niet gelopen,
-      // in tegenstelling tot de dikke ononderbroken lijn hierboven.
-      const futureChain = [...(dayMarkers.length ? [dayMarkers[dayMarkers.length - 1]] : []), ...upcomingGeo];
-      for (let i = 1; i < futureChain.length; i++) {
-        L.polyline(arcLatLngs(futureChain[i - 1], futureChain[i]), { color: PALETTE.coralDeep, weight: 2, opacity: 0.45, dashArray: "2 8" }).addTo(map);
+      // Elke etappe is een eigen lijn in plaats van één lange polyline over alle
+      // punten. Dat kost een paar objecten meer, maar maakt het mogelijk om
+      // precies díe ene beweging op te lichten waar je met de muis boven hangt —
+      // en dat is de hele vraag hier.
+      for (let i = 1; i < route.length; i++) {
+        const naarToekomst = route[i].aanstaand;
+        const lijn = L.polyline(arcLatLngs(route[i - 1], route[i]), {
+          color: PALETTE.coralDeep,
+          weight: naarToekomst ? 2 : 2.5,
+          opacity: naarToekomst ? 0.45 : 0.75,
+          // Nog te gaan blijft gestippeld: in één oogopslag zie je wat gelopen is
+          // en wat nog komt.
+          dashArray: naarToekomst ? "2 8" : null,
+        }).addTo(map);
+        // Een lijn van 2,5 pixel is met een muis al lastig te raken en met een
+        // vinger onmogelijk. Deze onzichtbare dikkere lijn eroverheen vangt de
+        // aanwijzer op; hij bestaat alleen om aan te wijzen.
+        const grijper = L.polyline(arcLatLngs(route[i - 1], route[i]), {
+          color: PALETTE.coralDeep, weight: 18, opacity: 0, interactive: true,
+        }).addTo(map);
+        grijper.on("mouseover", () => setActief((a) => (a?.vast ? a : { soort: "etappe", index: i, vast: false })));
+        grijper.on("mouseout", () => setActief((a) => (a?.vast ? a : null)));
+        grijper.on("click", (e) => { L.DomEvent.stop(e); setActief({ soort: "etappe", index: i, vast: true }); });
+        laagRef.current.etappes[i] = { lijn, naarToekomst };
       }
 
-      dayMarkers.forEach((pl) => {
+      route.forEach((pl, i) => {
         const marker = L.marker([pl.lat, pl.lon], {
-          icon: L.divIcon({
-            className: "leaflet-reisplanner-icon",
-            html: `<div style="width:30px;height:30px;border-radius:50%;background:${PALETTE.coralDeep};border:2.5px solid #fff;box-shadow:0 2px 8px rgba(55,52,50,.35);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer">${pl.dayNumber}</div>`,
-            iconSize: [30, 30],
-            iconAnchor: [15, 15],
-          }),
+          icon: stopIcoon(L, pl),
           // Twee dagen op (bijna) dezelfde plek vallen bij een uitgezoomde reis
           // al snel samen tot één stip. Leaflet tekent dan standaard de laatst
           // toegevoegde — dus de laatste dag — bovenop; met deze offset wint
           // altijd de vroegste dag, want dat is de dag waarop je er aankwam.
-          zIndexOffset: 100000 - pl.dayNumber * 100,
+          zIndexOffset: (pl.aanstaand ? 50000 : 100000) - pl.dayNumber * 100,
         }).addTo(map);
-        marker.bindTooltip(`Dag ${pl.dayNumber}`, { direction: "top", offset: [0, -16] });
-        marker.on("click", () => {
-          document.getElementById(`journal-day-${pl.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
+        marker.on("mouseover", () => setActief((a) => (a?.vast ? a : { soort: "stop", index: i, vast: false })));
+        marker.on("mouseout", () => setActief((a) => (a?.vast ? a : null)));
+        // Een tik zette je vroeger meteen naar de dag in het dagboek. Dat was een
+        // sprong zonder aankondiging: je wist niet wat er ging gebeuren en er was
+        // geen weg terug. Nu opent een tik het kaartje met de gegevens, waar een
+        // knop in staat die je naar die dag brengt.
+        marker.on("click", (e) => { L.DomEvent.stop(e); setActief({ soort: "stop", index: i, vast: true }); });
+        laagRef.current.stops[i] = marker;
       });
 
-      // Nog te gaan: hol en gestippeld omlijnd i.p.v. gevuld, zodat in één
-      // oogopslag duidelijk is wat al gedaan is en wat nog moet komen.
-      upcomingGeo.forEach((pl) => {
-        const marker = L.marker([pl.lat, pl.lon], {
-          icon: L.divIcon({
-            className: "leaflet-reisplanner-icon",
-            html: `<div style="width:26px;height:26px;border-radius:50%;background:#fff;border:2.5px dashed ${PALETTE.coralDeep};box-shadow:0 2px 6px rgba(55,52,50,.2);color:${PALETTE.coralDeep};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer">${pl.dayNumber}</div>`,
-            iconSize: [26, 26],
-            iconAnchor: [13, 13],
-          }),
-          zIndexOffset: 50000 - pl.dayNumber * 100,
-        }).addTo(map);
-        marker.bindTooltip(`Dag ${pl.dayNumber} · nog te gaan`, { direction: "top", offset: [0, -14] });
-        marker.on("click", () => {
-          document.getElementById(`journal-day-${pl.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      });
+      map.on("click", () => setActief(null));
 
-      const bounds = [...dayMarkers, ...upcomingGeo].map((p) => [p.lat, p.lon]);
+      const bounds = route.map((p) => [p.lat, p.lon]);
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [36, 36] });
     })();
 
     return () => { cancelled = true; };
-  }, [dayMarkers, upcomingGeo]);
+  }, [route]);
+
+  // Het uitlichten gebeurt hier, los van het opbouwen hierboven: bij elke
+  // muisbeweging de hele kaart opnieuw tekenen zou hem laten haperen én de
+  // uitsnede terugzetten. Nu verandert alleen de opmaak van de lagen die er al
+  // liggen.
+  useEffect(() => {
+    const L = window.L;
+    if (!L || !mapInstanceRef.current) return;
+    const { stops, etappes } = laagRef.current;
+    const actieveEtappe = actief?.soort === "etappe" ? actief.index
+      // Licht je een stop uit, dan hoort de beweging die je daar bracht daarbij —
+      // dat is immers de reisbeweging waar het om gaat.
+      : actief?.soort === "stop" && actief.index > 0 ? actief.index : null;
+
+    etappes.forEach((e, i) => {
+      if (!e) return;
+      const uit = actieveEtappe === i;
+      const gedimd = actieveEtappe !== null && !uit;
+      e.lijn.setStyle({
+        weight: uit ? 5 : (e.naarToekomst ? 2 : 2.5),
+        opacity: uit ? 1 : gedimd ? 0.2 : (e.naarToekomst ? 0.45 : 0.75),
+      });
+      if (uit) e.lijn.bringToFront();
+    });
+    stops.forEach((m, i) => {
+      const el = m?.getElement()?.querySelector(".rp-stop");
+      if (!el) return;
+      // Bij een etappe lichten beide uiteinden op: dat maakt in één oogopslag
+      // duidelijk welke twee dagen die beweging verbindt.
+      const uit = actief?.soort === "stop" ? actief.index === i
+        : actief?.soort === "etappe" ? (i === actief.index || i === actief.index - 1) : false;
+      el.style.transform = uit ? "scale(1.28)" : "";
+      el.style.boxShadow = uit
+        ? `0 0 0 4px ${PALETTE.coralDeep}33, 0 3px 10px rgba(55,52,50,.4)`
+        : "";
+      el.style.zIndex = uit ? "1" : "";
+    });
+
+    // Waar het kaartje komt: aan de kant waar de aangewezen stop níet ligt.
+    const doel = actief ? route[actief.index] : null;
+    if (doel && mapInstanceRef.current) {
+      const punt = mapInstanceRef.current.latLngToContainerPoint([doel.lat, doel.lon]);
+      setKaartjeBoven(punt.y > mapInstanceRef.current.getSize().y * 0.55);
+    }
+  }, [actief, route]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
@@ -1256,9 +1355,88 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
     </div>
   );
 
+  // Wat er onderin het kaartje komt te staan: de aangewezen stop, of de etappe
+  // ernaartoe. Zonder aanwijzing een samenvatting van de hele reis, zodat er
+  // altijd iets staat en het kaartje niet als een plaatje overkomt.
+  const kaartje = (() => {
+    if (actief?.soort === "stop") {
+      const s = route[actief.index];
+      if (!s) return null;
+      const heen = s.vanaf ? haversineMeters(s.vanaf, s) : 0;
+      return {
+        titel: `Dag ${s.dayNumber} · ${s.naam}`,
+        regel: [
+          s.aanstaand ? "nog te gaan" : null,
+          heen > 0 ? `${fmtDistance(heen)} vanaf dag ${s.vanaf.dayNumber}` : "begin van de reis",
+          s.fotoAantal ? `${s.fotoAantal} ${s.fotoAantal === 1 ? "foto" : "foto's"}` : null,
+        ].filter(Boolean).join(" · "),
+        thumb: s.thumb,
+        dayId: s.dayId,
+        dayNumber: s.dayNumber,
+      };
+    }
+    if (actief?.soort === "etappe") {
+      const van = route[actief.index - 1], naar = route[actief.index];
+      if (!van || !naar) return null;
+      return {
+        titel: `${van.naam} → ${naar.naam}`,
+        regel: `${fmtDistance(haversineMeters(van, naar))} · dag ${van.dayNumber} naar dag ${naar.dayNumber}${naar.aanstaand ? " · nog te gaan" : ""}`,
+        thumb: naar.thumb,
+        dayId: naar.dayId,
+        dayNumber: naar.dayNumber,
+      };
+    }
+    const afgelegd = route.reduce((som, s, i) => (i === 0 || s.aanstaand ? som : som + haversineMeters(route[i - 1], s)), 0);
+    const bezocht = route.filter((s) => !s.aanstaand).length;
+    return {
+      samenvatting: true,
+      titel: bezocht > 1 ? `${bezocht} plekken · ${fmtDistance(afgelegd)} afgelegd` : "Je route",
+      regel: "Wijs een stip of lijn aan om die etappe te zien",
+    };
+  })();
+
   return (
-    <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0 mb-6" style={{ height: 280 }}>
-      <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+    <div className="mb-6">
+      <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 280 }}>
+        <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+        {/* Het kaartje ligt óver de kaart in plaats van eronder: zo blijft de
+            kaart even hoog, of je nu iets aanwijst of niet, en springt de pagina
+            niet op en neer terwijl je met de muis over de route beweegt. */}
+        {kaartje && (
+          // z-index hoog genoeg om boven Leaflets eigen lagen uit te komen: die
+          // lopen tot 800 (de attributie), en omdat de kaartcontainer zelf geen
+          // eigen stapelcontext maakt, doen die getallen hier gewoon mee. Met een
+          // lagere waarde stond dit kaartje er wél, maar onzichtbaar onder de
+          // kaart — de tekst was met een test uit te lezen, in beeld was er niets.
+          // Onderin bottom-6 in plaats van bottom-2: de attributieregel van
+          // Leaflet en OpenStreetMap hoort zichtbaar te blijven, die dekken we
+          // niet af. Bovenin begint het pas na de zoomknoppen, links in de hoek.
+          <div className={`absolute right-2 z-[1000] pointer-events-none ${kaartjeBoven ? "top-2 left-14" : "bottom-6 left-2"}`}>
+            <div className={`pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg border border-gray-100 px-3 py-2 flex items-center gap-2.5 ${kaartje.samenvatting ? "" : "rp-rise"}`}>
+              {kaartje.thumb && (
+                <img src={kaartje.thumb} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-gray-800 truncate">{kaartje.titel}</div>
+                <div className="text-xs text-gray-500 truncate">{kaartje.regel}</div>
+              </div>
+              {kaartje.dayId && (
+                <button type="button"
+                  onClick={() => document.getElementById(`journal-day-${kaartje.dayId}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-sky-300 text-gray-800 hover:bg-sky-200 transition-colors">
+                  Dag {kaartje.dayNumber}
+                </button>
+              )}
+              {actief?.vast && (
+                <button type="button" onClick={() => setActief(null)} aria-label="Sluiten"
+                  className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+                  <Icon name="close" size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
