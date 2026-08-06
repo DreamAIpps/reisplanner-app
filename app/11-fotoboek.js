@@ -846,6 +846,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
+  // Tijdstip van de laatste geslaagde opslag. Alleen om er even "Bewaard" bij te
+  // kunnen zetten; daarna verdwijnt die melding weer vanzelf.
+  const [bewaardOp, setBewaardOp] = useState(null);
+  const [toonBewaard, setToonBewaard] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
   const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
@@ -900,6 +904,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // van vorm verandert (kantelen, resizen, het paneel openen/sluiten).
   const [canvasSize, setCanvasSize] = useState(null);
   const pagesLoaded = pages !== null; // canvasAreaRef bestaat pas zodra dit true wordt (zie "Laden..."-return hierboven) — zonder deze afhankelijkheid mist het effect die overgang als "orientation" ondertussen niet wijzigt
+
+  // De opslag-functie draait uit een timer en zou anders de `pages` van het
+  // moment van instellen meenemen in plaats van de actuele.
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
   useEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
@@ -1262,10 +1271,37 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     await api.updatePhotobook(bookId, { title: title.trim() });
   }
 
-  async function handleSavePages() {
+  // De opslaan-knop is weg; het boek bewaart zichzelf. Zie het effect verderop
+  // voor wanneer dit vanzelf gaat. Deze functie doet het werk en let daarbij op
+  // twee dingen die met een knop nauwelijks voorkwamen maar bij automatisch
+  // opslaan aan de orde van de dag zijn:
+  //
+  // 1. Twee keer tegelijk opslaan. Blijf je doorwerken terwijl een opslag nog
+  //    loopt, dan zou een tweede verzoek eroverheen kunnen gaan en in de
+  //    verkeerde volgorde aankomen. Er is er daarom altijd maar één tegelijk;
+  //    het effect start de volgende zodra deze klaar is.
+  // 2. Wijzigingen tijdens het opslaan. "Alles bewaard" mag alleen als er
+  //    intussen niets bijgekomen is — anders zou die ene versleping die je net
+  //    tijdens het verzenden deed als opgeslagen tellen en bij de volgende
+  //    ronde niet meer meegaan. Vandaar de vergelijking met de momentopname.
+  // De ref houdt de lópende opslag vast, niet alleen "ja/nee bezig". Vraagt er
+  // iemand anders om terwijl deze nog loopt — bijvoorbeeld de terugknop — dan
+  // krijgt die dezelfde belofte terug en kan hij er gewoon op wachten in plaats
+  // van te horen "nee, druk maar opnieuw".
+  const bezigMetOpslaanRef = useRef(null);
+  function handleSavePages() {
+    if (bezigMetOpslaanRef.current) return bezigMetOpslaanRef.current;
+    const momentopname = pagesRef.current;
+    if (!momentopname) return Promise.resolve(true);
+    const belofte = bewaarPaginas(momentopname).finally(() => { bezigMetOpslaanRef.current = null; });
+    bezigMetOpslaanRef.current = belofte;
+    return belofte;
+  }
+  // Geeft terug of het gelukt is, zodat de terugknop weet of hij weg mag.
+  async function bewaarPaginas(momentopname) {
     setSaving(true); setError(null);
     try {
-      await api.savePhotobookPages(bookId, pages.map((p) => ({
+      await api.savePhotobookPages(bookId, momentopname.map((p) => ({
         title: p.title, titleAlign: p.titleAlign,
         titleX: p.titleX, titleY: p.titleY, titleWidth: p.titleWidth, titleHeight: p.titleHeight,
         background: !p.background ? null
@@ -1279,9 +1315,59 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           html: b.html, x: b.x, y: b.y, width: b.width, height: b.height, align: b.align, backgroundColor: b.backgroundColor,
         })),
       })));
-      setDirty(false);
-    } catch (err) { setError(err.message || "Opslaan mislukt"); }
+      if (pagesRef.current === momentopname) { setDirty(false); setBewaardOp(Date.now()); }
+      return true;
+    } catch (err) { setError(err.message || "Opslaan mislukt"); return false; }
     finally { setSaving(false); }
+  }
+
+  // Automatisch bewaren. Niet bij elke wijziging meteen: verslepen, knijpen of
+  // typen levert tientallen wijzigingen per seconde op, en die zou je niet
+  // allemaal willen versturen. De timer begint opnieuw bij elke wijziging, dus
+  // er wordt pas opgeslagen als je even niets doet — precies het moment waarop
+  // een afgeronde handeling erin staat.
+  //
+  // `saving` staat bewust in de afhankelijkheden: is er tijdens het opslaan
+  // alweer iets veranderd, dan blijft `dirty` staan en zet het aflopen van
+  // `saving` dit effect opnieuw aan, waardoor de volgende ronde vanzelf volgt.
+  // Zonder dat zou zo'n wijziging blijven liggen tot de eerstvolgende bewerking.
+  //
+  // Mislukt het (geen bereik — op reis eerder regel dan uitzondering), dan blijft
+  // het boek "nog niet bewaard" en probeert hij het rustiger opnieuw in plaats
+  // van door te blijven rammen. De melding in beeld vertelt intussen wat er aan
+  // de hand is; je werk staat gewoon nog in het scherm en gaat mee zodra er weer
+  // verbinding is.
+  useEffect(() => {
+    if (!dirty || saving || !pagesLoaded) return;
+    const wachttijd = error ? 8000 : 1200;
+    const timer = setTimeout(handleSavePages, wachttijd);
+    return () => clearTimeout(timer);
+  }, [dirty, saving, pages, error, pagesLoaded]);
+
+  // Het tabblad sluiten of verversen terwijl er nog iets openstaat: de browser
+  // vraagt dan zelf om bevestiging. Alleen zolang er echt iets te verliezen is,
+  // anders is het een zinloze horde.
+  useEffect(() => {
+    if (!dirty) return;
+    const waarschuw = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", waarschuw);
+    return () => window.removeEventListener("beforeunload", waarschuw);
+  }, [dirty]);
+
+  // "Bewaard" een paar tellen laten staan en dan weglaten.
+  useEffect(() => {
+    if (!bewaardOp) return;
+    setToonBewaard(true);
+    const timer = setTimeout(() => setToonBewaard(false), 2500);
+    return () => clearTimeout(timer);
+  }, [bewaardOp]);
+
+  // Terug naar het overzicht: eerst afmaken wat er nog openstaat. Lukt dat niet,
+  // dan blijf je hier met de foutmelding in beeld — weglopen met werk dat nog
+  // nergens staat is precies wat automatisch opslaan hoort te voorkomen.
+  async function handleBack() {
+    if (!dirty && !bezigMetOpslaanRef.current) { onBack(); return; }
+    if (await handleSavePages()) onBack();
   }
 
   async function handleDelete() {
@@ -1405,7 +1491,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         style={barsAside
           ? { paddingLeft: "calc(0.5rem + env(safe-area-inset-left))" }
           : { paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
-        <button onClick={onBack} aria-label="Alle fotoboeken" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
+        <button onClick={handleBack} aria-label="Alle fotoboeken" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
           <Icon name="arrowLeft" size={16} />
         </button>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
@@ -1443,8 +1529,32 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       {/* Middenkolom: foutmelding boven de canvas. Apart omhuld zodat de
           buitenste flex precies drie kinderen houdt (balk, midden, balk) en
           liggend/staand alleen een kwestie van richting is. */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-      {error && <div className="shrink-0 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>}
+      <div className="relative flex-1 min-w-0 min-h-0 flex flex-col">
+      {/* Hoe het bewaren ervoor staat. Bewust zwevend boven de pagina en niet
+          als eigen balk: een strook die verschijnt en verdwijnt zou de pagina
+          steeds een stukje op en neer duwen. En bewust hier, in de open ruimte
+          boven de pagina, want in de balken eronder is simpelweg geen plek —
+          dat was nu juist de reden dat de opslaan-knop niet te zien was.
+          "Bewaard" verdwijnt na een paar tellen weer; een melding die er altijd
+          staat leest niemand meer. Een fout blijft wél staan, met een knop
+          erbij, want dan is er iets aan de hand en valt er iets te doen. */}
+      {(error || saving || dirty || toonBewaard) && (
+        <div className="absolute top-2 left-0 right-0 z-30 flex justify-center pointer-events-none px-3">
+          {error ? (
+            <button type="button" onClick={handleSavePages}
+              className="pointer-events-auto max-w-full inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-600 text-white text-xs font-semibold shadow-lg">
+              <Icon name="alert" size={14} className="shrink-0" />
+              <span className="truncate">Niet bewaard — opnieuw proberen</span>
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white/80 text-xs shadow-lg">
+              {saving || dirty
+                ? <><Icon name="cloud" size={13} />Bewaren...</>
+                : <><Icon name="check" size={13} />Bewaard</>}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* De pagina zelf blijft fullscreen in beeld; opmaak/instellingen liggen
           er als zwevende panelen overheen in plaats van in een scrollende
@@ -1906,7 +2016,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           </span>
         )}
         <div className="flex-1" />
-        <Button onClick={handleSavePages} disabled={saving || !dirty} className={barsAside ? "w-full shrink-0" : ""}>{saving ? "Opslaan..." : "Opslaan"}</Button>
+        {/* Hier stond de opslaan-knop. Die is weg omdat het boek zichzelf
+            bewaart — én omdat hij hier toch niet te zien wás: de knoppen in deze
+            balk hebben samen 431 pixels nodig, en zo breed is geen enkele
+            telefoon. Wat als laatste in de rij staat wordt dus altijd over de
+            rand geduwd (op een scherm van 375 pixels zelfs 56 pixels ver). Nu de
+            knop weg is past de balk wel. Hoe het opslaan ervoor staat is te zien
+            aan het label boven de pagina, waar ruimte zat is. */}
       </div>
 
       {pickerForPage != null && (
