@@ -302,6 +302,54 @@ const PHOTOBOOK_LAYOUTS = [
   ] },
 ];
 
+// Welke foto hoort bij welk vak van de gekozen indeling? Dat ging op volgorde
+// van de fotolijst: foto 1 in vak 1, foto 2 in vak 2. De simpelste regel, maar
+// hij negeert waar de foto's op dat moment stáán — koos je een indeling, dan
+// wipte de foto rechtsonder zomaar naar linksboven omdat hij toevallig als
+// eerste was toegevoegd. Nu krijgt elk vak de foto die er al het dichtst bij
+// ligt (middelpunt tot middelpunt), zodat een indeling het beeld rechttrekt in
+// plaats van het door elkaar te gooien.
+//
+// De aanpak: steeds het kortste nog beschikbare paar vastleggen, tot de vakken
+// op zijn. Dat is niet gegarandeerd de kleinst mogelijke totale afstand — daar
+// zou je alle toewijzingen voor moeten uitproberen — maar bij hoogstens vier
+// vakken die duidelijk uit elkaar liggen komt het op hetzelfde neer, en het
+// blijft navolgbaar. Foto's die overblijven (meer foto's dan vakken) houden
+// hun eigen plek, net als voorheen.
+function matchPhotosToSlots(photos, slots) {
+  const midden = (r) => [(r.x ?? 0) + (r.width ?? 0) / 2, (r.y ?? 0) + (r.height ?? 0) / 2];
+  const paren = [];
+  photos.forEach((foto, fi) => {
+    const [fx, fy] = midden(foto);
+    slots.forEach((vak, vi) => {
+      const [vx, vy] = midden(vak);
+      paren.push({ fi, vi, afstand: (fx - vx) ** 2 + (fy - vy) ** 2 });
+    });
+  });
+  // Bij gelijke afstand (een verse pagina waar alle foto's nog op dezelfde plek
+  // liggen) beslist de oorspronkelijke volgorde, zodat de uitkomst niet afhangt
+  // van hoe de browser toevallig sorteert.
+  paren.sort((a, b) => a.afstand - b.afstand || a.vi - b.vi || a.fi - b.fi);
+  const vakPerFoto = new Array(photos.length).fill(null);
+  const fotoBezet = new Set();
+  const vakBezet = new Set();
+  for (const { fi, vi } of paren) {
+    if (fotoBezet.has(fi) || vakBezet.has(vi)) continue;
+    vakPerFoto[fi] = vi;
+    fotoBezet.add(fi); vakBezet.add(vi);
+    if (vakBezet.size === slots.length) break;
+  }
+  return vakPerFoto;
+}
+
+// Legt de foto's van een pagina in de vakken van een indeling, met de
+// koppeling hierboven. Gedeeld door de losse indeling-knoppen en de
+// ontwerp-presets, zodat beide zich hetzelfde gedragen.
+function photosInLayout(photos, slots) {
+  const vakPerFoto = matchPhotosToSlots(photos, slots);
+  return photos.map((foto, i) => (vakPerFoto[i] === null ? foto : { ...foto, ...slots[vakPerFoto[i]] }));
+}
+
 // Klein diagram van de indeling zelf (geen foto-inhoud) — zodat je in één
 // oogopslag ziet wat je kiest.
 // Zelfde 36x44 vlak, alleen verwisseld voor liggend — zo laat het mini-
@@ -985,12 +1033,13 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     }]);
     setDirty(true);
   }
-  // Legt de eerste N foto's (N = aantal vakken in de indeling) in de gekozen
-  // verhouding neer; extra foto's boven dat aantal blijven ongemoeid staan.
+  // Legt de foto's in de gekozen verhouding neer — elke foto naar het vak dat
+  // het dichtst bij zijn huidige plek ligt (zie matchPhotosToSlots). Zijn er
+  // meer foto's dan vakken, dan blijven de overige ongemoeid staan.
   function applyLayout(pageIndex, layout) {
     pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
-      ...p, photos: p.photos.map((ph, j) => (j < layout.slots.length ? { ...ph, ...layout.slots[j] } : ph)),
+      ...p, photos: photosInLayout(p.photos, layout.slots),
     })));
     setDirty(true);
   }
@@ -1040,7 +1089,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
       ...p, background: preset.background,
-      photos: p.photos.map((ph, j) => (j < preset.layout.slots.length ? { ...ph, ...preset.layout.slots[j] } : ph)),
+      photos: photosInLayout(p.photos, preset.layout.slots),
     })));
     setDirty(true);
   }
@@ -1624,21 +1673,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   </div>
                 </div>
 
-                {/* Indeling: één tik legt de al aanwezige foto's op deze pagina
-                    in een verzorgde verhouding neer — daarna nog steeds vrij te
-                    verslepen/schalen. */}
-                <div>
-                  <div className="text-xs text-gray-400 mb-1.5">Indeling</div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                    {PHOTOBOOK_LAYOUTS.map((layout) => (
-                      <button key={layout.key} type="button" onClick={() => applyLayout(currentPageIndex, layout)} title={layout.label}
-                        disabled={page.photos.length === 0}
-                        className="disabled:opacity-30 hover:ring-2 hover:ring-sky-300 rounded transition-shadow shrink-0">
-                        <PhotobookLayoutThumb slots={layout.slots} orientation={orientation} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {/* De indelingen stonden hier ook; die staan nu als vaste rij
+                    onder de pagina zelf (zie hieronder). Twee plekken voor
+                    precies dezelfde knoppen maakt het paneel alleen langer. */}
 
                 <div className="flex gap-2 pt-1">
                   <button type="button" onClick={() => openPicker(currentPageIndex)}
@@ -1798,6 +1835,25 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           </>
         )}
       </div>
+      )}
+
+      {/* Indelingen als losse knoppen, direct onder de pagina. Ze zaten twee
+          niveaus diep — eerst het schuifjes-icoon, dan scrollen binnen het
+          paneel — terwijl dit juist het gereedschap is waar je tijdens het
+          opmaken van een pagina steeds naar teruggrijpt. De miniatuur is de
+          knop: je ziet de indeling en tikt erop. */}
+      {viewMode === "pagina" && page && (
+        <div className="shrink-0 flex items-center justify-center gap-2 px-3 py-2 bg-gray-900/60"
+          style={barsAside ? undefined : { paddingBottom: "0.5rem" }}>
+          {PHOTOBOOK_LAYOUTS.map((layout) => (
+            <button key={layout.key} type="button" onClick={() => applyLayout(currentPageIndex, layout)}
+              title={layout.label} aria-label={`Indeling: ${layout.label}`}
+              disabled={page.photos.length === 0}
+              className="shrink-0 rounded ring-offset-2 ring-offset-gray-900 hover:ring-2 hover:ring-sky-400 disabled:opacity-25 transition-shadow">
+              <PhotobookLayoutThumb slots={layout.slots} orientation={orientation} />
+            </button>
+          ))}
+        </div>
       )}
 
       </div>
