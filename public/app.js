@@ -10324,6 +10324,13 @@ function App() {
 
   async function handleLogout() {
     await fetch("/auth/logout", { method: "POST" });
+    // De service worker bewaart je reisgegevens zodat ze onderweg zonder bereik
+    // beschikbaar zijn. Bij uitloggen moeten die weg: anders blijft op een
+    // gedeeld of geleend toestel na het uitloggen alsnog je reis te zien.
+    try {
+      const namen = await caches.keys();
+      await Promise.all(namen.filter((n) => n.startsWith("rp-data-")).map((n) => caches.delete(n)));
+    } catch {}
     window.location.href = "/login";
   }
 
