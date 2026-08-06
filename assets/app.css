@@ -58,6 +58,28 @@
 /* Cijfers die onder elkaar horen te staan — tijden, bedragen, dagnummers. */
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* Een dagblok in de planning of het dagboek. Bij een reis van drie weken staan
+   die allemaal tegelijk in de pagina: gemeten 18.000 DOM-knopen en ruim 100.000
+   pixels hoogte, oftewel meer dan honderd schermen. De browser deed daar bij elk
+   frame layout- en tekenwerk voor, ook voor de twintig dagen die je niet ziet.
+   content-visibility laat hem alles buiten beeld overslaan; contain-intrinsic-size
+   houdt intussen de hoogte gereserveerd, zodat de scrollbalk niet gaat springen
+   en "spring naar vandaag" op de goede plek uitkomt. Browsers die dit niet kennen
+   negeren de regel gewoon en tonen alles zoals voorheen. */
+.rp-dagblok {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
+}
+/* Een dag in het dagboek is veel hoger dan een dag in de planning — gemeten
+   ongeveer 4.900 tegen 680 pixels, want er hangen verhalen, reacties en
+   fotostroken onder. Met dezelfde schatting zou de pagina bij het openen veel te
+   kort zijn en de scrollbalk zichtbaar meegroeien. Het "auto"-sleutelwoord
+   corrigeert dit zodra een blok één keer getoond is; deze waarde bepaalt alleen
+   hoe dicht we er vóór die tijd bij zitten. */
+.rp-dagblok-dagboek {
+  contain-intrinsic-size: auto 3000px;
+}
+
 /* Dubbeltik-waardering in de fotoviewer — hetzelfde duimpje als de like-knop
    elders, alleen groot en even opvallend in beeld. */
 @keyframes rp-heartpop {

@@ -2733,7 +2733,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
             );
 
             return (
-              <div key={day.id} id={`day-${day.id}`} className="rp-rise"
+              <div key={day.id} id={`day-${day.id}`} className="rp-rise rp-dagblok"
                 style={{ scrollMarginTop: "5rem", animationDelay: `${Math.min(dayIndex, 6) * 40}ms` }}>
                 {/* Dagkop: het dagnummer draagt de dag, met gewicht in plaats van
                     kleur. Alleen "vandaag" krijgt het perzik. */}
@@ -3607,7 +3607,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           const showDayMap = dayPlaces.length > 0;
 
           return (
-            <div key={day.id} id={`journal-day-${day.id}`} className="rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
+            <div key={day.id} id={`journal-day-${day.id}`} className="rp-dagblok rp-dagblok-dagboek rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
               {/* Blijft bovenin staan zolang er nog entries van déze dag in
                   beeld zijn, en schuift dan weg zodra de volgende dag begint —
                   zo weet je bij veel verhalen per dag altijd welke dag je leest. */}
