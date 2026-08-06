@@ -21,6 +21,15 @@ function PhotobookTab({ trip }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Geen ongedaan-maken zoals bij een activiteit: de server kent geen manier om
+  // een fotoboek met al zijn pagina's terug te zetten. Dus wél eerst vragen, met
+  // de titel erbij zodat duidelijk is welk boek je weggooit.
+  async function handleDeleteBook(book) {
+    if (!confirm(`"${book.title}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
+    try { await api.deletePhotobook(book.id); await load(); }
+    catch (err) { toonMelding(err.message || "Verwijderen is niet gelukt"); }
+  }
+
   // Drukwerkprijzen komen van Print API en dus van buiten: apart ophalen, ná de
   // lijst, zodat het overzicht meteen staat en een trage of onbereikbare
   // Print API hooguit betekent dat er geen prijs bij staat. Elke boek-aanvraag
@@ -204,23 +213,34 @@ function PhotobookTab({ trip }) {
       )}
       {books.length > 0 && (
         <div className="space-y-2">
+          {/* De rij is geen knop meer maar een rij mét een knop erin: een
+              verwijderknop binnen een knop kan niet. Weggooien hoort hier thuis
+              en niet in de editor — je gooit een boek weg omdát je het niet meer
+              wilt bewerken, en het scheelt daar een knop in een balk die toch al
+              te vol was. */}
           {books.map((b) => (
-            <button key={b.id} type="button" onClick={() => setOpenBookId(b.id)}
-              className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-white shadow-sm hover:border-sky-200 transition-colors text-left">
-              {b.coverThumbUrl
-                ? <img src={b.coverThumbUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
-                : <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center shrink-0"><Icon name="frame" size={20} className="text-gray-300" /></div>}
-              <div className="min-w-0 flex-1">
-                <div className="font-medium text-gray-800 truncate">{b.title}</div>
-                <div className="text-xs text-gray-400">
-                  {b.pageCount} {b.pageCount === 1 ? "pagina" : "pagina's"}
-                  {quotes[b.id]?.available && quotes[b.id].total != null && (
-                    <span className="text-sky-700 font-medium"> · drukwerk {fmtMoney(quotes[b.id].total, quotes[b.id].currency || "EUR")}</span>
-                  )}
+            <div key={b.id}
+              className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-white shadow-sm hover:border-sky-200 transition-colors">
+              <button type="button" onClick={() => setOpenBookId(b.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                {b.coverThumbUrl
+                  ? <img src={b.coverThumbUrl} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                  : <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center shrink-0"><Icon name="frame" size={20} className="text-gray-300" /></div>}
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-800 truncate">{b.title}</div>
+                  <div className="text-xs text-gray-400">
+                    {b.pageCount} {b.pageCount === 1 ? "pagina" : "pagina's"}
+                    {quotes[b.id]?.available && quotes[b.id].total != null && (
+                      <span className="text-sky-700 font-medium"> · drukwerk {fmtMoney(quotes[b.id].total, quotes[b.id].currency || "EUR")}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <Icon name="arrowRight" size={16} className="text-gray-300 shrink-0" />
-            </button>
+                <Icon name="arrowRight" size={16} className="text-gray-300 shrink-0" />
+              </button>
+              <button type="button" onClick={() => handleDeleteBook(b)} aria-label={`${b.title} verwijderen`}
+                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                <Icon name="trash" size={16} />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -851,6 +871,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [bewaardOp, setBewaardOp] = useState(null);
   const [toonBewaard, setToonBewaard] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showBookMenu, setShowBookMenu] = useState(false); // voorbeeld/PDF/verwijderen, achter één knop
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
   const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
   const [selectedTitle, setSelectedTitle] = useState(null); // { page } | null
@@ -977,7 +998,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     api.getPhotobook(bookId)
       .then((b) => {
         if (vervallen) return;
-        setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); setBookBackground(b.backgroundColor ?? null);
+        // pages moet een lijst zijn; komt er iets anders terug dan valt de hele
+        // editor om met "kan forEach niet lezen van undefined" — een leeg boek
+        // tonen is dan het enige nuttige antwoord.
+        setTitle(b.title); setPages(Array.isArray(b.pages) ? b.pages : []);
+        setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); setBookBackground(b.backgroundColor ?? null);
       })
       .catch((err) => { if (!vervallen) { toonMelding(err.message || "Fotoboek laden is niet gelukt"); onBack?.(); } });
     api.getPhotos(tripId).then((l) => { if (!vervallen) setAllPhotos(l); }).catch(() => {});
@@ -1370,11 +1395,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     if (await handleSavePages()) onBack();
   }
 
-  async function handleDelete() {
-    if (!confirm("Dit fotoboek verwijderen?")) return;
-    await api.deletePhotobook(bookId);
-    onBack();
-  }
+  // Het fotoboek zelf weggooien gebeurt in het overzicht, niet hier.
 
   async function handleDownloadPdf() {
     if (!confirm("Fotoboek als PDF downloaden?")) return;
@@ -1494,8 +1515,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         <button onClick={handleBack} aria-label="Alle fotoboeken" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
           <Icon name="arrowLeft" size={16} />
         </button>
+        {/* Ondergrens op de breedte: flex-1 alleen betekent "krimp maar mee met
+            wat er overblijft", en dat werd 38 pixels. Een titelveld dat te smal
+            is om je eigen boektitel in te lezen is geen titelveld meer. */}
         <Input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={handleSaveTitle}
-          className={`!text-sm !bg-white/10 !border-white/20 !text-white ${barsAside ? "w-full shrink-0" : "flex-1"}`} placeholder="Titel van het fotoboek" />
+          className={`!text-sm !bg-white/10 !border-white/20 !text-white ${barsAside ? "w-full shrink-0" : "flex-1 min-w-[6rem]"}`} placeholder="Titel van het fotoboek" />
         <button type="button" onClick={undo} disabled={history.length === 0} title="Ongedaan maken"
           className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors">
           <Icon name="undo" size={16} />
@@ -1514,17 +1538,39 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
             <Icon name="alignGrid" size={16} />
           </button>
         )}
-        <button type="button" onClick={() => setShowPreview(true)} aria-label="Voorbeeld bekijken"
-          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
-          <Icon name="eye" size={16} />
-        </button>
-        <button type="button" onClick={handleDownloadPdf} aria-label="Downloaden als PDF"
-          className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
-          <Icon name="doc" size={16} />
-        </button>
-        <button type="button" onClick={handleDelete} aria-label="Fotoboek verwijderen" className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-red-400 hover:bg-white/10 transition-colors">
-          <Icon name="trash" size={15} />
-        </button>
+        {/* Voorbeeld, PDF en verwijderen zijn dingen die je één keer per boek
+            doet, niet tijdens het opmaken. Ze stonden hier als drie losse
+            knoppen en duwden de balk daarmee over de schermrand: die had 431
+            pixels nodig terwijl een telefoon er 375 tot 430 heeft. Het titelveld
+            werd samengeknepen tot 38 pixels — te smal om de naam van je boek te
+            lezen, laat staan te wijzigen. Achter één knop teruggebracht scheelt
+            dat ruim tachtig pixels, en die gaan naar de titel. */}
+        <div className="relative shrink-0">
+          <button type="button" onClick={() => setShowBookMenu((s) => !s)} aria-label="Meer acties"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showBookMenu ? "bg-white/20 text-white" : "text-white/70 hover:text-white hover:bg-white/10"}`}>
+            <Icon name="more" size={16} />
+          </button>
+          {showBookMenu && (
+            <>
+              {/* Onzichtbaar vlak eronder: een tik ergens anders sluit het menu,
+                  zonder dat elke knop daarbuiten dat zelf hoeft te regelen. */}
+              <div className="fixed inset-0 z-40" onClick={() => setShowBookMenu(false)} />
+              <div className={`absolute z-50 bg-white rounded-xl shadow-2xl p-1.5 space-y-0.5 min-w-[12rem] ${barsAside ? "left-full top-0 ml-2" : "right-0 top-full mt-1"}`}>
+                <button type="button" onClick={() => { setShowBookMenu(false); setShowPreview(true); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                  <Icon name="eye" size={15} className="text-gray-400" />Voorbeeld bekijken
+                </button>
+                {/* Verwijderen staat niet meer hier maar in het overzicht met
+                    alle fotoboeken: je gooit een boek weg omdát je het niet meer
+                    wilt bewerken, dus dat hoort niet in de editor thuis. */}
+                <button type="button" onClick={() => { setShowBookMenu(false); handleDownloadPdf(); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                  <Icon name="doc" size={15} className="text-gray-400" />Downloaden als PDF
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
       {/* Middenkolom: foutmelding boven de canvas. Apart omhuld zodat de
           buitenste flex precies drie kinderen houdt (balk, midden, balk) en
