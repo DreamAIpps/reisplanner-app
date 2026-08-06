@@ -10,7 +10,7 @@ module.exports = {
   content: [
     "./public/index.html",
     "./public/login.html",
-    "./public/app.js",
+    "./app/*.js",
   ],
   theme: {
     extend: {
