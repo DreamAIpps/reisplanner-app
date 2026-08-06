@@ -56,6 +56,15 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   // Don't carry the guest preview over into another trip.
   useEffect(() => { setPreviewViewer(false); }, [tripId]);
 
+  // Budget en fotoboek bestaan niet voor een meekijker. Zet je de gastweergave
+  // aan terwijl je op zo'n tab staat, dan valt de inhoud weg en houd je een leeg
+  // scherm over zonder iets om op te tikken — de menu-ingang waarlangs je
+  // terug zou gaan is namelijk óók verborgen. Terug naar de dagplanning dan.
+  const kijkerModus = trip?.role === "viewer" || previewViewer;
+  useEffect(() => {
+    if (kijkerModus && (tab === "budget" || tab === "photobook")) setTab("days");
+  }, [kijkerModus, tab]);
+
 
   // Records how long this trip is actually open, which the share stats report.
   // Skipped while the tab is hidden so a forgotten background tab does not read
@@ -129,7 +138,10 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     { key: "packing", label: "Paklijst", icon: "suitcase" },
     { key: "map", label: "Kaart", icon: "map" },
     { key: "quiz", label: "Fotoquiz", icon: "sparkle" },
-    { key: "photobook", label: "Fotoboek", icon: "frame" },
+    // Het fotoboek is niet voor meekijkers: een deel-link laat de reis zien,
+    // niet het boek dat je er achteraf van maakt. De server weigert het ook
+    // (403), maar dan zou een kijker eerst op een doodlopende knop tikken.
+    ...(readOnly ? [] : [{ key: "photobook", label: "Fotoboek", icon: "frame" }]),
   ];
 
   // De onderste balk hoort te gaan over wat je onderweg het vaakst doet. De
@@ -157,7 +169,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
       { key: "transport", icon: "plane", label: "Vervoer" },
     ] },
     { titel: "Achteraf", items: [
-      { key: "photobook", icon: "frame", label: "Fotoboek" },
+      ...(readOnly ? [] : [{ key: "photobook", icon: "frame", label: "Fotoboek" }]),
       { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
     ] },
   ];
@@ -390,12 +402,13 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         </QuizFullscreen>
       )}
 
-      {/* Zelfde reden als de fotoquiz hierboven: los van de readOnly-splitsing
-          zodat ook alleen-lezen reisleden (niet alleen eigenaar/editor) samen
-          een fotoboek kunnen samenstellen. Ook hier volledig scherm, net als
-          de fotoquiz — geeft de pagina's/foto's meer ruimte dan tussen de
-          normale tabs. */}
-      {tab === "photobook" && (
+      {/* Stond hier eerder bewust los van de readOnly-splitsing, zodat ook
+          alleen-lezen reisleden konden meebouwen aan het fotoboek. Dat is
+          teruggedraaid: een deel-link laat de reis zien, niet het boek dat je
+          er achteraf van maakt. Wie wél mee mag maken krijgt een editor-link.
+          Volledig scherm blijft, net als bij de fotoquiz — dat geeft de
+          pagina's en foto's meer ruimte dan tussen de normale tabs. */}
+      {tab === "photobook" && !readOnly && (
         <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")} label="Fotoboek sluiten">
           <PhotobookTab trip={viewTrip} />
         </QuizFullscreen>
