@@ -13,7 +13,7 @@ try { sharp = require("sharp"); }
 catch (err) { console.warn("sharp unavailable, falling back to pure-JS thumbnails:", err.message); }
 const jpegJs = require("jpeg-js");
 const heicDecode = require("heic-decode");
-const { query, initDb, pool } = require("./db");
+const { query, transaction, initDb, pool } = require("./db");
 const printapi = require("./printapi");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
@@ -3738,18 +3738,32 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       allPhotoIds.add(id);
     }
   }
-  for (const id of allPhotoIds) {
-    const { rows } = await query("SELECT 1 FROM photos WHERE id = $1 AND trip_id = $2", [id, tripId]);
-    if (!rows.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
+  // Eén controle voor alle foto's samen in plaats van één per foto. Bij een boek
+  // van dertig pagina's scheelde dat alleen hier al zestig rondjes naar de
+  // database.
+  if (allPhotoIds.size) {
+    const { rows: eigen } = await query(
+      "SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::int[])",
+      [tripId, [...allPhotoIds]]
+    );
+    if (eigen.length !== allPhotoIds.size) {
+      return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
+    }
   }
 
   const validAlign = (v) => (["left", "center", "right"].includes(v) ? v : "left");
   const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 
-  await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
-  for (let i = 0; i < items.length; i++) {
-    const page = items[i];
-    const title = sanitizePhotobookHtml(typeof page.title === "string" ? page.title.trim() : null);
+  // Alles wat de database in moet eerst hier klaarzetten, daarna in drie
+  // gebundelde inserts wegschrijven. Dit ging per pagina, per foto en per
+  // tekstvak apart: voor een boek van dertig pagina's 181 rondjes naar de
+  // database, en lineair oplopend met de omvang van het boek. Nu vier.
+  //
+  // En binnen één transactie, wat het eigenlijk altijd al had moeten zijn: de
+  // route gooit eerst alle pagina's weg en bouwt ze daarna opnieuw op. Ging daar
+  // iets mis — een wegvallende verbinding, een fout op pagina twintig — dan bleef
+  // je fotoboek half leeg achter, zonder weg terug.
+  const paginaRijen = items.map((page, i) => {
     let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
@@ -3758,36 +3772,78 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       const overlay = Number(page.background.overlay);
       bgOverlay = Number.isFinite(overlay) ? Math.min(0.75, Math.max(0, overlay)) : 0;
     }
-    // Titel is vrij versleepbaar/vergrootbaar zoals een tekstvak — zelfde
-    // klem-logica (fractie 0-1, met een minimale breedte/hoogte).
-    const titleX = Math.min(1, Math.max(0, n(page.titleX, 0.15)));
-    const titleY = Math.min(1, Math.max(0, n(page.titleY, 0.14)));
-    const titleWidth = Math.min(1, Math.max(0.05, n(page.titleWidth, 0.7)));
-    const titleHeight = Math.min(1, Math.max(0.03, n(page.titleHeight, 0.1)));
-    const { rows: pageRows } = await query(
-      `INSERT INTO photobook_pages (photobook_id, position, title, background_type, background_color, background_photo_id, background_overlay, title_align, title_x, title_y, title_width, title_height)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [params.id, i, title, bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign), titleX, titleY, titleWidth, titleHeight]
+    return [
+      params.id, i,
+      sanitizePhotobookHtml(typeof page.title === "string" ? page.title.trim() : null),
+      bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign),
+      // Titel is vrij versleepbaar/vergrootbaar zoals een tekstvak — zelfde
+      // klem-logica (fractie 0-1, met een minimale breedte/hoogte).
+      Math.min(1, Math.max(0, n(page.titleX, 0.15))),
+      Math.min(1, Math.max(0, n(page.titleY, 0.14))),
+      Math.min(1, Math.max(0.05, n(page.titleWidth, 0.7))),
+      Math.min(1, Math.max(0.03, n(page.titleHeight, 0.1))),
+    ];
+  });
+
+  await transaction(async (client) => {
+    await client.query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
+    if (!paginaRijen.length) return;
+
+    // unnest() zet parallelle arrays om in rijen: één statement, ongeacht hoeveel
+    // pagina's het boek heeft. De volgorde blijft die van de arrays, dus de
+    // teruggegeven id's horen bij items[0], items[1], ...
+    const kolommen = (rijen, aantal) =>
+      Array.from({ length: aantal }, (_, k) => rijen.map((r) => r[k]));
+    const pk = kolommen(paginaRijen, 12);
+    const { rows: nieuwePaginas } = await client.query(
+      `INSERT INTO photobook_pages
+         (photobook_id, position, title, background_type, background_color, background_photo_id,
+          background_overlay, title_align, title_x, title_y, title_width, title_height)
+       SELECT * FROM unnest(
+         $1::int[], $2::int[], $3::text[], $4::text[], $5::text[], $6::int[],
+         $7::real[], $8::text[], $9::real[], $10::real[], $11::real[], $12::real[])
+       RETURNING id`,
+      pk
     );
-    const pageId = pageRows[0].id;
-    for (let j = 0; j < page.photos.length; j++) {
-      const rect = clampPhotoRect(page.photos[j]);
-      await query(
-        "INSERT INTO photobook_page_photos (page_id, photo_id, position, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        [pageId, Number(page.photos[j].photo_id), j, rect.x, rect.y, rect.width, rect.height, rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]
+    const paginaIds = nieuwePaginas.map((r) => r.id);
+
+    const fotoRijen = [];
+    const tekstRijen = [];
+    items.forEach((page, i) => {
+      const pageId = paginaIds[i];
+      page.photos.forEach((foto, j) => {
+        const rect = clampPhotoRect(foto);
+        fotoRijen.push([pageId, Number(foto.photo_id), j, rect.x, rect.y, rect.width, rect.height,
+          rect.opacity, rect.cornerRadius, rect.cropX, rect.cropY, rect.cropZoom]);
+      });
+      (Array.isArray(page.textBoxes) ? page.textBoxes : []).forEach((tb, j) => {
+        const rect = clampTextBoxRect(tb);
+        tekstRijen.push([pageId, j, sanitizePhotobookHtml(tb.html), rect.x, rect.y, rect.width, rect.height,
+          rect.align, typeof tb.backgroundColor === "string" ? tb.backgroundColor : null]);
+      });
+    });
+
+    if (fotoRijen.length) {
+      await client.query(
+        `INSERT INTO photobook_page_photos
+           (page_id, photo_id, position, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom)
+         SELECT * FROM unnest(
+           $1::int[], $2::int[], $3::int[], $4::real[], $5::real[], $6::real[], $7::real[],
+           $8::real[], $9::real[], $10::real[], $11::real[], $12::real[])`,
+        kolommen(fotoRijen, 12)
       );
     }
-    const textBoxes = Array.isArray(page.textBoxes) ? page.textBoxes : [];
-    for (let j = 0; j < textBoxes.length; j++) {
-      const html = sanitizePhotobookHtml(textBoxes[j].html);
-      const bgColor = typeof textBoxes[j].backgroundColor === "string" ? textBoxes[j].backgroundColor : null;
-      const rect = clampTextBoxRect(textBoxes[j]);
-      await query(
-        "INSERT INTO photobook_page_textboxes (page_id, position, html, x, y, width, height, align, background_color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-        [pageId, j, html, rect.x, rect.y, rect.width, rect.height, rect.align, bgColor]
+    if (tekstRijen.length) {
+      await client.query(
+        `INSERT INTO photobook_page_textboxes
+           (page_id, position, html, x, y, width, height, align, background_color)
+         SELECT * FROM unnest(
+           $1::int[], $2::int[], $3::text[], $4::real[], $5::real[], $6::real[], $7::real[], $8::text[], $9::text[])`,
+        kolommen(tekstRijen, 9)
       );
     }
-  }
+  });
+
   sendJson(res, 200, { ok: true, pageCount: items.length });
 }, { tripScope: "photobooks" });
 

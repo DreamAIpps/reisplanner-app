@@ -40,6 +40,25 @@ async function query(text, params) {
   }
 }
 
+// Meerdere bewerkingen die alleen samen zinvol zijn. Nodig waar iets eerst wordt
+// weggegooid en daarna opnieuw opgebouwd: knapt er halverwege iets, dan blijft
+// zonder transactie de helft weg. De callback krijgt een eigen client — gebruik
+// die en niet query(), anders loopt de bewerking buiten de transactie om.
+async function transaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const uitkomst = await fn(client);
+    await client.query("COMMIT");
+    return uitkomst;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function initDb() {
   await query(`
     CREATE TABLE IF NOT EXISTS trips (
@@ -690,4 +709,4 @@ async function mergeDuplicatePhotos() {
   }
 }
 
-module.exports = { query, initDb, pool };
+module.exports = { query, transaction, initDb, pool };
