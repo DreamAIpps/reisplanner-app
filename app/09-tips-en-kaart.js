@@ -1167,10 +1167,69 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
     return m;
   }, [days]);
 
-  // clusterPhotoPlaces levert de plekken al in de volgorde waarin ze voor het
-  // eerst voorkwamen (chronologisch) — de eerste plek per dagnummer die we
-  // tegenkomen is dus meteen de eerst bezochte plek van die dag.
+  // De overzichtskaart gaat over wáár je verbleef, niet waar je toevallig een
+  // foto maakte. Een reis is een reeks plekken waar je een aantal nachten
+  // sliep, met verplaatsingen ertussen; foto's van een dagtocht naar een tempel
+  // verderop zijn geen verhuizing en hoorden er als aparte stop dus ook nooit
+  // te staan. De losse dagkaarten verderop blijven wél op foto's en
+  // activiteiten werken — dáár gaat het juist om wat je die dag gedaan hebt.
+  const verblijfItems = React.useMemo(() => {
+    const isoDateLocal = (dt) => (dt ? String(dt).slice(0, 10) : null);
+    return (accommodations || [])
+      .filter((a) => a.check_in && (a.address || a.name))
+      .slice()
+      .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)))
+      .map((a) => {
+        const datum = isoDateLocal(a.check_in);
+        const dag = dayInfoByDate.get(datum);
+        return {
+          id: a.id,
+          query: a.address || a.name,
+          naamKort: a.name,
+          datum,
+          checkOut: isoDateLocal(a.check_out),
+          dayNumber: dag ? dag.number : null,
+          dayId: dag ? dag.id : null,
+        };
+      })
+      // Zonder dagnummer valt een verblijf buiten de reisdagen (een nacht
+      // ervoor of erna); die hoort niet op de reiskaart.
+      .filter((a) => a.dayNumber != null);
+  }, [accommodations, dayInfoByDate]);
+
+  // Sequentieel i.p.v. Promise.all: dit kan een handvol nog niet eerder
+  // opgezochte plekken zijn, en geocode()'s ingebouwde Nominatim-pacing is
+  // per aanroep — parallel zou dat alsnog als een burst afvuren. geocodePlace
+  // levert meteen een schone plaatsnaam mee, dus bij verblijven is er geen
+  // omgekeerde opzoeking meer nodig.
+  useEffect(() => {
+    if (!verblijfItems.length) { setUpcomingGeo([]); return; }
+    let cancelled = false;
+    (async () => {
+      const gevonden = [];
+      const vandaag = todayIso(trip?.timezone);
+      for (const item of verblijfItems) {
+        const geo = await geocodePlace(item.query).catch(() => null);
+        if (cancelled) return;
+        if (geo?.lat != null) {
+          gevonden.push({
+            ...item, lat: geo.lat, lon: geo.lon,
+            plaats: geo.city || item.naamKort,
+            // "Nog te gaan" hangt aan de datum van aankomst, niet aan de vraag
+            // of er al foto's zijn: je weet vooraf waar je gaat slapen.
+            aanstaand: !!vandaag && item.datum > vandaag,
+          });
+        }
+      }
+      if (!cancelled) setUpcomingGeo(gevonden);
+    })();
+    return () => { cancelled = true; };
+  }, [verblijfItems, trip?.timezone]);
+
+  // Terugval op de oude werkwijze wanneer er geen enkel verblijf met een
+  // locatie is: dan is een kaart op basis van foto's beter dan een leeg vlak.
   const dayMarkers = React.useMemo(() => {
+    if (verblijfItems.length) return [];
     const places = clusterPhotoPlaces(photos || []);
     const seen = new Set();
     const markers = [];
@@ -1182,52 +1241,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       markers.push({ ...pl, dayNumber: info.number, dayId: info.id });
     });
     return markers;
-  }, [photos, dayInfoByDate]);
-
-  const visitedDayNumbers = React.useMemo(() => new Set(dayMarkers.map((m) => m.dayNumber)), [dayMarkers]);
-
-  // Dagen die nog moeten komen (of vandaag, zolang daar nog geen foto van is):
-  // de eerste geplande activiteit met een locatie, anders het verblijf van die
-  // nacht. Zo toont de kaart in één oogopslag de hele route, niet alleen het
-  // deel dat al bezocht is.
-  const upcomingItems = React.useMemo(() => {
-    const todayStr = todayIso(trip?.timezone);
-    if (!todayStr) return [];
-    const isoDateLocal = (dt) => dt ? String(dt).slice(0, 10) : null;
-    const nightAccommodationOn = (ds) => ds ? (accommodations || []).find((a) => {
-      if (!a.check_in || !a.check_out) return false;
-      return isoDateLocal(a.check_in) <= ds && isoDateLocal(a.check_out) > ds;
-    }) : null;
-    const items = [];
-    (days || []).forEach((day, i) => {
-      const dayStr = isoDateLocal(day.date);
-      const dayNumber = i + 1;
-      if (!dayStr || dayStr < todayStr || visitedDayNumbers.has(dayNumber)) return;
-      const firstActivity = (day.activities || []).find((a) => a.location);
-      const acc = nightAccommodationOn(dayStr);
-      const query = firstActivity ? firstActivity.location : (acc ? (acc.address || acc.name) : null);
-      if (query) items.push({ dayNumber, dayId: day.id, query });
-    });
-    return items;
-  }, [days, accommodations, trip?.timezone, visitedDayNumbers]);
-
-  // Sequentieel i.p.v. Promise.all: dit kan een handvol nog niet eerder
-  // opgezochte plekken zijn, en geocode()'s ingebouwde Nominatim-pacing is
-  // per aanroep — parallel zou dat alsnog als een burst afvuren.
-  useEffect(() => {
-    if (!upcomingItems.length) { setUpcomingGeo([]); return; }
-    let cancelled = false;
-    (async () => {
-      const resolved = [];
-      for (const item of upcomingItems) {
-        const geo = await geocodePlace(item.query).catch(() => null);
-        if (cancelled) return;
-        if (geo?.lat != null) resolved.push({ ...item, lat: geo.lat, lon: geo.lon });
-      }
-      if (!cancelled) setUpcomingGeo(resolved);
-    })();
-    return () => { cancelled = true; };
-  }, [upcomingItems]);
+  }, [photos, dayInfoByDate, verblijfItems.length]);
 
   // Eén doorlopende route van dag 1 tot de laatste geplande dag. Bezochte en nog
   // te gaan stops stonden als twee losse lijstjes op de kaart; als één rij op
@@ -1236,15 +1250,16 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
   const route = React.useMemo(() => {
     const stops = [
       ...dayMarkers.map((m) => ({ ...m, aanstaand: false })),
-      ...upcomingGeo.map((m) => ({ ...m, aanstaand: true, photos: [] })),
+      ...upcomingGeo.map((m) => ({ ...m, photos: [] })),
     ].sort((a, b) => a.dayNumber - b.dayNumber);
     return stops.map((s, i) => {
       const foto = (s.photos || [])[0] || null;
       return {
         ...s,
-        // De echte plaatsnaam wordt hieronder opgezocht en komt er los bij; dit
-        // is wat er staat zolang dat nog loopt (of niet lukt).
-        naam: s.query || foto?.activity_title || foto?.label || foto?.day_title || `Dag ${s.dayNumber}`,
+        // Bij een verblijf staat de plaatsnaam er al bij (geocodePlace levert
+        // die mee). Alleen in de terugval op foto's moet hij nog opgezocht
+        // worden; tot die tijd is dit wat er staat.
+        naam: s.plaats || s.naamKort || foto?.activity_title || foto?.label || foto?.day_title || `Dag ${s.dayNumber}`,
         thumb: foto?.thumb_url || foto?.url || null,
         fotoAantal: (s.photos || []).length,
         // Afstand vanaf de vorige stop: dít is de "reisbeweging" die de gebruiker
@@ -1253,6 +1268,13 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       };
     });
   }, [dayMarkers, upcomingGeo]);
+
+  // De dagen waarop je van de ene slaapplek naar de andere ging. Dat zijn de
+  // reisdagen — de rest van de dagen sliep je twee keer op dezelfde plek.
+  const etappes = React.useMemo(() => route.slice(1).map((naar, i) => ({
+    index: i + 1, van: route[i], naar,
+    afstand: haversineMeters(route[i], naar),
+  })), [route]);
 
   // Welke stop of etappe op dit moment uitgelicht is. `vast` betekent: met een
   // tik gekozen en blijft staan; anders is het een zweefbeweging met de muis die
@@ -1325,8 +1347,13 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
         // Een lijn van 2,5 pixel is met een muis al lastig te raken en met een
         // vinger onmogelijk. Deze onzichtbare dikkere lijn eroverheen vangt de
         // aanwijzer op; hij bestaat alleen om aan te wijzen.
+        // Niet opacity 0 maar bijna-0: SVG bepaalt met pointer-events of iets
+        // aanwijsbaar is aan de hand van wat er getékend wordt, en een lijn die
+        // helemaal doorzichtig is telt als niet getekend — dan gaat de muis er
+        // dwars doorheen en gebeurt er niets. Een duizendste is voor het oog
+        // niets en voor de aanwijzer genoeg.
         const grijper = L.polyline(arcLatLngs(route[i - 1], route[i]), {
-          color: PALETTE.coralDeep, weight: 18, opacity: 0, interactive: true,
+          color: PALETTE.coralDeep, weight: 18, opacity: 0.001, interactive: true,
         }).addTo(map);
         grijper.on("mouseover", () => setActief((a) => (a?.vast ? a : { soort: "etappe", index: i, vast: false })));
         grijper.on("mouseout", () => setActief((a) => (a?.vast ? a : null)));
@@ -1447,9 +1474,11 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
   }, []);
 
-  if (dayMarkers.length === 0 && upcomingItems.length === 0) return (
+  // Nog niets om te tekenen: geen verblijf met een adres, en ook geen foto's met
+  // een locatie om op terug te vallen.
+  if (route.length === 0 && verblijfItems.length === 0) return (
     <div className="rounded-2xl border border-gray-100 bg-gray-50 text-center py-8 px-4 mb-6 text-sm text-gray-400">
-      Zodra je foto's uploadt, of een verblijf/activiteit met locatie plant, verschijnt hier de kaart van je reis.
+      Zodra je een verblijf met een adres invult, verschijnt hier de route van je reis. Foto's met een locatie werken ook.
     </div>
   );
 
@@ -1485,11 +1514,13 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       };
     }
     const afgelegd = route.reduce((som, s, i) => (i === 0 || s.aanstaand ? som : som + haversineMeters(route[i - 1], s)), 0);
-    const bezocht = route.filter((s) => !s.aanstaand).length;
+    const totaal = route.reduce((som, s, i) => (i === 0 ? som : som + haversineMeters(route[i - 1], s)), 0);
     return {
       samenvatting: true,
-      titel: bezocht > 1 ? `${bezocht} plekken · ${fmtDistance(afgelegd)} afgelegd` : "Je route",
-      regel: "Wijs een stip of lijn aan om die etappe te zien",
+      titel: `${route.length} ${route.length === 1 ? "plek" : "plekken"}`,
+      // Zolang de reis loopt zegt "al afgelegd" meer dan het totaal; is er nog
+      // niets afgelegd (reis moet nog beginnen) dan juist het totaal.
+      regel: afgelegd > 0 ? `${fmtDistance(afgelegd)} afgelegd` : totaal > 0 ? `${fmtDistance(totaal)} in totaal` : null,
     };
   })();
 
@@ -1511,7 +1542,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
         {/* Het kaartje ligt óver de kaart in plaats van eronder: zo blijft de
             kaart even hoog, of je nu iets aanwijst of niet, en springt de pagina
             niet op en neer terwijl je met de muis over de route beweegt. */}
-        {kaartje && (
+        {kaartje && !kaartje.samenvatting && (
           // z-index hoog genoeg om boven Leaflets eigen lagen uit te komen: die
           // lopen tot 800 (de attributie), en omdat de kaartcontainer zelf geen
           // eigen stapelcontext maakt, doen die getallen hier gewoon mee. Met een
@@ -1520,7 +1551,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
           // Onderin bottom-6 in plaats van bottom-2: de attributieregel van
           // Leaflet en OpenStreetMap hoort zichtbaar te blijven, die dekken we
           // niet af. Bovenin begint het pas na de zoomknoppen, links in de hoek.
-          <div className={`absolute right-2 z-[1000] pointer-events-none ${kaartjeBoven ? "top-2 left-14" : "bottom-6 left-2"}`}>
+          <div className={`rp-kaartje absolute right-2 z-[1000] pointer-events-none ${kaartjeBoven ? "top-2 left-14" : "bottom-6 left-2"}`}>
             <div className={`pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg border border-gray-100 px-3 py-2 flex items-center gap-2.5 ${kaartje.samenvatting ? "" : "rp-rise"}`}>
               {kaartje.thumb && (
                 <img src={kaartje.thumb} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
@@ -1546,6 +1577,43 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
           </div>
         )}
       </div>
+      {/* De samenvatting staat onder de kaart en niet erover. Als overlay dekte
+          hij in rust een stuk van de route af — precies wat je wilt zien als je
+          nog nergens naar wijst. Het zwevende kaartje verschijnt alleen zolang
+          je iets aanwijst, en dan is even iets afdekken juist geen bezwaar. */}
+      {kaartje?.samenvatting && (
+        <div className="mt-2 flex items-baseline gap-2 text-xs text-gray-400">
+          <span className="font-semibold text-gray-600">{kaartje.titel}</span>
+          {kaartje.regel && <span className="tnum">{kaartje.regel}</span>}
+          {etappes.length > 0 && <span className="ml-auto">Tik een etappe aan</span>}
+        </div>
+      )}
+      {/* De reisdagen op een rij. Op de kaart zelf zijn de korte etappes bij een
+          uitgezoomde reis nauwelijks aan te wijzen — twee stippen die tegen
+          elkaar aan liggen. Hier staat elke verplaatsing als een eigen knop,
+          even groot en even goed te raken, ongeacht hoe ver het op de kaart uit
+          elkaar ligt. Tikken doet hetzelfde als het aanwijzen van de lijn:
+          uitlichten en erop inzoomen. */}
+      {etappes.length > 0 && (
+        <div className="mt-2 -mx-1 px-1 flex gap-2 overflow-x-auto pb-1">
+          {etappes.map((e) => {
+            const gekozen = actief?.soort === "etappe" && actief.index === e.index;
+            return (
+              <button key={e.index} type="button"
+                onClick={() => setActief(gekozen ? null : { soort: "etappe", index: e.index, vast: true })}
+                className={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors ${gekozen ? "border-sky-400 bg-sky-50" : "border-gray-100 bg-white hover:border-sky-200"}`}>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                  Dag {e.naar.dayNumber}{e.naar.aanstaand ? " · nog te gaan" : ""}
+                </div>
+                <div className="text-sm font-medium text-gray-800 whitespace-nowrap">
+                  {naamVan(e.van)} <span className="text-gray-300">→</span> {naamVan(e.naar)}
+                </div>
+                <div className="text-[11px] text-gray-400 tnum">{fmtDistance(e.afstand)}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
