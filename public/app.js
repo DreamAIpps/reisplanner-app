@@ -2542,9 +2542,25 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
-  async function handleDeleteActivity(id) {
-    if (!confirm("Activiteit verwijderen?")) return;
-    await api.deleteActivity(id); onRefresh();
+  // Geen bevestigingsvraag meer: de activiteit gaat meteen weg en je krijgt een
+  // paar tellen de kans om dat terug te draaien. Dat scheelt een tik bij elke
+  // bedoelde verwijdering én helpt echt bij een onbedoelde — de prullenbak zit
+  // vlak naast het gebied dat de kaart opent.
+  async function handleDeleteActivity(act) {
+    await api.deleteActivity(act.id);
+    onRefresh();
+    toonMelding(`"${act.title}" verwijderd`, {
+      label: "Ongedaan maken",
+      run: async () => {
+        // Zelfde velden terug; de activiteit krijgt wel een nieuw id, wat verder
+        // nergens toe doet omdat er niets anders naar verwijst.
+        await api.addActivity(act.day_id, {
+          time: act.time, title: act.title, location: act.location, notes: act.notes,
+          category: act.category, cost: act.cost, is_private: act.is_private,
+        });
+        onRefresh();
+      },
+    });
   }
   async function handleDeleteDay(id) {
     if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
@@ -2764,7 +2780,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         subtitle={act.location ? <MapsLink query={act.location} /> : null}
                         aside={act.notes ? <div className="text-[15px] text-gray-500 mt-2 leading-relaxed">{act.notes}</div> : null}
                         trailing={!readOnly ? (
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }}
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act); }}
                             className="rp-press w-9 h-9 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                             aria-label="Verwijderen"><Icon name="trash" size={17} /></button>
                         ) : null}
@@ -2823,7 +2839,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           journalEntries={tripJournal.filter((e) => e.activity_id === editingActivity.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           onSaved={() => { setEditingActivity(null); onRefresh(); }}
           onClose={() => setEditingActivity(null)}
-          onDelete={async () => { if (!confirm("Activiteit verwijderen?")) return; await api.deleteActivity(editingActivity.id); setEditingActivity(null); onRefresh(); }} />
+          onDelete={async () => { const act = editingActivity; setEditingActivity(null); await handleDeleteActivity(act); }} />
       )}
       {(editingTransport || addingTransport) && (
         <TransportForm tripId={trip.id} initial={editingTransport || undefined}
@@ -3666,10 +3682,19 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
   }, [trip.id]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
-  async function handleDelete(id) {
-    if (!confirm("Verblijf verwijderen?")) return;
-    await api.deleteAccommodation(id);
+  async function handleDelete(a) {
+    await api.deleteAccommodation(a.id);
     onRefresh();
+    toonMelding(`"${a.name}" verwijderd`, {
+      label: "Ongedaan maken",
+      run: async () => {
+        await api.addAccommodation(trip.id, {
+          name: a.name, check_in: a.check_in, check_out: a.check_out, address: a.address,
+          booking_ref: a.booking_ref, cost: a.cost, notes: a.notes, is_private: a.is_private,
+        });
+        onRefresh();
+      },
+    });
   }
 
   return (
@@ -3715,7 +3740,7 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
                 </div>
                 <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
                   <button onClick={() => setEditing(acc)} className="text-gray-400 hover:text-sky-600"><Icon name={readOnly ? "eye" : "pen"} size={16} /></button>
-                  {!readOnly && <button onClick={() => handleDelete(acc.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
+                  {!readOnly && <button onClick={() => handleDelete(acc)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
                 </div>
               </div>
             </div>
@@ -3757,10 +3782,20 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
   }, [trip.id]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
-  async function handleDelete(id) {
-    if (!confirm("Vervoer verwijderen?")) return;
-    await api.deleteTransport(id);
+  async function handleDelete(t) {
+    await api.deleteTransport(t.id);
     onRefresh();
+    toonMelding(`${t.from_location || "Vervoer"} → ${t.to_location || ""} verwijderd`.trim(), {
+      label: "Ongedaan maken",
+      run: async () => {
+        await api.addTransport(trip.id, {
+          type: t.type, from_location: t.from_location, to_location: t.to_location,
+          departure_time: t.departure_time, arrival_time: t.arrival_time, booking_ref: t.booking_ref,
+          cost: t.cost, notes: t.notes, baggage_allowance: t.baggage_allowance, is_private: t.is_private,
+        });
+        onRefresh();
+      },
+    });
   }
 
   return (
@@ -3794,7 +3829,7 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
                 </div>
                 <div className={readOnly ? "flex gap-1" : "opacity-0 group-hover:opacity-100 flex gap-1"}>
                   <button onClick={() => setEditing(t)} className="text-gray-400 hover:text-sky-600"><Icon name={readOnly ? "eye" : "pen"} size={16} /></button>
-                  {!readOnly && <button onClick={() => handleDelete(t.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
+                  {!readOnly && <button onClick={() => handleDelete(t)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={16} /></button>}
                 </div>
               </div>
             </div>
@@ -3819,10 +3854,19 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  async function handleDelete(id) {
-    if (!confirm("Uitgave verwijderen?")) return;
-    await api.deleteExpense(id);
+  async function handleDelete(e) {
+    await api.deleteExpense(e.id);
     onRefresh();
+    toonMelding(`"${e.description || "Uitgave"}" verwijderd`, {
+      label: "Ongedaan maken",
+      run: async () => {
+        await api.addExpense(trip.id, {
+          date: e.date, category: e.category, description: e.description,
+          amount: e.amount, paid_by: e.paid_by,
+        });
+        onRefresh();
+      },
+    });
   }
 
   const activities = days.flatMap((d) => d.activities || []);
@@ -3901,7 +3945,7 @@ function BudgetTab({ trip, expenses, transports, accommodations, days, onRefresh
                 <div className="font-semibold text-gray-800">{fmtMoney(exp.amount, trip.currency)}</div>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                   <button onClick={() => setEditing(exp)} className="text-gray-400 hover:text-sky-700" aria-label="Bewerken"><Icon name="pen" size={14} /></button>
-                  <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={14} /></button>
+                  <button onClick={() => handleDelete(exp)} className="text-gray-400 hover:text-red-500" aria-label="Verwijderen"><Icon name="trash" size={14} /></button>
                 </div>
               </div>
             ))}
@@ -10197,6 +10241,64 @@ function InstallPrompt() {
   );
 }
 
+// ---------- Korte melding met ongedaan maken ----------
+// Verwijderen ging via confirm(): een kale systeemdialoog die je bij elke
+// handeling onderbreekt, er niet uitziet als de app, en je nog steeds niets
+// oplevert als je per ongeluk "OK" tikt — er was nergens ongedaan maken. Dat is
+// riskant op een gedeelde reis waar meerdere gezinsleden in werken.
+//
+// Nu andersom: de handeling gebeurt meteen (geen tik extra) en er verschijnt
+// een paar tellen een balkje waarmee je het terugdraait. Bewust géén React-
+// context: meldingen komen uit tabbladen door de hele boom, en een losse
+// abonneelijst scheelt elk van die componenten een provider-prop.
+const toastLuisteraars = new Set();
+let toastTeller = 0;
+function toonMelding(bericht, actie) {
+  const melding = { id: ++toastTeller, bericht, actie };
+  toastLuisteraars.forEach((fn) => fn(melding));
+}
+
+function ToastHost() {
+  const [melding, setMelding] = useState(null);
+  useEffect(() => {
+    const fn = (m) => setMelding(m);
+    toastLuisteraars.add(fn);
+    return () => toastLuisteraars.delete(fn);
+  }, []);
+  useEffect(() => {
+    if (!melding) return;
+    // Lang genoeg om het te lezen en te reageren, kort genoeg om niet in de weg
+    // te blijven zitten.
+    const t = setTimeout(() => setMelding(null), 7000);
+    return () => clearTimeout(t);
+  }, [melding]);
+  if (!melding) return null;
+  return (
+    // Centreren met left/right + mx-auto, niet met -translate-x-1/2: rp-rise
+    // animeert transform en eindigt (fill-mode both) op "transform: none", wat
+    // een translate-klasse overschrijft. De melding kwam daardoor half buiten
+    // beeld te staan.
+    <div role="status" aria-live="polite"
+      className="rp-rise fixed left-3 right-3 z-50 mx-auto max-w-md"
+      style={{ bottom: "calc(72px + env(safe-area-inset-bottom) + 16px)" }}>
+      {/* Eén regel: de naam wordt afgekapt in plaats van over vier regels te
+          breken. Geen sluitknop — het balkje verdwijnt vanzelf, en die knop
+          kostte alleen maar breedte die de tekst nodig heeft. */}
+      <div className="flex items-center gap-2 rounded-2xl pl-4 pr-2 py-2 shadow-lg"
+        style={{ background: PALETTE.textPrimary, color: "#FFFFFF" }}>
+        <span className="flex-1 min-w-0 truncate text-[15px]">{melding.bericht}</span>
+        {melding.actie && (
+          <button type="button"
+            onClick={async () => { setMelding(null); try { await melding.actie.run(); } catch (err) { toonMelding(err.message || "Terugzetten mislukt"); } }}
+            className="rp-press shrink-0 text-[15px] font-semibold px-3 h-11 rounded-xl hover:bg-white/15 transition-colors">
+            {melding.actie.label}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- App ----------
 function App() {
   const [user, setUser] = useState(null);
@@ -10349,6 +10451,10 @@ function App() {
           <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
         )}
       </main>
+
+      {/* Eén plek voor de "verwijderd — ongedaan maken"-balkjes, altijd
+          gemonteerd zodat elk tabblad ze kan tonen. */}
+      <ToastHost />
 
       {showAccount && user && (
         <AccountModal user={user} onClose={() => setShowAccount(false)} onChanged={loadUser} />
