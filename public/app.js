@@ -2553,6 +2553,30 @@ function ScrollTopButton() {
   );
 }
 
+// Een activiteit verwijderen, met een paar tellen de kans om dat terug te
+// draaien. Geen bevestigingsvraag vooraf: dat scheelt een tik bij elke bedoelde
+// verwijdering én helpt echt bij een onbedoelde, want de prullenbak zit vlak
+// naast het gebied dat de kaart opent.
+//
+// Gedeeld door de dagplanning en het dagboek: op beide plekken staan dezelfde
+// activiteiten, dus daar hoort ook hetzelfde te gebeuren.
+async function verwijderActiviteit(act, onKlaar) {
+  await api.deleteActivity(act.id);
+  onKlaar?.();
+  toonMelding(`"${act.title}" verwijderd`, {
+    label: "Ongedaan maken",
+    run: async () => {
+      // Zelfde velden terug; de activiteit krijgt wel een nieuw id, wat verder
+      // nergens toe doet omdat er niets anders naar verwijst.
+      await api.addActivity(act.day_id, {
+        time: act.time, title: act.title, location: act.location, notes: act.notes,
+        category: act.category, cost: act.cost, is_private: act.is_private,
+      });
+      onKlaar?.();
+    },
+  });
+}
+
 function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId, onShareEditor, onEditTrip }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
@@ -2572,26 +2596,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   }, [trip.id]);
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
-  // Geen bevestigingsvraag meer: de activiteit gaat meteen weg en je krijgt een
-  // paar tellen de kans om dat terug te draaien. Dat scheelt een tik bij elke
-  // bedoelde verwijdering én helpt echt bij een onbedoelde — de prullenbak zit
-  // vlak naast het gebied dat de kaart opent.
-  async function handleDeleteActivity(act) {
-    await api.deleteActivity(act.id);
-    onRefresh();
-    toonMelding(`"${act.title}" verwijderd`, {
-      label: "Ongedaan maken",
-      run: async () => {
-        // Zelfde velden terug; de activiteit krijgt wel een nieuw id, wat verder
-        // nergens toe doet omdat er niets anders naar verwijst.
-        await api.addActivity(act.day_id, {
-          time: act.time, title: act.title, location: act.location, notes: act.notes,
-          category: act.category, cost: act.cost, is_private: act.is_private,
-        });
-        onRefresh();
-      },
-    });
-  }
+  const handleDeleteActivity = (act) => verwijderActiviteit(act, onRefresh);
   async function handleDeleteDay(id) {
     if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
     await api.deleteDay(id); onRefresh();
@@ -3663,6 +3668,16 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                             <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400 shrink-0" />
                             <JournalActivityTitle act={act} readOnly={readOnly}
                               onSave={async (title) => { await api.updateActivity(act.id, { ...act, title }); onRefresh?.(); }} />
+                            {/* Je kon de naam hier al aanpassen maar de activiteit
+                                niet weghalen — daarvoor moest je naar de planning.
+                                Zelfde verwijderen-met-ongedaan-maken als daar. */}
+                            {!readOnly && (
+                              <button type="button" onClick={() => verwijderActiviteit(act, onRefresh)}
+                                aria-label={`"${act.title}" verwijderen`} title="Activiteit verwijderen"
+                                className="rp-press ml-auto shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                                <Icon name="trash" size={15} />
+                              </button>
+                            )}
                           </div>
                           <JournalEntryBox entries={actEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder={`Vertel over ${act.title}...`}
                             onSave={(text) => saveEntry({ activity_id: act.id }, text)}
