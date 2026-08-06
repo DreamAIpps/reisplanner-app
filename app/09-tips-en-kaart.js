@@ -1144,6 +1144,19 @@ function AccommodationTransition({ current, previous, date }) {
 // nadat je allang weggewezen was. Nu blijft het element staan en verandert
 // alleen zijn opmaak.
 function stopIcoon(L, pl) {
+  // Vertrek en thuiskomst zijn geen overnachting maar het begin en einde van de
+  // reis. Ze krijgen daarom geen dagnummer maar een klein donker rondje: op de
+  // kaart zie je zo meteen waar de lijn begint en waar hij ophoudt, zonder ze
+  // te verwarren met een plek waar je geslapen hebt.
+  if (pl.rol) {
+    const maat = 16;
+    return L.divIcon({
+      className: "leaflet-reisplanner-icon",
+      html: `<div class="rp-stop" style="width:${maat}px;height:${maat}px;background:${PALETTE.textPrimary};border:2.5px solid #fff;"></div>`,
+      iconSize: [maat, maat],
+      iconAnchor: [maat / 2, maat / 2],
+    });
+  }
   const maat = pl.aanstaand ? 26 : 30;
   const vulling = pl.aanstaand
     ? `background:#fff;border:2.5px dashed ${PALETTE.coralDeep};color:${PALETTE.coralDeep};`
@@ -1156,7 +1169,7 @@ function stopIcoon(L, pl) {
   });
 }
 
-function JournalOverviewMap({ trip, days, photos, accommodations }) {
+function JournalOverviewMap({ trip, days, photos, accommodations, transports }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [upcomingGeo, setUpcomingGeo] = useState([]);
@@ -1194,8 +1207,46 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       })
       // Zonder dagnummer valt een verblijf buiten de reisdagen (een nacht
       // ervoor of erna); die hoort niet op de reiskaart.
-      .filter((a) => a.dayNumber != null);
+      .filter((a) => a.dayNumber != null)
+      // rang bepaalt de volgorde binnen dezelfde dag: vertrek eerst, dan waar
+      // je die dag sliep, en de thuisreis als laatste.
+      .map((a) => ({ ...a, rang: 1 }));
   }, [accommodations, dayInfoByDate]);
+
+  // Waar de reis begint en eindigt. Dat is geen verblijf — je slaapt er niet —
+  // maar zonder die twee punten begint de lijn ergens halverwege en houdt hij
+  // ook halverwege op. Het vertrekpunt is de plaats waar het eerste vervoer
+  // vandaan gaat, het eindpunt waar het laatste vervoer aankomt: meestal
+  // gewoon thuis.
+  const randpunten = React.useMemo(() => {
+    const metTijd = (transports || []).filter((t) => t.departure_time);
+    if (!metTijd.length) return [];
+    const opTijd = metTijd.slice().sort((a, b) => String(a.departure_time).localeCompare(String(b.departure_time)));
+    const eerste = opTijd[0];
+    const laatste = opTijd[opTijd.length - 1];
+    const isoDateLocal = (dt) => (dt ? String(dt).slice(0, 10) : null);
+    const punten = [];
+    if (eerste.from_location) {
+      const d = dayInfoByDate.get(isoDateLocal(eerste.departure_time));
+      punten.push({
+        id: `vertrek-${eerste.id}`, query: eerste.from_location, naamKort: eerste.from_location,
+        datum: isoDateLocal(eerste.departure_time),
+        dayNumber: d ? d.number : 1, dayId: d ? d.id : null, rang: 0, rol: "vertrek",
+      });
+    }
+    // Eén vervoermiddel heen én terug bestaat niet; is er maar één, dan is dat
+    // de heenreis en zou zijn aankomst als "eindpunt" de reis meteen weer laten
+    // eindigen waar hij net begon.
+    if (opTijd.length > 1 && laatste.to_location) {
+      const d = dayInfoByDate.get(isoDateLocal(laatste.arrival_time || laatste.departure_time));
+      punten.push({
+        id: `terug-${laatste.id}`, query: laatste.to_location, naamKort: laatste.to_location,
+        datum: isoDateLocal(laatste.arrival_time || laatste.departure_time),
+        dayNumber: d ? d.number : days.length, dayId: d ? d.id : null, rang: 2, rol: "terug",
+      });
+    }
+    return punten;
+  }, [transports, dayInfoByDate, days.length]);
 
   // Sequentieel i.p.v. Promise.all: dit kan een handvol nog niet eerder
   // opgezochte plekken zijn, en geocode()'s ingebouwde Nominatim-pacing is
@@ -1203,12 +1254,16 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
   // levert meteen een schone plaatsnaam mee, dus bij verblijven is er geen
   // omgekeerde opzoeking meer nodig.
   useEffect(() => {
-    if (!verblijfItems.length) { setUpcomingGeo([]); return; }
+    // Vertrek- en eindpunt horen bij dezelfde route, dus ook bij dezelfde
+    // opzoekronde — anders wisselen ze elkaar af in twee losse effecten en
+    // botsen ze op de snelheidslimiet van Nominatim.
+    const teZoeken = [...verblijfItems, ...randpunten];
+    if (!teZoeken.length) { setUpcomingGeo([]); return; }
     let cancelled = false;
     (async () => {
       const gevonden = [];
       const vandaag = todayIso(trip?.timezone);
-      for (const item of verblijfItems) {
+      for (const item of teZoeken) {
         const geo = await geocodePlace(item.query).catch(() => null);
         if (cancelled) return;
         if (geo?.lat != null) {
@@ -1224,7 +1279,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       if (!cancelled) setUpcomingGeo(gevonden);
     })();
     return () => { cancelled = true; };
-  }, [verblijfItems, trip?.timezone]);
+  }, [verblijfItems, randpunten, trip?.timezone]);
 
   // Terugval op de oude werkwijze wanneer er geen enkel verblijf met een
   // locatie is: dan is een kaart op basis van foto's beter dan een leeg vlak.
@@ -1249,9 +1304,13 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
   // etappe naar de stop ervóór verwijzen.
   const route = React.useMemo(() => {
     const stops = [
-      ...dayMarkers.map((m) => ({ ...m, aanstaand: false })),
+      ...dayMarkers.map((m) => ({ ...m, aanstaand: false, rang: 1 })),
       ...upcomingGeo.map((m) => ({ ...m, photos: [] })),
-    ].sort((a, b) => a.dayNumber - b.dayNumber);
+    ]
+      // Op dezelfde dag kunnen drie dingen samenvallen: je vertrekt thuis, je
+      // slaapt ergens, en op de laatste dag kom je weer thuis. rang houdt die
+      // in de volgorde waarin ze werkelijk gebeuren.
+      .sort((a, b) => a.dayNumber - b.dayNumber || (a.rang ?? 1) - (b.rang ?? 1));
     return stops.map((s, i) => {
       const foto = (s.photos || [])[0] || null;
       return {
@@ -1476,7 +1535,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
 
   // Nog niets om te tekenen: geen verblijf met een adres, en ook geen foto's met
   // een locatie om op terug te vallen.
-  if (route.length === 0 && verblijfItems.length === 0) return (
+  if (route.length === 0 && verblijfItems.length === 0 && randpunten.length === 0) return (
     <div className="rounded-2xl border border-gray-100 bg-gray-50 text-center py-8 px-4 mb-6 text-sm text-gray-400">
       Zodra je een verblijf met een adres invult, verschijnt hier de route van je reis. Foto's met een locatie werken ook.
     </div>
@@ -1491,7 +1550,11 @@ function JournalOverviewMap({ trip, days, photos, accommodations }) {
       if (!s) return null;
       const heen = s.vanaf ? haversineMeters(s.vanaf, s) : 0;
       return {
-        titel: `Dag ${s.dayNumber} · ${naamVan(s)}`,
+        // Vertrek en thuiskomst zijn geen "dag zoveel waar je sliep"; die
+        // benoemen we als wat ze zijn.
+        titel: s.rol === "vertrek" ? `Vertrek uit ${naamVan(s)}`
+          : s.rol === "terug" ? `Terug in ${naamVan(s)}`
+          : `Dag ${s.dayNumber} · ${naamVan(s)}`,
         regel: [
           s.aanstaand ? "nog te gaan" : null,
           heen > 0 ? `${fmtDistance(heen)} vanaf dag ${s.vanaf.dayNumber}` : "begin van de reis",
