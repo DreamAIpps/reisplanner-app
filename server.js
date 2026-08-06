@@ -4181,20 +4181,41 @@ route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
   sendJson(res, 200, rows);
 }, { tripScope: "param" });
 
+// bedrag en datum gingen ongezien door naar een numeric- en een date-kolom.
+// Een leeg bedrag (het invoerveld is `required`, maar dat leunt volledig op de
+// browser) of een datum als "gisteren" liet Postgres de fout gooien, en die
+// kwam als een 500 terug — een serverfout voor iets wat de aanvraag zelf fout
+// deed. Nu een 400 met een leesbare reden.
+function leesBedrag(waarde) {
+  const bedrag = Number(waarde);
+  return Number.isFinite(bedrag) && waarde !== "" && waarde !== null && waarde !== undefined ? bedrag : null;
+}
+function leesDatum(waarde) {
+  if (!waarde) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(waarde)) ? String(waarde) : undefined;
+}
 route("POST", "/api/trips/:id/expenses", async (req, res, params, body) => {
-  const { date, category, description, amount, paid_by } = body;
+  const { category, description, paid_by } = body;
+  const amount = leesBedrag(body?.amount);
+  if (amount === null) return sendError(res, 400, "Bedrag is verplicht en moet een getal zijn");
+  const date = leesDatum(body?.date);
+  if (date === undefined) return sendError(res, 400, "Datum moet als jjjj-mm-dd worden meegegeven");
   const { rows } = await query(
     "INSERT INTO expenses (trip_id, date, category, description, amount, paid_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
-    [params.id, date||null, category||null, description, amount, paid_by||null]
+    [params.id, date, category||null, description, amount, paid_by||null]
   );
   sendJson(res, 201, rows[0]);
 }, { tripScope: "param" });
 
 route("PUT", "/api/expenses/:id", async (req, res, params, body) => {
-  const { date, category, description, amount, paid_by } = body;
+  const { category, description, paid_by } = body;
+  const amount = leesBedrag(body?.amount);
+  if (amount === null) return sendError(res, 400, "Bedrag is verplicht en moet een getal zijn");
+  const date = leesDatum(body?.date);
+  if (date === undefined) return sendError(res, 400, "Datum moet als jjjj-mm-dd worden meegegeven");
   const { rows } = await query(
     "UPDATE expenses SET date=$1, category=$2, description=$3, amount=$4, paid_by=$5 WHERE id=$6 RETURNING *",
-    [date||null, category||null, description, amount, paid_by||null, params.id]
+    [date, category||null, description, amount, paid_by||null, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "expenses" });
