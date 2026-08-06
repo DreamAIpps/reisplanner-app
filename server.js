@@ -771,6 +771,42 @@ function recordMetric({ method, route, status, durationMs }) {
   }
 }
 
+// ---------- Begrenzing van de AI-aanroepen ----------
+// De routes die Claude aanroepen (reistips, een reisbevestiging inlezen, een
+// plaatsnaam afleiden, quizvragen maken) kostten per aanroep geld en stonden
+// onbegrensd open voor iedere ingelogde gebruiker. Eén script of een vastgelopen
+// client die blijft herhalen kon de rekening laten oplopen zonder dat er iets
+// tegen ingaat. Dit is bewust een simpele teller in het geheugen: bij een
+// herstart begint hij opnieuw, en dat is prima — het gaat om een bovengrens
+// tegen doorslaan, niet om een boekhouding.
+const AI_LIMIET_PER_UUR = 40;
+const aiTellers = new Map(); // gebruiker-id -> { tot, aantal }
+
+function aiLimietOverschreden(userId) {
+  const nu = Date.now();
+  const teller = aiTellers.get(userId);
+  if (!teller || nu > teller.tot) {
+    aiTellers.set(userId, { tot: nu + 60 * 60 * 1000, aantal: 1 });
+    // Meteen opruimen wat verlopen is, zodat deze map niet ongemerkt volloopt.
+    if (aiTellers.size > 500) {
+      for (const [id, t] of aiTellers) if (nu > t.tot) aiTellers.delete(id);
+    }
+    return false;
+  }
+  teller.aantal += 1;
+  return teller.aantal > AI_LIMIET_PER_UUR;
+}
+
+// Werpt een fout met statusCode, zodat de gewone foutafhandeling er een nette
+// melding van maakt.
+function bewaakAiGebruik(req) {
+  if (aiLimietOverschreden(req.user.id)) {
+    const err = new Error("Je hebt de slimme functies even te vaak gebruikt. Probeer het over een uurtje opnieuw.");
+    err.statusCode = 429;
+    throw err;
+  }
+}
+
 // ---------- Trip role resolution (owner / editor / viewer / none) ----------
 async function getTripRole(tripId, userId) {
   const { rows } = await query(
@@ -2656,6 +2692,7 @@ route("POST", "/auth/apple/callback", async (req, res) => {
 
 // ---------- AI destination tips ----------
 route("GET", "/api/trips/:id/tips", async (req, res, params) => {
+  bewaakAiGebruik(req);
   const tripResult = await query("SELECT destination, start_date, end_date FROM trips WHERE id = $1 AND (user_id = $2 OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2))", [params.id, req.user.id]);
   if (!tripResult.rows.length) return sendError(res, 404, "Reis niet gevonden");
   const urlObj = new URL(req.url, "http://localhost");
@@ -2716,6 +2753,7 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
 
 // ---------- Import (email parsing via Claude) ----------
 route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
+  bewaakAiGebruik(req);
   const { text, image } = body;
   if (!text?.trim() && !image) return sendError(res, 400, "Geen tekst of afbeelding opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
@@ -2787,6 +2825,7 @@ Only include items actually present. Use null for missing values. Return empty a
 // Claude de plaatsnaam distilleren uit de ruwe naam/adrestekst van een
 // verblijf — geen tripScope nodig, dit hangt niet van een specifieke reis af.
 route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
+  bewaakAiGebruik(req);
   const { query: q } = body || {};
   if (!q?.trim()) return sendError(res, 400, "Geen zoekterm opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
@@ -3188,6 +3227,7 @@ function quizSessionSummary(loaded, req) {
 }
 
 route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => {
+  bewaakAiGebruik(req);
   // Elk reislid mag een quiz aanmaken, ook alleen-lezen bezoekers — wie 'm
   // aanmaakt wordt vanzelf de gastheer van déze sessie (host_user_id), los
   // van wie de reis zelf bezit.
@@ -3529,6 +3569,48 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
 // de pagina) — geklemd tussen redelijke grenzen zodat een corrupte of
 // geknoeide waarde een pagina niet onbruikbaar (bijv. negatieve breedte of
 // ver buiten beeld) kan maken.
+// De tekst uit fotoboek-tekstvakken en -titels ging tot nu toe ongesaneerd de
+// database in: de veiligheid leunde volledig op de sanitizer die de client bij
+// het tónen nog eens draait. Dat klopt vandaag, maar het is een wankele afspraak
+// — één toekomstig scherm dat de opgeslagen HTML rechtstreeks gebruikt, en er
+// staat opgeslagen XSS in. Daarom hier dezelfde beperkte set als in de client
+// (zie RICH_TEXT_ALLOWED_TAGS/ATTR in public/app.js).
+//
+// Bewust een eigen kleine schoonmaker en geen volwaardige HTML-parser: het is
+// een vaste, piepkleine tagset, en dezelfde die de PDF-generator hieronder al
+// aankan. Alles wat er niet in staat verdwijnt, inclusief de tag zelf.
+const PHOTOBOOK_TOEGESTANE_TAGS = new Set(["b", "i", "font", "br", "div"]);
+const PHOTOBOOK_TOEGESTANE_ATTR = new Set(["face", "color", "size", "style"]);
+
+function sanitizePhotobookHtml(html) {
+  if (typeof html !== "string" || !html) return null;
+  // Eerst script/style compleet weg, inhoud en al. Alleen de tags strippen zou
+  // de code als gewone tekst laten staan ("alert(1)") — ongevaarlijk, maar dat
+  // is niet wat iemand in zijn fotoboek wil zien.
+  const zonderCode = html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<(script|style)\b[^>]*>[\s\S]*$/gi, "");
+  const schoon = zonderCode.replace(/<\/?([a-zA-Z0-9-]+)([^>]*)>/g, (heel, tag, attrTekst) => {
+    const naam = tag.toLowerCase();
+    if (!PHOTOBOOK_TOEGESTANE_TAGS.has(naam)) return "";
+    if (heel.startsWith("</")) return `</${naam}>`;
+    const attrs = [];
+    // Alleen naam="waarde" met rechte of enkele aanhalingstekens; alles zonder
+    // aanhalingstekens (waar de meeste injectietrucs op leunen) valt af.
+    const re = /([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+    let m;
+    while ((m = re.exec(attrTekst))) {
+      const attr = m[1].toLowerCase();
+      if (!PHOTOBOOK_TOEGESTANE_ATTR.has(attr)) continue;
+      const waarde = (m[3] ?? m[4] ?? "");
+      // Geen url(), geen javascript:, geen expressie-trucs in style.
+      if (/[<>]|javascript:|expression\(|url\s*\(/i.test(waarde)) continue;
+      attrs.push(`${attr}="${waarde.replace(/"/g, "&quot;")}"`);
+    }
+    return `<${naam}${attrs.length ? " " + attrs.join(" ") : ""}>`;
+  });
+  return schoon.trim() ? schoon : null;
+}
+
 function clampPhotoRect(p) {
   const n = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
   return {
@@ -3667,7 +3749,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   await query("DELETE FROM photobook_pages WHERE photobook_id = $1", [params.id]);
   for (let i = 0; i < items.length; i++) {
     const page = items[i];
-    const title = typeof page.title === "string" ? page.title.trim() || null : null;
+    const title = sanitizePhotobookHtml(typeof page.title === "string" ? page.title.trim() : null);
     let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
@@ -3697,7 +3779,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     }
     const textBoxes = Array.isArray(page.textBoxes) ? page.textBoxes : [];
     for (let j = 0; j < textBoxes.length; j++) {
-      const html = typeof textBoxes[j].html === "string" ? textBoxes[j].html : null;
+      const html = sanitizePhotobookHtml(textBoxes[j].html);
       const bgColor = typeof textBoxes[j].backgroundColor === "string" ? textBoxes[j].backgroundColor : null;
       const rect = clampTextBoxRect(textBoxes[j]);
       await query(
@@ -4072,7 +4154,10 @@ route("DELETE", "/api/packing/:id", async (req, res, params) => {
 
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Geen Access-Control-Allow-Origin meer: de app en de API draaien op
+  // dezelfde herkomst, dus er is niets dat cross-origin hoeft te lezen.
+  // "*" stond er breed open; zonder credentials viel er weinig mee te
+  // halen, maar niets openzetten is nog altijd minder dan alles.
   setSecurityHeaders(res);
   const url = new URL(req.url, `http://localhost`);
   const pathname = url.pathname;
@@ -4153,7 +4238,15 @@ const server = http.createServer(async (req, res) => {
       await match.handler(req, res, match.params, body);
     } catch (err) {
       console.error(err);
-      if (!res.headersSent) sendError(res, err.statusCode || 500, err.message);
+      // Alleen fouten die bewust met een statuscode zijn opgeworpen dragen een
+      // tekst die voor de gebruiker bedoeld is (bijvoorbeeld "Verzoek te groot").
+      // Al het andere is onverwacht — daarvan lekte de ruwe foutmelding naar
+      // buiten, inclusief database- en schemadetails waar niemand iets aan heeft
+      // en die een aanvaller juist wél helpen. Die blijft nu in het log staan.
+      if (!res.headersSent) {
+        if (err.statusCode) sendError(res, err.statusCode, err.message);
+        else sendError(res, 500, "Er ging iets mis op de server. Probeer het opnieuw.");
+      }
     }
     return;
   }
