@@ -23,7 +23,16 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     return () => window.removeEventListener("keydown", h);
   }, [showMoreMenu]);
 
+  // Elke wijziging (activiteit toevoegen, verblijf opslaan, uitgave wissen)
+  // roept load() opnieuw aan. Doe je er twee vlak achter elkaar, dan is niet
+  // gezegd dat de antwoorden in dezelfde volgorde terugkomen: het antwoord van
+  // de eerste ronde kan ná dat van de tweede binnenkomen en schrijft dan de
+  // net opgehaalde stand weer terug — de zojuist toegevoegde activiteit
+  // verdwijnt dan voor je ogen tot de volgende verversing. Dit nummertje zorgt
+  // dat alleen de meest recente ronde nog iets in beeld mag zetten.
+  const laadBeurt = useRef(0);
   const load = useCallback(async () => {
+    const beurt = ++laadBeurt.current;
     try {
       const [t, d, a, tr, ex] = await Promise.all([
         api.getTrip(tripId),
@@ -32,9 +41,11 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         api.getTransports(tripId),
         api.getExpenses(tripId),
       ]);
+      if (beurt !== laadBeurt.current) return;
       setTrip(t); setDays(d); setAccommodations(a); setTransports(tr); setExpenses(ex);
       setLoadError(null);
     } catch (err) {
+      if (beurt !== laadBeurt.current) return;
       // Without this the screen sat on "Laden..." forever — the back button is
       // inside the guarded return, so there was no way out but a reload.
       setLoadError(err.message || "Reis kon niet worden geladen");
@@ -704,9 +715,12 @@ function AdminView({ onBack, currentUserId }) {
     }
   }
 
+  // Bij een fout viel de spinner wel weg, maar zonder catch bleef het scherm
+  // achter met lege lijsten — niet te onderscheiden van "er zijn geen reizen".
   const reload = () => {
     Promise.all([api.getAdminTrips(), api.getAdminUsers()])
       .then(([t, u]) => { setTrips(t); setUsers(u); })
+      .catch((err) => toonMelding(err.message || "Beheergegevens laden is niet gelukt"))
       .finally(() => setLoading(false));
   };
 
@@ -936,9 +950,16 @@ function InstallPrompt() {
 
   useEffect(() => {
     function onBeforeInstall(e) { e.preventDefault(); setDeferredPrompt(e); }
+    // Een benoemde functie in plaats van een pijltje ter plekke: met een inline
+    // functie is er geen verwijzing meer om mee op te ruimen, dus die listener
+    // bleef achter en riep setState aan op een component die er niet meer was.
+    function onInstalled() { setDeferredPrompt(null); }
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
-    window.addEventListener("appinstalled", () => setDeferredPrompt(null));
-    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
   }, []);
 
   function dismiss() {

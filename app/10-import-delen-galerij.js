@@ -21,7 +21,7 @@ function ImportModal({ tripId, onImported, onClose }) {
   const fileRef = useRef(null);
 
   useEffect(() => {
-    api.getDays(tripId).then(setDays);
+    api.getDays(tripId).then(setDays).catch(() => setDays([]));
     Promise.all([
       api.getTransports(tripId),
       api.getAccommodations(tripId),

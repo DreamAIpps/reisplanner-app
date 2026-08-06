@@ -720,6 +720,17 @@ function route(method, pattern, handler, opts) {
   routes.push({ method, pattern, re, keys, handler, tripScope: opts?.tripScope, allowViewer: opts?.allowViewer === true });
 }
 
+// :id en :sessionId zijn zonder uitzondering database-sleutels; alleen :token
+// is een vrije tekst. Het patroon hierboven vangt echter alles wat geen schuine
+// streep is, dus /api/trips/abc kwam gewoon binnen en belandde als "abc" in een
+// vergelijking met een integer-kolom. Postgres weigert dat (22P02), de fout
+// borrelde op tot de vangnet-handler en de aanroeper kreeg een 500 — terwijl
+// hij zelf iets onmogelijks had gevraagd. Zo'n pad bestaat simpelweg niet, dus
+// hier al afwijzen; matchRoute levert dan niets op en dat is een nette 404.
+const ID_SLEUTEL = /^(id|.*Id)$/;
+function geldigeSleutel(naam, waarde) {
+  return !ID_SLEUTEL.test(naam) || /^[1-9][0-9]{0,17}$/.test(waarde);
+}
 function matchRoute(method, pathname) {
   for (const r of routes) {
     if (r.method !== method && r.method !== "*") continue;
@@ -727,6 +738,7 @@ function matchRoute(method, pathname) {
     if (!m) continue;
     const params = {};
     r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
+    if (!r.keys.every((k) => geldigeSleutel(k, params[k]))) continue;
     return { handler: r.handler, pattern: r.pattern, params, tripScope: r.tripScope, allowViewer: r.allowViewer };
   }
   return null;

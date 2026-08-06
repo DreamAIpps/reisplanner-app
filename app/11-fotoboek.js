@@ -912,8 +912,19 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
 
   useEffect(() => {
-    api.getPhotobook(bookId).then((b) => { setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); setBookBackground(b.backgroundColor ?? null); });
-    api.getPhotos(tripId).then(setAllPhotos).catch(() => {});
+    // Zonder catch bleef de editor bij een mislukte oproep leeg open staan:
+    // nul pagina's, geen titel, geen melding. Wie dan iets neerzette en opsloeg
+    // schreef die lege staat over het echte boek heen. Terug naar het overzicht
+    // is hier het veilige antwoord.
+    let vervallen = false;
+    api.getPhotobook(bookId)
+      .then((b) => {
+        if (vervallen) return;
+        setTitle(b.title); setPages(b.pages); setOrientation(b.orientation || "portrait"); setBookCorner(b.cornerRadius ?? 0); setBookBackground(b.backgroundColor ?? null);
+      })
+      .catch((err) => { if (!vervallen) { toonMelding(err.message || "Fotoboek laden is niet gelukt"); onBack?.(); } });
+    api.getPhotos(tripId).then((l) => { if (!vervallen) setAllPhotos(l); }).catch(() => {});
+    return () => { vervallen = true; };
   }, [bookId, tripId]);
 
   // Elke muterende functie hieronder roept dit eerst aan, met de `pages` die
@@ -2123,8 +2134,14 @@ function PackingTab({ tripId, readOnly }) {
   const [openCategory, setOpenCategory] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // setLoading(false) stond alleen in het geslaagde pad, dus bij een mislukte
+  // oproep — een haperende verbinding onderweg is het normale geval — bleef
+  // "Laden..." voor altijd staan zonder dat er iets te zien of te proberen was.
   const load = React.useCallback(() => {
-    api.getPackingItems(tripId).then(data => { setItems(data); setLoading(false); });
+    api.getPackingItems(tripId)
+      .then((data) => setItems(data))
+      .catch(() => toonMelding("Paklijst laden is niet gelukt"))
+      .finally(() => setLoading(false));
   }, [tripId]);
 
   useEffect(() => { load(); }, [load]);
@@ -2132,30 +2149,40 @@ function PackingTab({ tripId, readOnly }) {
   async function handleAdd(e) {
     e.preventDefault();
     if (!newItem.trim()) return;
-    await api.addPackingItem(tripId, { category: newCategory, item: newItem.trim() });
-    setNewItem("");
-    load();
+    try {
+      await api.addPackingItem(tripId, { category: newCategory, item: newItem.trim() });
+      setNewItem("");
+      load();
+    } catch (err) { toonMelding(err.message || "Toevoegen is niet gelukt"); }
   }
 
   async function handleToggle(item) {
-    await api.updatePackingItem(item.id, { checked: !item.checked });
-    setItems(prev => prev.map(p => p.id === item.id ? { ...p, checked: !p.checked } : p));
+    try {
+      await api.updatePackingItem(item.id, { checked: !item.checked });
+      setItems(prev => prev.map(p => p.id === item.id ? { ...p, checked: !p.checked } : p));
+    } catch (err) { toonMelding(err.message || "Afvinken is niet gelukt"); }
   }
 
   async function handleDelete(id) {
-    await api.deletePackingItem(id);
-    setItems(prev => prev.filter(p => p.id !== id));
+    try {
+      await api.deletePackingItem(id);
+      setItems(prev => prev.filter(p => p.id !== id));
+    } catch (err) { toonMelding(err.message || "Verwijderen is niet gelukt"); }
   }
 
   async function handleSuggest(cat, suggestion) {
     if (items.some(p => p.category === cat && p.item === suggestion)) return;
-    await api.addPackingItem(tripId, { category: cat, item: suggestion });
-    load();
+    try {
+      await api.addPackingItem(tripId, { category: cat, item: suggestion });
+      load();
+    } catch (err) { toonMelding(err.message || "Toevoegen is niet gelukt"); }
   }
 
   async function handleUncheckAll() {
-    await Promise.all(items.filter(p => p.checked).map(p => api.updatePackingItem(p.id, { checked: false })));
-    load();
+    try {
+      await Promise.all(items.filter(p => p.checked).map(p => api.updatePackingItem(p.id, { checked: false })));
+      load();
+    } catch (err) { toonMelding(err.message || "Uitvinken is niet gelukt"); }
   }
 
   const grouped = PACKING_CATEGORIES.reduce((acc, cat) => {
