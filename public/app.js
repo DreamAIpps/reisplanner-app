@@ -10374,20 +10374,39 @@ function App() {
 
   const loadTrips = useCallback(async () => {
     setLoading(true);
-    try { setTrips(sortTripsByDeparture(await api.getTrips())); }
-    finally { setLoading(false); }
+    try {
+      const gesorteerd = sortTripsByDeparture(await api.getTrips());
+      setTrips(gesorteerd);
+      return gesorteerd;
+    } finally { setLoading(false); }
   }, []);
+
+  // Eén keer per sessie: als er een reis loopt, open die meteen. Wie de app
+  // onderweg opent komt voor die ene reis — het overzicht ertussen was een tik
+  // die altijd hetzelfde antwoord had. Eenmalig, zodat je na "Alle reizen" ook
+  // echt in het overzicht kunt blijven.
+  const autoGeopend = useRef(false);
 
   useEffect(() => {
     if (authLoading) return;
     setGuestMode(!user);
-    loadTrips();
     const params = new URLSearchParams(location.search);
     const tripId = params.get("trip");
-    if (tripId) {
-      setView({ name: "detail", id: tripId, tab: params.get("tab") || null });
-      window.history.replaceState({}, "", "/");
-    }
+    (async () => {
+      const geladen = await loadTrips();
+      // Een expliciete link (uitnodiging, melding) wint altijd van de
+      // automatische keuze hieronder.
+      if (tripId) {
+        setView({ name: "detail", id: tripId, tab: params.get("tab") || null });
+        window.history.replaceState({}, "", "/");
+        autoGeopend.current = true;
+        return;
+      }
+      if (autoGeopend.current) return;
+      autoGeopend.current = true;
+      const lopend = (geladen || []).find((t) => tripCategory(t.start_date, t.end_date) === 0);
+      if (lopend) setView({ name: "detail", id: lopend.id });
+    })();
   }, [user, authLoading, loadTrips]);
 
   async function handleLogout() {
