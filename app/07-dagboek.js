@@ -373,7 +373,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           )}
         </div>
       </div>
-      <JournalOverviewMap trip={trip} days={days} photos={tripPhotos} accommodations={accommodations} />
+      <JournalOverviewMap trip={trip} days={days} photos={tripPhotos} accommodations={accommodations} transports={transports} />
       <div className="space-y-4">
         {(() => {
           // Claim each transport/accommodation on the first day it matches
