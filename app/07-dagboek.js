@@ -360,9 +360,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               <span className="w-1.5 h-1.5 rounded-full bg-white" /><span className="tnum">{newCount}</span> nieuw
             </button>
           )}
-          {!readOnly && todayDay && (
-            <Button onClick={() => setAddingActivity({ dayId: todayDay.id })}>+ Activiteit vandaag</Button>
-          )}
+          {/* "+ Activiteit vandaag" stond hier ook nog. Elke dag in het dagboek
+              heeft zelf al een "+" (zie hieronder), en die staat bij de dag waar
+              je op dat moment naar kijkt in plaats van altijd bij vandaag — dus
+              deze knop deed hetzelfde, alleen minder precies. */}
           {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
           {onShare && !readOnly && (
             <Button onClick={onShare} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Delen</Button>

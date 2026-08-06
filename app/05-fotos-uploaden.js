@@ -560,16 +560,39 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   }
 
   // "Veel groter" is bewust ook hier doorgevoerd, niet alleen in de
-  // volledig-scherm-viewer erachter: bijna schermbreed in plaats van de oude
-  // 70vw, met een ruimere bovengrens op grotere schermen.
-  const thumbClass = large ? "w-[88vw] h-[88vw] max-w-[420px] max-h-[420px] sm:w-96 sm:h-96" : "w-24 h-24";
-  const largeMaxWidth = "88vw";
+  // volledig-scherm-viewer erachter: de foto vult de hele strook.
+  //
+  // Dat ging eerst met 88vw, en dat is net iets anders dan "zo breed als er
+  // ruimte is": vw rekent met het hele scherm, terwijl deze strook in een
+  // dagblok binnen een kaart staat, met marges aan beide kanten. Gemeten op een
+  // scherm van 402 pixels bleef er 322 over voor de strook, terwijl elk fotoblok
+  // er 354 opeiste. Alles stak dus ruim dertig pixels buiten beeld. Bij de foto
+  // zelf zie je dat nauwelijks — een randje eraf oogt gewoon als uitsnede — maar
+  // de beschrijving en de reactieknoppen eronder hielden diezelfde breedte aan,
+  // en dáár viel het meteen op: een zin die halverwege een woord begon en een
+  // duimpje dat maar half in beeld stond.
+  //
+  // Een percentage rekent wél met de ruimte die er werkelijk is: als flex-item
+  // is 100% precies de breedte van de strook. Eén foto is dan exact één
+  // "pagina" van de veeg-beweging, wat ook het vastklikken (snap-center) rond
+  // maakt. De hoogte volgt via aspect-square de breedte, in plaats van los van
+  // elkaar op dezelfde vw-waarde te leunen.
+  const thumbClass = large ? "w-full h-auto aspect-square" : "w-24 h-24";
+  // De beschrijving en de reacties eronder horen even breed te zijn als het
+  // fotoblok waar ze bij staan — dat is nu gewoon "de volle breedte".
+  const largeMaxWidth = "100%";
 
   return (
     <div onClick={(e) => e.stopPropagation()}>
       <div className={`flex ${large ? "gap-4 snap-x snap-mandatory" : "gap-2"} overflow-x-auto pb-1`}>
+        {/* De breedte hoort op het blok hieronder (het flex-item) en niet op de
+            <img>: een percentage op de foto zou zich richten naar zijn ouder, en
+            die is juist zo breed als zijn inhoud — een kringetje. Op het item
+            zelf rekent 100% met de strook eromheen, en dat is wél een vaste
+            maat. Op een breed scherm zou één foto anders de hele strook vullen,
+            vandaar de bovengrens. */}
         {photos.map((p, i) => (
-          <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center" : ""}`}>
+          <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center w-full max-w-[420px]" : ""}`}>
             <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
               className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
             {large && (
@@ -583,9 +606,16 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
                   tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
               </div>
             )}
+            {/* In het dagboek staat dit kruisje binnen de hoek van de foto in
+                plaats van er net buiten. De foto is daar nu precies zo breed als
+                de strook, dus een knop die naar buiten steekt valt half achter de
+                rand — en liet de strook bovendien zes pixels meescrollen, wat het
+                vastklikken per foto net niet rond maakte. In de compacte grid is
+                er wél ruimte naast de tegel, dus daar blijft hij staan waar hij
+                stond. */}
             {!readOnly && (
               <button type="button" onClick={() => handleDelete(p.id)}
-                className={`absolute -top-1.5 -right-1.5 rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "w-8 h-8 text-base" : "w-6 h-6 text-sm"}`}>
+                className={`absolute rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "top-1.5 right-1.5 w-8 h-8 text-base" : "-top-1.5 -right-1.5 w-6 h-6 text-sm"}`}>
                 ×
               </button>
             )}
