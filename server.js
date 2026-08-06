@@ -20,7 +20,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
 const anthropicClient = new Anthropic();
 
-// Dezelfde ontwerp-tokens als PALETTE in public/app.js — hier alleen de paar
+// Dezelfde ontwerp-tokens als PALETTE in app/01-tokens-en-iconen.js — hier alleen de paar
 // waarden die de server nodig heeft (PDF-tekst en de standaard reiskleur),
 // zodat een PDF er niet anders uitziet dan het scherm waar hij van komt.
 const PALETTE = {
@@ -44,8 +44,8 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 // twee dingen die vroeger in de browser gebeurden — JSX vertalen en de
 // stylesheet genereren — gebeuren één keer bij het opstarten van de server.
 // Dat scheelt de bezoeker ~3,6 MB downloaden en seconden rekenwerk per start,
-// en houdt tegelijk de werkwijze van dit project intact: public/app.js blijft
-// gewoon het bestand dat je bewerkt, er is geen aparte bouwstap bijgekomen.
+// en houdt tegelijk de werkwijze van dit project intact: de bronbestanden in app/
+// blijven gewoon de bestanden die je bewerkt, er is geen aparte bouwstap bijgekomen.
 const VENDOR_FILES = {
   "react.js": "react/umd/react.production.min.js",
   "react-dom.js": "react-dom/umd/react-dom.production.min.js",
@@ -64,9 +64,23 @@ const VENDOR_MIME = { ".js": "application/javascript; charset=utf-8", ".css": "t
 // Gegenereerd bij het opstarten; tot die tijd leeg.
 const built = { js: null, css: null, jsEtag: null, cssEtag: null };
 
+// De app stond in één bestand van ruim tienduizend regels. Dat is nu opgedeeld
+// in app/, met een nummer voorop: de volgorde waarin ze aan elkaar geplakt
+// worden is dezelfde als in het oude bestand. Dat is geen detail maar de kern —
+// alles deelt één scope, en een const die eerder gebruikt dan gedefinieerd wordt
+// is meteen stuk. De splitsing is dan ook precies op regelgrenzen gedaan, zodat
+// de samenvoeging letterlijk hetzelfde bestand oplevert.
+const APP_DIR = path.join(__dirname, "app");
+
+function appBronBestanden() {
+  return fs.readdirSync(APP_DIR).filter((f) => f.endsWith(".js")).sort();
+}
+
 function buildAppScript() {
   const babel = require("@babel/core");
-  const src = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const src = appBronBestanden()
+    .map((f) => fs.readFileSync(path.join(APP_DIR, f), "utf8"))
+    .join("\n");
   const out = babel.transformSync(src, {
     presets: [[require("@babel/preset-react"), { runtime: "classic" }]],
     configFile: false, babelrc: false, filename: "app.js",
@@ -3460,7 +3474,7 @@ route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
   })));
 }, { tripScope: "param", allowViewer: true });
 
-// Zelfde indelingen als de "Pagina sjablonen" in de editor (public/app.js,
+// Zelfde indelingen als de "Pagina sjablonen" in de editor (app/11-fotoboek.js,
 // PHOTOBOOK_LAYOUTS) — bij het automatisch vullen krijgt elke pagina meteen
 // dezelfde verzorgde indeling die je er later ook zelf op zou kunnen zetten.
 const PHOTOBOOK_AUTOFILL_LAYOUTS = {
@@ -3483,7 +3497,7 @@ const PHOTOBOOK_AUTOFILL_LAYOUTS = {
 };
 
 // Hoekafronding is een fractie van de kortste zijde van de pagina (zie
-// PHOTOBOOK_CORNER_PRESETS in public/app.js). 0.05 is op A4 zo'n 10 mm — ruim
+// PHOTOBOOK_CORNER_PRESETS in app/11-fotoboek.js). 0.05 is op A4 zo'n 10 mm — ruim
 // boven de sterkste keuze die de app aanbiedt, en de grens waarboven het geen
 // afwerking meer is maar een vorm.
 const PHOTOBOOK_MAX_CORNER = 0.05;
@@ -3574,7 +3588,7 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
 // het tónen nog eens draait. Dat klopt vandaag, maar het is een wankele afspraak
 // — één toekomstig scherm dat de opgeslagen HTML rechtstreeks gebruikt, en er
 // staat opgeslagen XSS in. Daarom hier dezelfde beperkte set als in de client
-// (zie RICH_TEXT_ALLOWED_TAGS/ATTR in public/app.js).
+// (zie RICH_TEXT_ALLOWED_TAGS/ATTR in app/03-ui-bouwstenen.js).
 //
 // Bewust een eigen kleine schoonmaker en geen volwaardige HTML-parser: het is
 // een vaste, piepkleine tagset, en dezelfde die de PDF-generator hieronder al
@@ -3853,7 +3867,7 @@ const PDF_PAGE_HEIGHT = 841.89;
 
 // Titel, beschrijving en bijschriften komen uit de editor als een beperkte
 // HTML-substring (b/i/font[face]/br/div — precies wat de contentEditable-
-// opmaakknoppen produceren, zie public/app.js RICH_TEXT_ALLOWED_TAGS). Geen
+// opmaakknoppen produceren, zie app/03-ui-bouwstenen.js RICH_TEXT_ALLOWED_TAGS). Geen
 // echte HTML-parser nodig voor zo'n kleine, vaste tagset: een simpele
 // stack-based tag-walker volstaat. <br> en <div> worden allebei als
 // regeleinde behandeld.
