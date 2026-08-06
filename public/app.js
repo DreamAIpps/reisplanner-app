@@ -1040,6 +1040,15 @@ const TIMEZONE_OPTIONS = (() => {
   }
 })();
 
+// Gegroepeerd per werelddeel: een <select> met optgroups is te overzien, een
+// platte lijst van vierhonderd regels niet. Zones zonder "/" (zoals UTC) komen
+// onder "Overig" terecht.
+const TIMEZONES_PER_REGIO = TIMEZONE_OPTIONS.reduce((acc, tz) => {
+  const regio = tz.includes("/") ? tz.split("/")[0].replace(/_/g, " ") : "Overig";
+  (acc[regio] = acc[regio] || []).push(tz);
+  return acc;
+}, {});
+
 function fmtShortDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return `${d} ${MONTH_NAMES[m - 1]}`;
@@ -1164,6 +1173,8 @@ function DateRangePicker({ startDate, endDate, onChange }) {
 
 function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "", timezone: initial.timezone || "" } : { ...EMPTY_TRIP });
+  // Alleen uitklappen voor wie de tijdzone echt zelf wil zetten.
+  const [toonTijdzone, setToonTijdzone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -1192,11 +1203,30 @@ function TripForm({ initial, onSaved, onClose }) {
           <DateRangePicker startDate={form.start_date} endDate={form.end_date}
             onChange={({ start_date, end_date }) => setForm((f) => ({ ...f, start_date, end_date }))} />
         </Field>
+        {/* Dit veld gooide alle ~400 IANA-tijdzones als platte lijst in het
+            formulier, terwijl bijna niemand 'm hoeft aan te raken. Nu staat er
+            standaard alleen "Automatisch", met een linkje voor wie het wél
+            nodig heeft; de lijst zelf is gegroepeerd per werelddeel, zodat je
+            er doorheen kunt scannen in plaats van scrollen. */}
         <Field label="Tijdzone van de bestemming">
-          <Select value={form.timezone} onChange={set("timezone")}>
-            <option value="">— Automatisch (toestel van elke kijker) —</option>
-            {TIMEZONE_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>)}
-          </Select>
+          {form.timezone || toonTijdzone ? (
+            <Select value={form.timezone} onChange={set("timezone")}>
+              <option value="">Automatisch — de klok van elke kijker</option>
+              {Object.entries(TIMEZONES_PER_REGIO).map(([regio, zones]) => (
+                <optgroup key={regio} label={regio}>
+                  {zones.map((tz) => <option key={tz} value={tz}>{tz.split("/").slice(1).join(" · ").replace(/_/g, " ")}</option>)}
+                </optgroup>
+              ))}
+            </Select>
+          ) : (
+            <div className="flex items-center gap-3">
+              <span className="text-[15px] text-gray-600 flex-1">Automatisch — de klok van elke kijker</span>
+              <button type="button" onClick={() => setToonTijdzone(true)}
+                className="rp-press shrink-0 text-[13px] font-semibold text-sky-700 px-3 h-10 rounded-xl hover:bg-sky-50 transition-colors">
+                Zelf kiezen
+              </button>
+            </div>
+          )}
           <p className="text-xs text-gray-400 mt-1">Alleen nodig als de reis in een andere tijdzone is dan de reizigers — voorkomt dat "vandaag" per toestel verschilt.</p>
         </Field>
         <div className="grid grid-cols-2 gap-4">
@@ -2454,7 +2484,7 @@ function MapsLink({ query, className = "" }) {
       target="_blank" rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
       title={`${query} openen in Google Maps`}
-      className={`inline-flex items-baseline gap-1.5 text-sky-700 hover:underline transition-colors ${className}`}>
+      className={`inline-flex items-baseline gap-1.5 py-2.5 -my-2.5 text-sky-700 hover:underline transition-colors ${className}`}>
       {/* Speldje én tekst in accentkleur: op mobiel is er geen hover, dus zonder
           kleur zag het eruit als gewone tekst en was niet te zien dat je erop
           kon tikken om de kaart te openen. */}
@@ -2691,7 +2721,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
 
             const tipsButton = (loc) => (
               <button onClick={(e) => { e.stopPropagation(); setTipsLocation(loc); }}
-                className="rp-press w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-sky-700 hover:bg-sky-50 transition-colors"
+                className="rp-press w-10 h-10 rounded-xl flex items-center justify-center text-gray-400 hover:text-sky-700 hover:bg-sky-50 transition-colors"
                 title="Lokale tips" aria-label="Lokale tips">
                 <Icon name="bulb" size={17} />
               </button>
@@ -2781,7 +2811,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         aside={act.notes ? <div className="text-[15px] text-gray-500 mt-2 leading-relaxed">{act.notes}</div> : null}
                         trailing={!readOnly ? (
                           <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act); }}
-                            className="rp-press w-9 h-9 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="rp-press w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                             aria-label="Verwijderen"><Icon name="trash" size={17} /></button>
                         ) : null}
                       />
@@ -2802,7 +2832,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                     {totalItems > 0 && !readOnly && (
                       <div className="pl-8">
                         <button onClick={() => setShowActivityForm({ dayId: day.id })}
-                          className="rp-press inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
+                          className="rp-press inline-flex items-center gap-1.5 h-10 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
                           <Icon name="plus" size={15} />Activiteit
                         </button>
                       </div>
@@ -3005,7 +3035,7 @@ function PushToggle() {
   );
 }
 
-function AccountModal({ user, onClose, onChanged }) {
+function AccountModal({ user, onClose, onChanged, onLogout }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(false);
@@ -3124,7 +3154,12 @@ function AccountModal({ user, onClose, onChanged }) {
           </p>
         )}
 
-        <div className="flex justify-end pt-1">
+        <div className="flex items-center gap-2 pt-1">
+          <button type="button" onClick={onLogout}
+            className="rp-press text-[15px] font-semibold text-gray-500 hover:text-red-600 px-3 h-11 rounded-xl hover:bg-red-50 transition-colors">
+            Uitloggen
+          </button>
+          <div className="flex-1" />
           <Button variant="secondary" onClick={onClose}>Sluiten</Button>
         </div>
       </div>
@@ -8314,7 +8349,7 @@ function TripActionsMenu({ onEdit, onDelete }) {
           w-8/h-8) voor een ruimer tikgebied. */}
       <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Meer opties"
         style={{ touchAction: "manipulation" }}
-        className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 text-gray-500 transition-colors">
+        className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 text-gray-500 transition-colors">
         <Icon name="more" size={18} />
       </button>
       {open && (
@@ -9405,22 +9440,36 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     { key: "photobook", label: "Fotoboek", icon: "frame" },
   ];
 
-  // Bottom nav tabs for mobile
+  // De onderste balk hoort te gaan over wat je onderweg het vaakst doet. De
+  // fotoquiz stond daar met een vaste plek terwijl je die hooguit één avond per
+  // reis speelt; de kaart — "waar is dit, waar ben ik" — zat juist weggestopt
+  // achter "Meer". Die twee zijn omgewisseld.
   const bottomNavItems = [
     { key: "days", icon: "route", label: "Planning" },
     ...(currentUserId ? [{ key: "journal", icon: "book", label: "Dagboek" }] : []),
-    { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
-  ];
-  // Reachable only via the "Meer" dropdown on mobile
-  const moreMenuItems = [
-    { key: "photos", icon: "camera", label: "Foto's" },
-    { key: "accommodation", icon: "bed", label: "Verblijf" },
-    { key: "transport", icon: "plane", label: "Vervoer" },
-    { key: "packing", icon: "suitcase", label: "Paklijst" },
     { key: "map", icon: "map", label: "Kaart" },
-    { key: "photobook", icon: "frame", label: "Fotoboek" },
-    ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
   ];
+  // Alleen bereikbaar via "Meer". Zeven losse regels lazen als één lange lijst;
+  // met kopjes valt in één oogopslag te zien waar iets bij hoort. Bewust géén
+  // samenvoeging van Foto's/Fotoboek/Fotoquiz tot één bestemming met subtabs:
+  // dat maakt er twee tikken van in plaats van één, en dat is meer frictie, niet
+  // minder. Ze horen bij elkaar, dus staan ze onder één kopje.
+  const moreMenuGroups = [
+    { titel: "Onderweg", items: [
+      { key: "photos", icon: "camera", label: "Foto's" },
+      { key: "packing", icon: "suitcase", label: "Paklijst" },
+      ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
+    ] },
+    { titel: "Boekingen", items: [
+      { key: "accommodation", icon: "bed", label: "Verblijf" },
+      { key: "transport", icon: "plane", label: "Vervoer" },
+    ] },
+    { titel: "Achteraf", items: [
+      { key: "photobook", icon: "frame", label: "Fotoboek" },
+      { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
+    ] },
+  ];
+  const moreMenuItems = moreMenuGroups.flatMap((g) => g.items);
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
   // Hero: de bestemming is waar je heen gaat en hoort dus het grootst; de
@@ -9575,7 +9624,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
                 </div>
               </button>
               <button onClick={() => setBudgetExpanded((v) => !v)} aria-label={budgetExpanded ? "Uitsplitsing inklappen" : "Uitsplitsing tonen"}
-                className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors self-center">
+                className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors self-center">
                 <Icon name="chevronDown" size={16} style={{ transform: budgetExpanded ? "rotate(180deg)" : "none" }} />
               </button>
             </div>
@@ -9671,13 +9720,18 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
               <Icon name="arrowLeft" size={17} />
               Terug
             </button>
-            {moreMenuItems.map((item) => (
-              <button key={item.key} onClick={() => { setTab(item.key); setShowMoreMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left"
-                style={{ color: tab === item.key ? legibleOn(accent) : PALETTE.textSecondary }}>
-                <Icon name={item.icon} size={17} />
-                {item.label}
-              </button>
+            {moreMenuGroups.map((groep) => (
+              <React.Fragment key={groep.titel}>
+                <div className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">{groep.titel}</div>
+                {groep.items.map((item) => (
+                  <button key={item.key} onClick={() => { setTab(item.key); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 h-11 text-sm font-medium hover:bg-gray-50 transition-colors text-left"
+                    style={{ color: tab === item.key ? legibleOn(accent) : PALETTE.textSecondary }}>
+                    <Icon name={item.icon} size={17} />
+                    {item.label}
+                  </button>
+                ))}
+              </React.Fragment>
             ))}
           </div>
         </>
@@ -10378,13 +10432,16 @@ function App() {
                     <Icon name="eye" size={16} />
                   </button>
                 )}
-                <button onClick={handleLogout} className="text-gray-500 hover:text-gray-800 text-xs font-medium px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors">
-                  Uitloggen
-                </button>
-                <button onClick={() => setShowAccount(true)} title="Account" className="shrink-0">
+                {/* "Uitloggen" stond hier op elk scherm met een vaste plek in de
+                    kopbalk — dure ruimte voor iets wat je bijna nooit doet, pal
+                    naast het account-knopje waar het thuishoort. Het staat nu in
+                    dat scherm zelf. Het knopje is meteen op aanraakmaat gebracht
+                    (was 36px, onder het minimum van 44). */}
+                <button onClick={() => setShowAccount(true)} title="Account" aria-label="Account"
+                  className="shrink-0 w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
                   {user.avatar
-                    ? <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full ring-2 ring-gray-200" />
-                    : <div className="w-8 h-8 rounded-full bg-sky-100 text-gray-800 flex items-center justify-center font-semibold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
+                    ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full ring-2 ring-gray-200" />
+                    : <div className="w-9 h-9 rounded-full bg-sky-100 text-gray-800 flex items-center justify-center font-semibold text-sm">{(user.given_name || user.name || "?")[0].toUpperCase()}</div>
                   }
                 </button>
               </>
@@ -10457,7 +10514,7 @@ function App() {
       <ToastHost />
 
       {showAccount && user && (
-        <AccountModal user={user} onClose={() => setShowAccount(false)} onChanged={loadUser} />
+        <AccountModal user={user} onClose={() => setShowAccount(false)} onChanged={loadUser} onLogout={handleLogout} />
       )}
       {showTripForm && (
         <TripForm
