@@ -3470,7 +3470,15 @@ function photobookCaption(p) {
   return null;
 }
 
+// Het fotoboek is niets voor een alleen-lezen bezoeker. Zo iemand krijgt een
+// deel-link om mee te kijken met de reis; het fotoboek is wat je dáárna van die
+// reis maakt — een eigen ontwerp, en bij bestellen ook een eigen rekening.
+// Belangrijk: de rolcontrole bij de routetabel houdt kijkers alleen tegen bij
+// schrijven; lezen mag elk lid van de reis. Daarom staat de grens hier in de
+// route zelf, en niet in de opties. De lijst geeft leeg terug (net als het
+// budget: er is niets te zien, geen foutmelding nodig), de losse routes een 403.
 route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
+  if (req.tripRole === "viewer") return sendJson(res, 200, []);
   const { rows } = await query(
     `SELECT b.id, b.title, b.status, b.created_at,
             (SELECT COUNT(*) FROM photobook_pages pp WHERE pp.photobook_id = b.id) AS page_count,
@@ -3484,7 +3492,7 @@ route("GET", "/api/trips/:id/photobooks", async (req, res, params) => {
     id: r.id, title: r.title, status: r.status, pageCount: Number(r.page_count),
     coverThumbUrl: r.cover_photo_id ? `/api/photos/${r.cover_photo_id}/thumb` : null,
   })));
-}, { tripScope: "param", allowViewer: true });
+}, { tripScope: "param" });
 
 // Zelfde indelingen als de "Pagina sjablonen" in de editor (app/11-fotoboek.js,
 // PHOTOBOOK_LAYOUTS) — bij het automatisch vullen krijgt elke pagina meteen
@@ -3672,6 +3680,7 @@ function photobookBackground(page) {
 }
 
 route("GET", "/api/photobooks/:id", async (req, res, params) => {
+  if (req.tripRole === "viewer") return sendError(res, 403, "Het fotoboek is niet gedeeld");
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
   const { rows: pages } = await query(
@@ -3724,7 +3733,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
       textBoxes: textBoxesByPage.get(pg.id) || [],
     })),
   });
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 route("PUT", "/api/photobooks/:id", async (req, res, params, body) => {
   const title = body?.title && String(body.title).trim();
@@ -3998,6 +4007,7 @@ function pdfCoverPlacement(imgW, imgH, boxW, boxH, cropX, cropY, zoom) {
 }
 
 route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
+  if (req.tripRole === "viewer") return sendError(res, 403, "Het fotoboek is niet gedeeld");
   const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
   const book = bookRows[0];
@@ -4133,7 +4143,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
     "Content-Length": buffer.length,
   });
   res.end(buffer);
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 // Prijsopgave voor drukwerk bij Print API. Bewust een aparte route en geen
 // onderdeel van GET /api/photobooks/:id: dit gaat naar een externe partij, mag
@@ -4141,6 +4151,7 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
 // wachten. Een fout hier is geen 500 maar een nette "niet beschikbaar", zodat
 // het fotoboek zelf blijft werken als Print API plat ligt of niet is ingesteld.
 route("GET", "/api/photobooks/:id/print-quote", async (req, res, params) => {
+  if (req.tripRole === "viewer") return sendError(res, 403, "Het fotoboek is niet gedeeld");
   const url = new URL(req.url, "http://localhost");
   const { rows: bookRows } = await query("SELECT orientation FROM photobooks WHERE id = $1", [params.id]);
   if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
@@ -4172,7 +4183,7 @@ route("GET", "/api/photobooks/:id/print-quote", async (req, res, params) => {
     console.error("Print API prijsopgave mislukt:", err.message);
     sendJson(res, 200, { available: false, reason: "Prijs kon niet worden opgehaald." });
   }
-}, { tripScope: "photobooks", allowViewer: true });
+}, { tripScope: "photobooks" });
 
 // ---------- Expenses ----------
 route("GET", "/api/trips/:id/expenses", async (req, res, params) => {
