@@ -654,7 +654,7 @@ function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly, cur
   });
   function scrollToToday() {
     if (!todayPhoto) return;
-    document.getElementById(`gallery-photo-${todayPhoto.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    scrollNaarElement(`gallery-photo-${todayPhoto.id}`, { blok: "center" });
   }
 
 
