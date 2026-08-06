@@ -418,3 +418,24 @@ function scrollNaarElement(id, opties = {}) {
   if (zacht) setTimeout(() => requestAnimationFrame(bijsturen), 450);
   else requestAnimationFrame(bijsturen);
 }
+
+// Een balk die laat zien hoe ver iets is. Gebruikt bij het uploaden van foto's
+// en bij het opzoeken van de plaatsen op de dagboekkaart: twee dingen die
+// merkbaar duren en waarbij zonder terugkoppeling niet te zien is of er nog
+// iets gebeurt of dat het gewoon stuk is.
+function Voortgangsbalk({ done, total, label, ariaLabel, className = "" }) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>{label}</span>
+        <span className="tnum">{pct}%</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden"
+        role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total}
+        aria-label={ariaLabel}>
+        <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}

@@ -1173,6 +1173,11 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [upcomingGeo, setUpcomingGeo] = useState([]);
+  // Hoe ver het opzoeken van de plaatsen is. Elke plaats kost ruim een seconde
+  // (de kaartendienst laat niet meer toe), dus bij een reis met een paar
+  // verblijven duurt het merkbaar lang voordat er iets te zien is. Zonder
+  // terugkoppeling is dat niet te onderscheiden van een kaart die stuk is.
+  const [zoekVoortgang, setZoekVoortgang] = useState(null); // { gedaan, totaal } | null
 
   const dayInfoByDate = React.useMemo(() => {
     const m = new Map();
@@ -1258,14 +1263,19 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
     // opzoekronde — anders wisselen ze elkaar af in twee losse effecten en
     // botsen ze op de snelheidslimiet van Nominatim.
     const teZoeken = [...verblijfItems, ...randpunten];
-    if (!teZoeken.length) { setUpcomingGeo([]); return; }
+    if (!teZoeken.length) { setUpcomingGeo([]); setZoekVoortgang(null); return; }
     let cancelled = false;
+    setZoekVoortgang({ gedaan: 0, totaal: teZoeken.length });
     (async () => {
       const gevonden = [];
       const vandaag = todayIso(trip?.timezone);
+      // Tellen op de lus en niet op `gevonden`: een plaats die niet gevonden
+      // wordt telt wél als afgehandeld, anders blijft de balk daarop hangen.
+      let gedaan = 0;
       for (const item of teZoeken) {
         const geo = await geocodePlace(item.query).catch(() => null);
         if (cancelled) return;
+        setZoekVoortgang({ gedaan: ++gedaan, totaal: teZoeken.length });
         if (geo?.lat != null) {
           gevonden.push({
             ...item, lat: geo.lat, lon: geo.lon,
@@ -1276,7 +1286,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
           });
         }
       }
-      if (!cancelled) setUpcomingGeo(gevonden);
+      if (!cancelled) { setUpcomingGeo(gevonden); setZoekVoortgang(null); }
     })();
     return () => { cancelled = true; };
   }, [verblijfItems, randpunten, trip?.timezone]);
@@ -1591,6 +1601,21 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
     <div className="mb-6">
       <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 280 }}>
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+        {/* De plaatsen komen pas als lijst binnen als ze állemaal opgezocht
+            zijn — halverwege al tekenen zou de kaart bij elke nieuwe plaats
+            opnieuw opbouwen en de uitsnede laten verspringen. Zolang dat loopt
+            valt er dus niets te tonen, en vult de balk het kaartvlak. Bij een
+            tweede bezoek staat alles in de cache en is dit voorbij voordat je
+            het ziet. */}
+        {zoekVoortgang && (
+          <div className="absolute inset-0 z-[900] bg-gray-50 flex items-center justify-center px-6">
+            <div className="w-full max-w-xs">
+              <Voortgangsbalk done={zoekVoortgang.gedaan} total={zoekVoortgang.totaal}
+                label={`Route opzoeken · ${zoekVoortgang.gedaan} van ${zoekVoortgang.totaal} ${zoekVoortgang.totaal === 1 ? "plaats" : "plaatsen"}`}
+                ariaLabel="Route opzoeken" />
+            </div>
+          </div>
+        )}
         {/* Alleen zichtbaar zodra je ergens op ingezoomd bent — dan is het ook
             de enige weg terug, want slepen staat op deze ingebedde kaart uit.
             Staat aan de tegenovergestelde kant van het kaartje: allebei
@@ -1644,7 +1669,7 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
           hij in rust een stuk van de route af — precies wat je wilt zien als je
           nog nergens naar wijst. Het zwevende kaartje verschijnt alleen zolang
           je iets aanwijst, en dan is even iets afdekken juist geen bezwaar. */}
-      {kaartje?.samenvatting && (
+      {kaartje?.samenvatting && !zoekVoortgang && (
         <div className="mt-2 flex items-baseline gap-2 text-xs text-gray-400">
           <span className="font-semibold text-gray-600">{kaartje.titel}</span>
           {kaartje.regel && <span className="tnum">{kaartje.regel}</span>}
