@@ -250,9 +250,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
             // Verblijf van die nacht is de betrouwbaarste locatie voor het weer;
             // zonder verblijf valt dit terug op de eerste activiteit met een
             // locatie, zodat een dag zonder overnachting niet zomaar leeg blijft.
+            // Valt terug op de eerste activiteit met een locatie, maar niet op
+            // een geplakte Google Maps-link: daar valt geen plaats uit te halen,
+            // en het kostte wél een oproep aan het taalmodel dat de reistips
+            // ook nodig hebben.
             const weatherQuery = nightAccommodation
               ? (nightAccommodation.address || nightAccommodation.name)
-              : (day.activities.find((a) => a.location)?.location || null);
+              : (day.activities.find((a) => a.location && !isWebadres(a.location))?.location || null);
 
             const isToday = dayStr === todayIso(trip.timezone);
             const isTomorrow = dayStr === tomorrowIso(trip.timezone);
