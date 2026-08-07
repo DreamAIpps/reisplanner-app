@@ -988,7 +988,17 @@ function VisitedMap({ trip }) {
 // geclusterd binnen (clusterPhotoPlaces) — hier alleen tonen en fitBounds.
 // Het verblijf van die nacht komt er als startpunt bij: dat heeft geen GPS,
 // dus wordt (eenmalig, met caching) geocodeerd op zijn adres.
-function DayMiniMap({ places, accommodation }) {
+// `vol` = deze instantie vult het scherm. De kleine variant rendert dan een
+// tweede exemplaar van zichzelf in een laag over de pagina (zie onderaan).
+//
+// Waarom een tweede kaart en niet dezelfde groter maken: het dagblok waarin dit
+// kaartje staat gebruikt content-visibility om lange reizen vlot te houden, en
+// dat maakt van dat blok een houder waar `position: fixed` niet uit ontsnapt —
+// gemeten kwam de "schermvullende" kaart uit op 403x521 in plaats van 430x900.
+// Een aparte laag buiten dat blok heeft dat probleem niet, en een tweede
+// Leaflet-kaart is goedkoop: de plekken zijn al opgezocht, er gaat geen enkel
+// nieuw verzoek uit.
+function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [viewing, setViewing] = useState(null);
@@ -1010,6 +1020,27 @@ function DayMiniMap({ places, accommodation }) {
     pasAanRef.current(mapInstanceRef.current, alleBoundsRef.current);
     setVerschoven(false);
   }
+
+  // Schermvullend. Het kaartje is 190 pixels hoog — genoeg om te zien dat er
+  // drie plekken zijn, te klein om er iets aan af te lezen. In plaats van de
+  // kaart ergens anders opnieuw op te bouwen groeit hetzelfde element uit tot
+  // het hele scherm: Leaflet blijft dan gewoon dezelfde kaart, met dezelfde
+  // stippen en dezelfde uitsnede.
+  const [volledig, setVolledig] = useState(false);
+
+  // Achtergrond niet mee laten scrollen zolang de kaart het scherm vult, en
+  // Escape sluit hem — net als elk ander venster dat over de app heen ligt.
+  useEffect(() => {
+    if (!volledig) return;
+    const vorige = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const opToets = (e) => { if (e.key === "Escape") setVolledig(false); };
+    window.addEventListener("keydown", opToets);
+    return () => {
+      document.body.style.overflow = vorige;
+      window.removeEventListener("keydown", opToets);
+    };
+  }, [volledig]);
 
   useEffect(() => {
     if (!mapRef.current || places.length === 0) return;
@@ -1101,15 +1132,37 @@ function DayMiniMap({ places, accommodation }) {
   }, []);
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
+    // Schermvullend is hetzelfde element, alleen groter: de kaart eronder blijft
+    // dezelfde en hoeft niet opnieuw opgebouwd te worden.
+    <div className={vol
+      ? "w-full h-full relative"
+      : "rounded-2xl overflow-hidden border border-gray-100 relative z-0"}
+      style={vol ? undefined : { height: 190 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      {/* Vergroten of sluiten. Rechtsboven, tegenover de zoomknoppen. */}
+      <button type="button" onClick={() => (vol ? onSluiten?.() : setVolledig(true))}
+        title={vol ? "Kaart sluiten" : "Kaart op volledig scherm"}
+        aria-label={vol ? "Kaart sluiten" : "Kaart op volledig scherm"}
+        className="absolute right-2 z-[1000] w-9 h-9 rounded-full flex items-center justify-center bg-white/95 backdrop-blur shadow-md border border-gray-100 text-gray-600 hover:text-gray-900 hover:bg-white transition-colors"
+        style={{ top: vol ? "calc(0.5rem + env(safe-area-inset-top))" : "0.5rem" }}>
+        <Icon name={vol ? "close" : "arrowUpRight"} size={16} />
+      </button>
       {/* Zodra je zelf gezoomd of geschoven hebt: de weg terug naar de hele dag.
           Rechtsonder, want linksboven staan de zoomknoppen. */}
       {verschoven && (
         <button type="button" onClick={heleDagTonen}
-          className="absolute bottom-2 right-2 z-[1000] px-2.5 py-1 rounded-full bg-white/95 backdrop-blur shadow-md border border-gray-100 text-[11px] font-semibold text-gray-600 hover:bg-white transition-colors">
+          className="absolute bottom-2 right-2 z-[1000] px-2.5 py-1 rounded-full bg-white/95 backdrop-blur shadow-md border border-gray-100 text-[11px] font-semibold text-gray-600 hover:bg-white transition-colors"
+          style={{ bottom: vol ? "calc(0.5rem + env(safe-area-inset-bottom))" : "0.5rem" }}>
           Hele dag
         </button>
+      )}
+      {/* De schermvullende versie: een eigen laag buiten het dagblok, met een
+          eigen kaart erin. Alleen de kleine variant kan dit openen. */}
+      {!vol && volledig && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[2000] bg-white rp-veil">
+          <DayMiniMap places={places} accommodation={accommodation} vol onSluiten={() => setVolledig(false)} />
+        </div>,
+        document.body
       )}
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
