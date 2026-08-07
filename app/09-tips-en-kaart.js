@@ -382,6 +382,35 @@ async function wachtOpBeurt() {
   if (wacht > 0) await new Promise((r) => setTimeout(r, wacht));
 }
 
+// Een locatieveld bevat lang niet altijd een adres dat een kaartendienst
+// aankan. In de praktijk staan er drie soorten in:
+//
+//   "https://maps.app.goo.gl/iVCb..."  — geplakt vanuit Google Maps
+//   "Japan, 〒542-0075 Osaka, Chuo Ward, Nanbasennichimae, 4-20 せんだビル1・2F"
+//   "Arashiyama, Kyoto"
+//
+// Alleen die laatste vindt hij zonder meer. Een link is geen plaats en heeft
+// geen enkele kans; die slaan we over. Een volledig adres met postcode, huis-
+// nummer en verdieping is voor Nominatim vaak te specifiek — laat je de delen
+// met cijfers weg, dan blijft "Japan, Osaka, Chuo Ward" over en dat vindt hij
+// wel. Vandaar één tweede poging met een uitgeklede vorm.
+function isWebadres(tekst) {
+  return /^https?:\/\//i.test(String(tekst).trim());
+}
+function vereenvoudigdAdres(query) {
+  // Per woord wegstrepen wat cijfers bevat, niet per komma-deel: in
+  // "〒542-0075 Osaka" zit de postcode én de stad, en juist die stad is het
+  // enige wat we willen houden. Wat overblijft zijn de plaatsnamen zelf —
+  // land, stad, wijk, buurt — en daar kan een kaartendienst wél mee uit de
+  // voeten.
+  const delen = String(query).split(",")
+    .map((deel) => deel.trim().split(/\s+/).filter((w) => w && !/\d/.test(w)).join(" "))
+    .filter(Boolean);
+  if (!delen.length) return null;
+  const eenvoudiger = delen.join(", ");
+  return eenvoudiger !== String(query).trim() ? eenvoudiger : null;
+}
+
 const _geocodeInFlight = new Map();
 async function geocode(query) {
   const key = `geocode3_${query}`;
@@ -399,6 +428,12 @@ async function geocode(query) {
     const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
     const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city } : null;
     if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
+    // Ook een "niet gevonden" onthouden. Anders kost elk bezoek aan de planning
+    // opnieuw een verzoek per adres dat toch nooit gevonden wordt — en die
+    // verzoeken gaan één per seconde, dus ze houden de rest op. Alleen als de
+    // dienst echt antwoord gaf; bij een netwerkfout gooit fetch en komen we hier
+    // niet, zodat een storing niet als "bestaat niet" blijft plakken.
+    else { try { localStorage.setItem(key, "null"); } catch {} }
     return result;
   })();
   _geocodeInFlight.set(query, promise);
@@ -1063,6 +1098,9 @@ function PlanningDagKaart({ activities, accommodation }) {
     const gezien = new Set();
     return (activities || [])
       .filter((a) => a.location && a.location.trim())
+      // Een geplakte Google Maps-link is geen adres; die valt niet op te zoeken
+      // en kost anders wel een verzoek van een seconde.
+      .filter((a) => !isWebadres(a.location))
       .filter((a) => {
         const sleutel = a.location.trim().toLowerCase();
         if (gezien.has(sleutel)) return false;
@@ -1083,7 +1121,14 @@ function PlanningDagKaart({ activities, accommodation }) {
     (async () => {
       const gevonden = [];
       for (const act of teZoeken) {
-        const geo = await geocode(act.location).catch(() => null);
+        let geo = await geocode(act.location).catch(() => null);
+        // Niet gevonden op het volledige adres? Dan nog één keer met de
+        // uitgeklede vorm (zie vereenvoudigdAdres). Een stip in de goede wijk is
+        // oneindig veel bruikbaarder dan helemaal geen kaart.
+        if (!geo?.lat) {
+          const korter = vereenvoudigdAdres(act.location);
+          if (korter) geo = await geocode(korter).catch(() => null);
+        }
         if (vervallen) return;
         if (geo?.lat != null) {
           gevonden.push({
