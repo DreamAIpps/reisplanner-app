@@ -962,7 +962,12 @@ route("POST", "/api/trips/:id/ping", async (req, res, params) => {
 }, { tripScope: "param", allowViewer: true });
 
 route("GET", "/api/trips/:id/share-stats", async (req, res, params) => {
-  const { rows: tripRows } = await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
+  // Naast de eigenaar mag de beheerder erbij: deze cijfers staan nu in het
+  // beheeroverzicht bij de gebruikers, en een beheerder is doorgaans geen lid
+  // van de reis die hij bekijkt.
+  const { rows: tripRows } = req.user.is_admin
+    ? await query("SELECT id FROM trips WHERE id = $1", [params.id])
+    : await query("SELECT id FROM trips WHERE id = $1 AND user_id = $2", [params.id, req.user.id]);
   if (!tripRows.length) return sendError(res, 403, "Alleen de eigenaar kan dit inzien");
 
   const { rows: members } = await query(

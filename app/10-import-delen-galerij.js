@@ -349,6 +349,107 @@ function ImportModal({ tripId, onImported, onClose }) {
   );
 }
 
+// Wie de reis bekeken heeft, met hoe lang en wat ze deden. Stond in het
+// deelvenster van de reis zelf; die plek was zowel te verstopt (alleen zichtbaar
+// als je toevallig een kijk-link aan het maken was) als te ruim (het hoort bij
+// het beheer, niet bij het delen). Staat nu in het beheeroverzicht bij de
+// gebruikers, en is daarom een eigen component geworden.
+function KijkStatistieken({ tripId, days, transports, accommodations, onJumpToDay }) {
+  const [stats, setStats] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [fout, setFout] = useState(null);
+
+  useEffect(() => {
+    let vervallen = false;
+    api.getShareStats(tripId)
+      .then((d) => { if (!vervallen) setStats(d); })
+      .catch((err) => { if (!vervallen) setFout(err.message || "Kon de cijfers niet ophalen"); });
+    return () => { vervallen = true; };
+  }, [tripId]);
+
+  if (fout) return <div className="text-xs text-gray-400 px-1 py-2">{fout}</div>;
+  if (!stats) return <div className="text-xs text-gray-400 px-1 py-2">Laden...</div>;
+  if (!stats.members.length) return <div className="text-xs text-gray-400 px-1 py-2">Nog niemand heeft deze reis bekeken.</div>;
+
+  return (
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Wie heeft de reis bekeken</label>
+            <div className="flex gap-3 text-xs text-gray-500">
+              <span><b className="text-gray-700">{stats.total_views}</b> keer bekeken</span>
+              <span><b className="text-gray-700">{stats.views_24h}</b> in 24u</span>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {stats.members.map((m) => {
+              const open = expanded === m.id;
+              const hasDetail = m.minutes > 0 || m.comments > 0 || m.likes > 0;
+              return (
+                <div key={m.id} className="rounded-lg bg-gray-50 overflow-hidden">
+                  <button type="button" onClick={() => setExpanded(open ? null : m.id)}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-left">
+                    {m.avatar ? (
+                      <img src={m.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 shrink-0">
+                        {(m.given_name || m.name || "?")[0].toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
+                      <div className="text-xs text-gray-400">
+                        {m.role === "viewer" ? "Alleen-lezen" : "Bewerker"}
+                        {m.visits > 0 && ` · ${m.visits}x langsgeweest`}
+                        {m.minutes > 0 && ` · ${fmtDuration(m.minutes)} gelezen`}
+                        {m.last_active_at && ` · laatst ${fmtDatetime(m.last_active_at)}`}
+                      </div>
+                    </div>
+                    {hasDetail && <span className="text-gray-300 text-xs shrink-0">{open ? "▲" : "▼"}</span>}
+                  </button>
+
+                  {open && hasDetail && (
+                    <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-gray-100">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        {[["Bezoeken", m.visits], ["Gelezen", fmtDuration(m.minutes)], ["Langste bezoek", fmtDuration(m.longest_minutes)]]
+                          .map(([label, value]) => (
+                            <div key={label} className="bg-white rounded-lg py-1.5">
+                              <div className="text-sm font-semibold text-gray-700">{value || "—"}</div>
+                              <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
+                            </div>
+                          ))}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        <Icon name="chat" size={12} className="mr-1" />{m.comments} reactie{m.comments === 1 ? "" : "s"} · <Icon name="thumb" size={12} className="mx-1" />{m.likes} duimpje{m.likes === 1 ? "" : "s"}
+                        {m.first_active_at && ` · volgt sinds ${fmtDatetime(m.first_active_at)}`}
+                      </div>
+                      {m.recent.length > 0 && (
+                        <div className="space-y-1">
+                          {m.recent.map((a, i) => {
+                            const target = onJumpToDay ? recentActivityTarget(a, days || [], transports, accommodations) : null;
+                            return (
+                              <div key={i} onClick={() => target && onJumpToDay(target.dayId)}
+                                className={`text-xs text-gray-500 flex gap-2 rounded-md -mx-1 px-1 py-0.5 ${target ? "cursor-pointer hover:bg-white hover:text-sky-700 transition-colors" : ""}`}>
+                                <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400 shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
+                                  {target && <div className="text-[10px] text-gray-400 truncate">bij {target.label}</div>}
+                                </div>
+                                <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+  );
+}
+
 // ---------- Share modal ----------
 function fmtDuration(minutes) {
   const m = Number(minutes) || 0;
@@ -391,13 +492,13 @@ function recentActivityTarget(item, days, transports, accommodations) {
   return null;
 }
 
-function ShareModal({ tripId, onClose, role = "viewer", days, transports, accommodations, onJumpToDay }) {
+// Alleen nog het maken en delen van de link. De kijkcijfers die hier ook
+// stonden zijn verhuisd naar het beheeroverzicht (zie KijkStatistieken).
+function ShareModal({ tripId, onClose, role = "viewer" }) {
   const [link, setLink] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
-  const [expanded, setExpanded] = useState(null);
 
   function generateLink(r) {
     setLink(null); setLoading(true); setError(null);
@@ -410,11 +511,6 @@ function ShareModal({ tripId, onClose, role = "viewer", days, transports, accomm
   }
 
   useEffect(() => { generateLink(role); }, [tripId, role]);
-
-  const loadStats = useCallback(() => {
-    api.getShareStats(tripId).then(setStats).catch(() => {});
-  }, [tripId]);
-  useEffect(() => { loadStats(); }, [loadStats]);
 
   function handleCopy() {
     navigator.clipboard.writeText(link);
@@ -461,83 +557,6 @@ function ShareModal({ tripId, onClose, role = "viewer", days, transports, accomm
         )}
         <p className="text-xs text-gray-400">De link blijft geldig totdat je hem verwijdert.</p>
 
-        {role === "viewer" && stats && (stats.members.length > 0) && (
-          <div className="border-t border-gray-100 pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Wie heeft de reis bekeken</label>
-              <div className="flex gap-3 text-xs text-gray-500">
-                <span><b className="text-gray-700">{stats.total_views}</b> keer bekeken</span>
-                <span><b className="text-gray-700">{stats.views_24h}</b> in 24u</span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              {stats.members.map((m) => {
-                const open = expanded === m.id;
-                const hasDetail = m.minutes > 0 || m.comments > 0 || m.likes > 0;
-                return (
-                  <div key={m.id} className="rounded-lg bg-gray-50 overflow-hidden">
-                    <button type="button" onClick={() => setExpanded(open ? null : m.id)}
-                      className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-left">
-                      {m.avatar ? (
-                        <img src={m.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
-                      ) : (
-                        <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 shrink-0">
-                          {(m.given_name || m.name || "?")[0].toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-700 truncate">{m.given_name || m.name || m.email}</div>
-                        <div className="text-xs text-gray-400">
-                          {m.role === "viewer" ? "Alleen-lezen" : "Bewerker"}
-                          {m.visits > 0 && ` · ${m.visits}x langsgeweest`}
-                          {m.minutes > 0 && ` · ${fmtDuration(m.minutes)} gelezen`}
-                          {m.last_active_at && ` · laatst ${fmtDatetime(m.last_active_at)}`}
-                        </div>
-                      </div>
-                      {hasDetail && <span className="text-gray-300 text-xs shrink-0">{open ? "▲" : "▼"}</span>}
-                    </button>
-
-                    {open && hasDetail && (
-                      <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-gray-100">
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          {[["Bezoeken", m.visits], ["Gelezen", fmtDuration(m.minutes)], ["Langste bezoek", fmtDuration(m.longest_minutes)]]
-                            .map(([label, value]) => (
-                              <div key={label} className="bg-white rounded-lg py-1.5">
-                                <div className="text-sm font-semibold text-gray-700">{value || "—"}</div>
-                                <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
-                              </div>
-                            ))}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          <Icon name="chat" size={12} className="mr-1" />{m.comments} reactie{m.comments === 1 ? "" : "s"} · <Icon name="thumb" size={12} className="mx-1" />{m.likes} duimpje{m.likes === 1 ? "" : "s"}
-                          {m.first_active_at && ` · volgt sinds ${fmtDatetime(m.first_active_at)}`}
-                        </div>
-                        {m.recent.length > 0 && (
-                          <div className="space-y-1">
-                            {m.recent.map((a, i) => {
-                              const target = onJumpToDay ? recentActivityTarget(a, days || [], transports, accommodations) : null;
-                              return (
-                                <div key={i} onClick={() => target && onJumpToDay(target.dayId)}
-                                  className={`text-xs text-gray-500 flex gap-2 rounded-md -mx-1 px-1 py-0.5 ${target ? "cursor-pointer hover:bg-white hover:text-sky-700 transition-colors" : ""}`}>
-                                  <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400 shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
-                                    {target && <div className="text-[10px] text-gray-400 truncate">bij {target.label}</div>}
-                                  </div>
-                                  <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         <div className="flex justify-end pt-2">
           <Button variant="secondary" onClick={onClose}>Sluiten</Button>
