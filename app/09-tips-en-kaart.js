@@ -992,6 +992,24 @@ function DayMiniMap({ places, accommodation }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [viewing, setViewing] = useState(null);
+  const alleBoundsRef = useRef(null);
+  const [verschoven, setVerschoven] = useState(false);
+
+  // Iets ruimer uitgezoomd dan strikt nodig — met de naam-labels erbij oogt een
+  // kaartje dat precies om de stippen sluit al snel te vol. Zonder animatie:
+  // die loopt door nadat de kaart alweer opgeruimd kan zijn.
+  const pasAanRef = useRef((map, bounds) => {
+    if (!map || !bounds?.length) return;
+    try {
+      if (bounds.length === 1) map.setView(bounds[0], 13, { animate: false });
+      else map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15, animate: false });
+    } catch (err) { console.error("Dagkaartje bijstellen mislukt:", err.message); }
+  });
+
+  function heleDagTonen() {
+    pasAanRef.current(mapInstanceRef.current, alleBoundsRef.current);
+    setVerschoven(false);
+  }
 
   useEffect(() => {
     if (!mapRef.current || places.length === 0) return;
@@ -1005,9 +1023,14 @@ function DayMiniMap({ places, accommodation }) {
       const L = window.L;
       if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      // Dit kaartje stond helemaal vast: geen zoomknoppen, geen slepen. Bij een
+      // dag met drie plekken in dezelfde stad liggen de stippen dan boven op
+      // elkaar en valt er niets uit op te maken. In- en uitzoomen kan hier dus
+      // wel, en schuiven erbij — zoomen zonder kunnen schuiven is een halve
+      // functie. Alleen het scrollwiel blijft uit: op een kaartje midden in een
+      // scrollende pagina hoort het wiel de pagina te bewegen, niet de kaart.
       const map = L.map(mapRef.current, {
-        scrollWheelZoom: false, dragging: false, zoomControl: false,
-        attributionControl: false, tap: false,
+        scrollWheelZoom: false, attributionControl: false, tap: false,
       });
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
@@ -1061,8 +1084,13 @@ function DayMiniMap({ places, accommodation }) {
       // een kaartje dat precies om de stippen sluit al snel te vol.
       const bounds = places.map((p) => [p.lat, p.lon]);
       if (accGeo) bounds.push([accGeo.lat, accGeo.lon]);
-      if (bounds.length === 1) map.setView(bounds[0], 13);
-      else map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
+      alleBoundsRef.current = bounds;
+      pasAanRef.current(map, bounds);
+      // Nu je kunt zoomen en schuiven kun je ook ergens uitkomen waar de dag
+      // niet meer te zien is. Deze melding houdt bij dát je bent gaan bewegen,
+      // zodat er een weg terug in beeld komt.
+      setVerschoven(false);
+      map.on("zoomend dragend", () => setVerschoven(true));
     })();
 
     return () => { cancelled = true; };
@@ -1075,6 +1103,14 @@ function DayMiniMap({ places, accommodation }) {
   return (
     <div className="rounded-2xl overflow-hidden border border-gray-100 relative z-0" style={{ height: 190 }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      {/* Zodra je zelf gezoomd of geschoven hebt: de weg terug naar de hele dag.
+          Rechtsonder, want linksboven staan de zoomknoppen. */}
+      {verschoven && (
+        <button type="button" onClick={heleDagTonen}
+          className="absolute bottom-2 right-2 z-[1000] px-2.5 py-1 rounded-full bg-white/95 backdrop-blur shadow-md border border-gray-100 text-[11px] font-semibold text-gray-600 hover:bg-white transition-colors">
+          Hele dag
+        </button>
+      )}
       {viewing && (
         <PhotoLightbox photos={viewing.photos} index={viewing.index}
           onClose={() => setViewing(null)}
