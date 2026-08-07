@@ -473,8 +473,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
       {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
       {sharing && (
-        <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)}
-          days={days} transports={transports} accommodations={accommodations} onJumpToDay={jumpToDay} />
+        <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)} />
       )}
     </div>
   );
@@ -670,6 +669,7 @@ function AdminView({ onBack, currentUserId }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("trips");
+  const [openStats, setOpenStats] = useState(null); // welke reis zijn kijkcijfers open heeft staan
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
   const [storage, setStorage] = useState(null);
@@ -870,7 +870,8 @@ function AdminView({ onBack, currentUserId }) {
               </div>
               <div className="space-y-2">
                 {group.trips.map((t) => (
-                  <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
+                  <div key={t.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                  <div className="flex items-center gap-4">
                     {t.cover_image
                       ? <img src={t.cover_image} className="w-14 h-14 rounded-lg object-cover shrink-0" />
                       : <div className="w-14 h-14 rounded-lg shrink-0" style={{ background: t.cover_color || PALETTE.primary }} />}
@@ -878,6 +879,14 @@ function AdminView({ onBack, currentUserId }) {
                       <div className="font-semibold text-gray-800">{t.name}</div>
                       {t.destination && <div className="text-sm text-gray-500 flex items-center gap-1"><Icon name="pin" size={13} />{t.destination}</div>}
                       {t.start_date && <div className="text-xs text-gray-400">{fmt(t.start_date)}</div>}
+                      {/* De kijkcijfers worden per reis apart opgehaald, dus pas
+                          uitklappen als iemand ze wil zien — anders vuurt het
+                          openen van dit overzicht een verzoek per reis af. */}
+                      <button type="button" onClick={() => setOpenStats(openStats === t.id ? null : t.id)}
+                        className="mt-1 text-xs font-medium text-sky-700 hover:underline inline-flex items-center gap-1">
+                        <Icon name="eye" size={13} />
+                        {openStats === t.id ? "Kijkcijfers verbergen" : "Wie heeft gekeken"}
+                      </button>
                     </div>
                     {/* Zonder een breedtegrens hier kan de <Select> (die zelf
                         w-full is) net zo breed worden als de langste
@@ -893,6 +902,12 @@ function AdminView({ onBack, currentUserId }) {
                       className="shrink-0 text-gray-300 hover:text-red-500 transition-colors p-1">
                       <Icon name="trash" size={16} />
                     </button>
+                  </div>
+                  {openStats === t.id && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <KijkStatistieken tripId={t.id} />
+                    </div>
+                  )}
                   </div>
                 ))}
               </div>
