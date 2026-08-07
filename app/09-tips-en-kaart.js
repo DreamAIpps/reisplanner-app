@@ -1071,8 +1071,14 @@ function PlanningDagKaart({ activities, accommodation }) {
       });
   }, [activities]);
 
+  // Het verblijf van die nacht staat als huisje al op de kaart, dus dat telt
+  // gewoon mee als plek. Eén activiteit plus je hotel zijn twee punten, en juist
+  // dan wil je zien hoe ver dat uit elkaar ligt. Alleen bij één enkel punt valt
+  // er niets te overzien.
+  const aantalPlekken = teZoeken.length + (accommodation?.address || accommodation?.name ? 1 : 0);
+
   useEffect(() => {
-    if (teZoeken.length < 2) { setPlekken([]); return; }
+    if (aantalPlekken < 2 || teZoeken.length === 0) { setPlekken([]); return; }
     let vervallen = false;
     (async () => {
       const gevonden = [];
@@ -1093,12 +1099,11 @@ function PlanningDagKaart({ activities, accommodation }) {
       if (!vervallen) setPlekken(gevonden);
     })();
     return () => { vervallen = true; };
-  }, [teZoeken]);
+  }, [teZoeken, aantalPlekken]);
 
-  // Pas tonen als er echt meer dan één plek op de kaart komt te staan. Bij één
-  // stip valt er niets te overzien, en dat is precies waar dit kaartje voor is:
-  // zien hoe de dag over de stad verspreid ligt.
-  if (plekken.length < 2) return null;
+  // Niets gevonden om te tekenen — bijvoorbeeld een locatie die de kaartendienst
+  // niet kent, of nog geen bereik gehad.
+  if (plekken.length === 0) return null;
   return <DayMiniMap places={plekken} accommodation={accommodation} />;
 }
 
