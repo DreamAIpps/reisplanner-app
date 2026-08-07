@@ -444,6 +444,55 @@ async function geocode(query) {
   }
 }
 
+// Een locatie uit de planning opzoeken, met drie pogingen die elk een tandje
+// grover zijn; we stoppen bij de eerste die raak is.
+//
+//   1. het adres zoals het er staat
+//   2. hetzelfde zonder de cijfers (postcode, huisnummer, verdieping)
+//   3. de plaatsnaam die het taalmodel eruit haalt
+//
+// Stap 2 is vaak al genoeg, maar niet altijd: blijft er "Japan, Osaka, Chuo
+// Ward, Nanbasennichimae" over en kent de kaartendienst die laatste buurt niet,
+// dan mislukt de hele vraag alsnog — één onbekend woord is genoeg. Stap 3 komt
+// bewust als laatste en het antwoord wordt bewaard, want dat model heeft een
+// limiet die de reistips ook nodig hebben. Een geplakte link slaan we helemaal
+// over: daar staat geen plaats in.
+async function geocodeSlim(query) {
+  if (!query || isWebadres(query)) return null;
+  let geo = await geocode(query).catch(() => null);
+  if (!geo?.lat) {
+    const korter = vereenvoudigdAdres(query);
+    if (korter) geo = await geocode(korter).catch(() => null);
+  }
+  if (!geo?.lat) geo = await geocodePlace(query).catch(() => null);
+  return geo?.lat != null ? geo : null;
+}
+
+// Waar je nu bent. Eén keer vragen en het antwoord delen: er staan meerdere
+// kaartjes op een pagina, en zonder dit zou elk daarvan zijn eigen
+// toestemmingsvraag opwerpen en zijn eigen peiling doen.
+//
+// Stilletjes mislukken is hier de bedoeling. Geen toestemming, geen signaal,
+// een browser zonder locatie — in al die gevallen is er gewoon geen blauwe stip
+// en werkt de kaart verder normaal. Een foutmelding zou meer in de weg zitten
+// dan helpen.
+let _positieBelofte = null;
+function huidigePositie() {
+  if (_positieBelofte) return _positieBelofte;
+  _positieBelofte = new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, nauwkeurigheid: p.coords.accuracy }),
+      () => resolve(null),
+      // Een oude peiling van hooguit vijf minuten is prima; die is er meteen en
+      // scheelt de GPS aanzetten. Langer wachten dan tien seconden heeft geen
+      // zin op een kaartje dat verder gewoon werkt.
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  });
+  return _positieBelofte;
+}
+
 // Andersom: van coördinaten naar een plaatsnaam. Foto's dragen wel een
 // GPS-positie maar geen plaatsnaam, en op de dagboekkaart hoort bij een etappe
 // "Osaka → Tokio" te staan — niet het bijschrift van een willekeurige foto die
@@ -1049,7 +1098,7 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
     (async () => {
       const cfg = await mapConfig();
       const accQuery = accommodation?.address || accommodation?.name;
-      const accGeo = accQuery ? await geocode(accQuery).catch(() => null) : null;
+      const accGeo = await geocodeSlim(accQuery);
       if (cancelled || !mapRef.current) return;
       const L = window.L;
       if (!L) return;
@@ -1122,6 +1171,34 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       // zodat er een weg terug in beeld komt.
       setVerschoven(false);
       map.on("zoomend dragend", () => setVerschoven(true));
+
+      // Waar je zelf bent: het blauwe bolletje dat iedereen van kaarten kent,
+      // met een lichte ring die laat zien hoe nauwkeurig de peiling is.
+      //
+      // Twee dingen staan hier met opzet zo. Het komt ná het instellen van de
+      // uitsnede, want een peiling mag tot tien seconden duren en zolang zou de
+      // kaart anders onuitgezoomd blijven staan. En het telt niet mee in die
+      // uitsnede: sta je nog thuis terwijl de dag over Osaka gaat, dan zou de
+      // kaart tot halve wereldbol uitzoomen om jou erbij te krijgen.
+      const positie = await huidigePositie();
+      if (!cancelled && positie && mapInstanceRef.current === map) {
+        if (positie.nauwkeurigheid > 0) {
+          L.circle([positie.lat, positie.lon], {
+            radius: positie.nauwkeurigheid, color: "#2F7DD1", weight: 1,
+            opacity: 0.35, fillColor: "#2F7DD1", fillOpacity: 0.12, interactive: false,
+          }).addTo(map);
+        }
+        L.marker([positie.lat, positie.lon], {
+          zIndexOffset: 200000,
+          icon: L.divIcon({
+            className: "leaflet-reisplanner-icon",
+            html: `<div style="width:16px;height:16px;border-radius:50%;background:#2F7DD1;border:2.5px solid #fff;box-shadow:0 1px 5px rgba(47,125,209,.6)"></div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
+          }),
+        }).addTo(map).bindTooltip("Jij bent hier", { direction: "top", offset: [0, -10] });
+      }
+
     })();
 
     return () => { cancelled = true; };
@@ -1180,6 +1257,10 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
 // Daarna is het dezelfde kaart, dus die wordt hier gewoon hergebruikt.
 function PlanningDagKaart({ activities, accommodation }) {
   const [plekken, setPlekken] = useState([]);
+  // Welke plekken de kaartendienst niet kon vinden. Zonder dit verdwijnt zo'n
+  // activiteit gewoon stilletjes van de kaart en blijf je je afvragen waarom
+  // er één ontbreekt — een vraag die niemand aan het kaartje kan stellen.
+  const [nietGevonden, setNietGevonden] = useState([]);
 
   // De locatieteksten van deze dag, in de volgorde van de dag zelf en zonder
   // dubbele: twee activiteiten op hetzelfde adres zijn één plek.
@@ -1205,31 +1286,15 @@ function PlanningDagKaart({ activities, accommodation }) {
   const aantalPlekken = teZoeken.length + (accommodation?.address || accommodation?.name ? 1 : 0);
 
   useEffect(() => {
-    if (aantalPlekken < 2 || teZoeken.length === 0) { setPlekken([]); return; }
+    if (aantalPlekken < 2 || teZoeken.length === 0) { setPlekken([]); setNietGevonden([]); return; }
     let vervallen = false;
     (async () => {
       const gevonden = [];
+      const mislukt = [];
       for (const act of teZoeken) {
-        // Drie pogingen, elk een tandje grover, en we stoppen bij de eerste die
-        // raak is. Een stip in de goede wijk is oneindig veel bruikbaarder dan
-        // helemaal geen kaart.
-        //
-        //   1. het adres zoals het er staat
-        //   2. hetzelfde zonder de cijfers (postcode, huisnummer, verdieping)
-        //   3. de plaatsnaam die het taalmodel eruit haalt
-        //
-        // Die derde stap is er omdat stap 2 niet altijd genoeg is: blijft er
-        // "Japan, Osaka, Chuo Ward, Nanbasennichimae" over en kent de
-        // kaartendienst die laatste buurt niet, dan mislukt de hele vraag alsnog.
-        // Het model haalt daar wel gewoon "Osaka" uit. Hij komt pas als laatste
-        // aan de beurt en het antwoord wordt bewaard, want dit is dezelfde
-        // beperkte voorziening die de reistips gebruiken.
-        let geo = await geocode(act.location).catch(() => null);
-        if (!geo?.lat) {
-          const korter = vereenvoudigdAdres(act.location);
-          if (korter) geo = await geocode(korter).catch(() => null);
-        }
-        if (!geo?.lat) geo = await geocodePlace(act.location).catch(() => null);
+        // Een stip in de goede wijk is oneindig veel bruikbaarder dan helemaal
+        // geen kaart — zie geocodeSlim voor hoe hard er gezocht wordt.
+        const geo = await geocodeSlim(act.location);
         if (vervallen) return;
         if (geo?.lat != null) {
           gevonden.push({
@@ -1240,9 +1305,11 @@ function PlanningDagKaart({ activities, accommodation }) {
             // daar staat een dag die nog moet komen nog niet in.
             photos: [],
           });
+        } else {
+          mislukt.push(act.title || act.location);
         }
       }
-      if (!vervallen) setPlekken(gevonden);
+      if (!vervallen) { setPlekken(gevonden); setNietGevonden(mislukt); }
     })();
     return () => { vervallen = true; };
   }, [teZoeken, aantalPlekken]);
@@ -1250,7 +1317,16 @@ function PlanningDagKaart({ activities, accommodation }) {
   // Niets gevonden om te tekenen — bijvoorbeeld een locatie die de kaartendienst
   // niet kent, of nog geen bereik gehad.
   if (plekken.length === 0) return null;
-  return <DayMiniMap places={plekken} accommodation={accommodation} />;
+  return (
+    <div>
+      <DayMiniMap places={plekken} accommodation={accommodation} />
+      {nietGevonden.length > 0 && (
+        <div className="mt-1.5 text-[11px] text-gray-400 leading-snug">
+          Niet op de kaart: {nietGevonden.join(", ")} — dit adres is niet terug te vinden.
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Toont waar je die nacht sliep, met een schone plaatsnaam (geocodeerd, net als
