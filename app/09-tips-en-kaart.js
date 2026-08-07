@@ -1157,14 +1157,26 @@ function PlanningDagKaart({ activities, accommodation }) {
     (async () => {
       const gevonden = [];
       for (const act of teZoeken) {
+        // Drie pogingen, elk een tandje grover, en we stoppen bij de eerste die
+        // raak is. Een stip in de goede wijk is oneindig veel bruikbaarder dan
+        // helemaal geen kaart.
+        //
+        //   1. het adres zoals het er staat
+        //   2. hetzelfde zonder de cijfers (postcode, huisnummer, verdieping)
+        //   3. de plaatsnaam die het taalmodel eruit haalt
+        //
+        // Die derde stap is er omdat stap 2 niet altijd genoeg is: blijft er
+        // "Japan, Osaka, Chuo Ward, Nanbasennichimae" over en kent de
+        // kaartendienst die laatste buurt niet, dan mislukt de hele vraag alsnog.
+        // Het model haalt daar wel gewoon "Osaka" uit. Hij komt pas als laatste
+        // aan de beurt en het antwoord wordt bewaard, want dit is dezelfde
+        // beperkte voorziening die de reistips gebruiken.
         let geo = await geocode(act.location).catch(() => null);
-        // Niet gevonden op het volledige adres? Dan nog één keer met de
-        // uitgeklede vorm (zie vereenvoudigdAdres). Een stip in de goede wijk is
-        // oneindig veel bruikbaarder dan helemaal geen kaart.
         if (!geo?.lat) {
           const korter = vereenvoudigdAdres(act.location);
           if (korter) geo = await geocode(korter).catch(() => null);
         }
+        if (!geo?.lat) geo = await geocodePlace(act.location).catch(() => null);
         if (vervallen) return;
         if (geo?.lat != null) {
           gevonden.push({
