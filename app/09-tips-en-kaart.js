@@ -1389,6 +1389,8 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
   // ligt — anders dekt het precies af waar je naar wijst.
   const [kaartjeBoven, setKaartjeBoven] = useState(false);
   const laagRef = useRef({ stops: [], etappes: [] });
+  const volledigeBoundsRef = useRef(null);
+  const [ingezoomd, setIngezoomd] = useState(false);
 
   // Plaatsnamen bij de stops die alleen coördinaten hebben (die komen uit de
   // GPS van een foto). Eén voor één, want Nominatim wil hoogstens één verzoek
@@ -1423,12 +1425,17 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
       const L = window.L;
       if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
-      // dragging/tap uit: dit kaartje staat ingebed in een scrollende pagina, en
-      // een sleepgebaar dat wordt onderbroken (bv. door een tik die de kaart
-      // opnieuw opbouwt) kan Leaflet's touch-afhandeling in de war laten, met
-      // als gevolg dat de pagina daarna niet meer wil scrollen. Pinch-zoom en de
-      // zoomknoppen blijven gewoon werken, alleen slepen niet.
-      const map = L.map(mapRef.current, { scrollWheelZoom: false, dragging: false, tap: false });
+      // Dit kaartje staat ingebed in een scrollende pagina en bepaalt zijn eigen
+      // uitsnede: de hele reis, of de etappe die je aanwijst. Zelf zoomen en
+      // slepen staat daarom overal uit — inclusief de +/− knoppen, dubbeltikken
+      // en knijpen. Een sleep- of knijpgebaar dat onderbroken wordt (bijvoorbeeld
+      // door een tik die de kaart opnieuw opbouwt) laat Leaflets
+      // aanraakafhandeling bovendien in de war achter, met als gevolg dat de
+      // pagina daarna niet meer wil scrollen.
+      const map = L.map(mapRef.current, {
+        zoomControl: false, scrollWheelZoom: false, doubleClickZoom: false,
+        touchZoom: false, boxZoom: false, keyboard: false, dragging: false, tap: false,
+      });
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
       laagRef.current = { stops: [], etappes: [] };
@@ -1486,21 +1493,65 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
       map.on("click", () => setActief(null));
 
       const bounds = route.map((p) => [p.lat, p.lon]);
-      if (bounds.length === 1) map.setView(bounds[0], 13);
-      else map.fitBounds(bounds, { padding: [36, 36] });
+      volledigeBoundsRef.current = bounds;
+      zetUitsnede(map, bounds, { padding: [36, 36], losZoom: 13 });
+      setIngezoomd(false);
     })();
 
     return () => { cancelled = true; };
   }, [route]);
 
-  // Hier zat een functie die op de gekozen etappe inzoomde, met een knop "Hele
-  // reis" om weer uit te zoomen. Die is eruit: de vliegbeweging van Leaflet loopt
-  // door nadat het kaartje al opnieuw is opgebouwd of weggehaald, en dan schrijft
-  // hij naar een kaart die er niet meer is. Bij een reis waar heen- en terugpunt
-  // dezelfde plaats zijn heeft de te tonen rechthoek bovendien geen omvang, en
-  // daar rekent hij zich op stuk. Het uitlichten van een etappe blijft, en dat is
-  // waar het om ging; wie dichterbij wil kijken gebruikt de zoomknoppen van de
-  // kaart zelf.
+  // Inzoomen op wat je koos. Bij een reis van Nederland naar Japan staat de hele
+  // route zo ver uitgezoomd dat een dagtocht van vijf kilometer samenvalt met de
+  // stip ernaast — juist waar de meeste bewegingen zitten zie je het minst. Tik
+  // je een etappe of stop aan, dan schuift de kaart naar die twee punten toe.
+  //
+  // Alleen bij een tik, niet bij het zweven met de muis: een kaart die meebeweegt
+  // met elke muisbeweging is niet te volgen.
+  //
+  // Zonder vliegbeweging (animate: false), en dat is geen smaakkwestie. Zo'n
+  // beweging loopt door nadat het kaartje alweer opnieuw is opgebouwd of
+  // weggehaald, en schrijft dan naar een kaart die er niet meer is — dat was de
+  // oorzaak van de vastlopers. Een uitsnede die meteen goed staat kan niet
+  // onderbroken worden.
+  function zetUitsnede(map, punten, opties) {
+    if (!map || !mapInstanceRef.current || mapInstanceRef.current !== map) return;
+    try {
+      // Twee punten op (vrijwel) dezelfde plek geven een rechthoek zonder
+      // omvang; daar rekent fitBounds zich op stuk. Denk aan een reis die
+      // vertrekt en aankomt op hetzelfde vliegveld.
+      const zelfdePlek = punten.length === 1
+        || punten.every((p) => Math.abs(p[0] - punten[0][0]) < 1e-4 && Math.abs(p[1] - punten[0][1]) < 1e-4);
+      if (zelfdePlek) map.setView(punten[0], opties.losZoom ?? 11, { animate: false });
+      else map.fitBounds(punten, { padding: opties.padding, maxZoom: opties.maxZoom, animate: false });
+    } catch (err) {
+      // Een kaart die niet wil verspringen is vervelend; een kaart die de hele
+      // pagina meesleurt is erger.
+      console.error("Kaartuitsnede zetten mislukt:", err.message);
+    }
+  }
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !actief?.vast) return;
+    const naar = route[actief.index];
+    const van = actief.soort === "etappe" ? route[actief.index - 1] : naar?.vanaf;
+    if (!naar) return;
+    const punten = van ? [[van.lat, van.lon], [naar.lat, naar.lon]] : [[naar.lat, naar.lon]];
+    // maxZoom: twee plekken in dezelfde stad liggen soms honderd meter uit
+    // elkaar; zonder grens zou de kaart tot straatniveau inzoomen en ben je de
+    // rest van de reis kwijt.
+    zetUitsnede(map, punten, { padding: [50, 50], maxZoom: 12 });
+    setIngezoomd(true);
+  }, [actief, route]);
+
+  // Zelf uitzoomen kan niet meer (de zoomknoppen zijn weg), dus dit is de enige
+  // weg terug naar het geheel.
+  function toonHeleReis() {
+    setActief(null);
+    zetUitsnede(mapInstanceRef.current, volledigeBoundsRef.current || [], { padding: [36, 36], losZoom: 13 });
+    setIngezoomd(false);
+  }
 
   // Het uitlichten gebeurt hier, los van het opbouwen hierboven: bij elke
   // muisbeweging de hele kaart opnieuw tekenen zou hem laten haperen én de
@@ -1615,6 +1666,16 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
             valt er dus niets te tonen, en vult de balk het kaartvlak. Bij een
             tweede bezoek staat alles in de cache en is dit voorbij voordat je
             het ziet. */}
+        {/* Zelf uitzoomen kan niet meer, dus zodra de kaart op een etappe staat
+            is dit de enige weg terug naar het geheel. Aan de tegenovergestelde
+            kant van het infokaartje: allebei rechtsboven betekent dat het
+            kaartje precies deze knop afdekt. */}
+        {ingezoomd && (
+          <button type="button" onClick={toonHeleReis}
+            className={`absolute right-2 z-[1000] px-3 py-1.5 rounded-full bg-white/95 backdrop-blur shadow-lg border border-gray-100 text-xs font-semibold text-gray-700 hover:bg-white transition-colors inline-flex items-center gap-1.5 ${kaartjeBoven ? "bottom-7" : "top-2"}`}>
+            <Icon name="globe" size={13} className="text-gray-400" />Hele reis
+          </button>
+        )}
         {zoekVoortgang && (
           <div className="absolute inset-0 z-[900] bg-gray-50 flex items-center justify-center px-6">
             <div className="w-full max-w-xs">
@@ -1635,8 +1696,9 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
           // kaart — de tekst was met een test uit te lezen, in beeld was er niets.
           // Onderin bottom-6 in plaats van bottom-2: de attributieregel van
           // Leaflet en OpenStreetMap hoort zichtbaar te blijven, die dekken we
-          // niet af. Bovenin begint het pas na de zoomknoppen, links in de hoek.
-          <div className={`rp-kaartje absolute right-2 z-[1000] pointer-events-none ${kaartjeBoven ? "top-2 left-14" : "bottom-6 left-2"}`}>
+          // niet af. Bovenin mag het over de volle breedte: de zoomknoppen die
+          // daar stonden zijn weg, dus die hoek hoeft niet meer vrij te blijven.
+          <div className={`rp-kaartje absolute left-2 right-2 z-[1000] pointer-events-none ${kaartjeBoven ? "top-2" : "bottom-6"}`}>
             <div className={`pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg border border-gray-100 px-3 py-2 flex items-center gap-2.5 ${kaartje.samenvatting ? "" : "rp-rise"}`}>
               {kaartje.thumb && (
                 <img src={kaartje.thumb} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
