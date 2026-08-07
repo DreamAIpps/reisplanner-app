@@ -88,17 +88,6 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     } catch (err) { alert(err.message); }
   }
 
-  // Vanuit "Wie heeft de reis bekeken" naar de betreffende dag in het
-  // dagboek — de tab moet eerst wisselen en monteren voordat het element er
-  // is, vandaar de korte vertraging.
-  function jumpToDay(dayId) {
-    setSharing(null);
-    setTab("journal");
-    setTimeout(() => {
-      scrollNaarElement(`journal-day-${dayId}`);
-    }, 50);
-  }
-
   if (loadError && !trip) {
     return (
       <div className="text-center py-16">

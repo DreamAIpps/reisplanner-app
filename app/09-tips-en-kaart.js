@@ -129,74 +129,11 @@ function TipsModal({ tripId, trip, location, onClose }) {
   );
 }
 
-// ---------- Tips tab ----------
-function TipsTab({ trip }) {
-  const [didYouKnow, setDidYouKnow] = useState(null);
-  const [dykLoading, setDykLoading] = useState(true);
-  const accent = trip.cover_color || PALETTE.primary;
-  const tripMonth = trip.start_date ? String(trip.start_date).slice(0, 7) : "";
-  const cacheKeyPrefix = `tips_${trip.id}_${trip.destination}_${tripMonth}`;
-  const dykKey = `${cacheKeyPrefix}_dyk`;
-
-  useEffect(() => {
-    if (!trip.destination) { setDykLoading(false); return; }
-    try {
-      const cached = localStorage.getItem(dykKey);
-      if (cached) { const { data, ts } = JSON.parse(cached); if (Date.now() - ts < 24*60*60*1000) { setDidYouKnow(data); setDykLoading(false); return; } }
-    } catch {}
-    let vervallen = false;
-    apiFetch(`/api/trips/${trip.id}/tips`)
-      .then((d) => {
-        try { localStorage.setItem(dykKey, JSON.stringify({ data: d.did_you_know, ts: Date.now() })); } catch {}
-        if (!vervallen) setDidYouKnow(d.did_you_know || null);
-      })
-      .catch(() => {})
-      .finally(() => { if (!vervallen) setDykLoading(false); });
-    return () => { vervallen = true; };
-  }, [trip.id, trip.destination]);
-
-  if (!trip.destination) return (
-    <div className="text-center py-16 text-gray-400">
-      <Icon name="bulb" size={34} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
-      <div className="font-medium">Geen bestemming ingesteld</div>
-      <div className="text-sm mt-1">Voeg een bestemming toe aan je reis voor AI-tips</div>
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-[21px] text-gray-800">Tips voor {trip.destination}</h3>
-        <span className="text-xs text-gray-400 flex items-center gap-1"><Icon name="sparkle" size={12} />Gegenereerd door Claude</span>
-      </div>
-
-      {dykLoading ? (
-        <div className="rounded-xl p-4 mb-4 border animate-pulse" style={{ background: accent + "10", borderColor: accent + "30" }}>
-          <div className="h-3 w-20 rounded mb-2" style={{ background: accent + "40" }} />
-          <div className="h-4 w-full rounded" style={{ background: accent + "20" }} />
-        </div>
-      ) : didYouKnow ? (
-        <div className="rounded-xl p-4 mb-4 border" style={{ background: accent + "10", borderColor: accent + "30" }}>
-          <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: legibleOn(accent) }}>Wist je dat?</div>
-          <div className="text-sm text-gray-700 leading-relaxed">{didYouKnow}</div>
-        </div>
-      ) : null}
-
-      <div className="text-xs text-gray-400 text-center mb-3">Klik op een categorie om tips te laden</div>
-
-      <div className="space-y-2">
-        {TIP_CATEGORIES.map(({ category, icon }) => (
-          <TipAccordion key={category} tripId={trip.id} category={category} icon={icon}
-            accentColor={accent} cacheKeyPrefix={cacheKeyPrefix} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ---------- Waar je geweest bent ----------
-// De planningskaart laat zien waar je heen zóu gaan. Dit laat zien waar je
-// werkelijk geweest bent, en dat weten we uit de GPS die in je foto's zit.
+// Waar je werkelijk geweest bent weten we uit de GPS die in je foto's zit.
+// Deze helpers zetten die losse punten om in plekken: klonteren wat dicht bij
+// elkaar ligt, geven er een naam aan en tekenen de lijn ertussen. De kaartjes
+// in het dagboek en de planning bouwen daarop.
 
 function numOrNull(v) {
   // pg geeft NUMERIC terug als tekst, en Number(null) is 0 — wat een geldige

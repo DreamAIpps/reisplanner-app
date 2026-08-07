@@ -253,8 +253,7 @@ const PHOTOBOOK_BG_SWATCHES = [
   PALETTE.textPrimary, PALETTE.primary, PALETTE.info,
 ];
 
-// Doorzicht en hoekafronding per foto — net als bij professionele
-// fotoboek-editors.
+// Hoekafronding per foto — net als bij professionele fotoboek-editors.
 //
 // cornerRadius is een fractie van de kórtste zijde van de pagina, niet van de
 // foto. Dat is het verschil tussen "alle hoeken op deze pagina zijn even rond"
@@ -263,11 +262,6 @@ const PHOTOBOOK_BG_SWATCHES = [
 // werden de hoeken bij een niet-vierkante foto ook nog eens ovaal. Paginamaat
 // als maatstaf geeft één ronding voor de hele pagina, ongeacht formaat of
 // verhouding van de foto.
-const PHOTOBOOK_OPACITY_PRESETS = [
-  { value: 1, label: "100%" },
-  { value: 0.75, label: "75%" },
-  { value: 0.5, label: "50%" },
-];
 // Op A4 (kortste zijde 210 mm) komt dit neer op ongeveer 1,7 / 3 / 5 mm —
 // ingetogen genoeg om als afwerking te lezen in plaats van als vormgeving.
 const PHOTOBOOK_CORNER_PRESETS = [
@@ -283,8 +277,8 @@ function photobookCornerCss(cornerRadius) {
   return `${(cornerRadius ?? 0) * 100}cqmin`;
 }
 // Witte sluier over een achtergrondfoto, zodat voorgrondtekst/-foto's
-// leesbaar blijven op een drukke achtergrond — zelfde idee als de
-// opacity-presets, maar dan als vast wit vlak boven de achtergrond.
+// leesbaar blijven op een drukke achtergrond — een vast wit vlak boven de
+// achtergrond in plaats van doorzicht op de foto zelf.
 const PHOTOBOOK_OVERLAY_PRESETS = [
   { value: 0, label: "Geen" },
   { value: 0.25, label: "25%" },
@@ -1039,17 +1033,6 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   function updatePage(i, patch) {
     pushHistory();
     setPages((ps) => ps.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
-    setDirty(true);
-  }
-  function movePage(i, dir) {
-    pushHistory();
-    setPages((ps) => {
-      const j = i + dir;
-      if (j < 0 || j >= ps.length) return ps;
-      const copy = [...ps];
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-      return copy;
-    });
     setDirty(true);
   }
   function removePage(i) {

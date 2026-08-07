@@ -25,7 +25,7 @@ const TIMEZONES_PER_REGIO = TIMEZONE_OPTIONS.reduce((acc, tz) => {
 }, {});
 
 function fmtShortDate(iso) {
-  const [y, m, d] = iso.split("-").map(Number);
+  const [, m, d] = iso.split("-").map(Number);
   return `${d} ${MONTH_NAMES[m - 1]}`;
 }
 
