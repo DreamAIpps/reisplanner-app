@@ -132,11 +132,9 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const tabs = [
     { key: "days", label: "Dagplanning", icon: "route", primary: true },
     ...(currentUserId ? [{ key: "journal", label: "Dagboek", icon: "book" }] : []),
-    { key: "photos", label: "Foto's", icon: "camera" },
     { key: "accommodation", label: "Verblijf", icon: "bed" },
     { key: "transport", label: "Vervoer", icon: "plane" },
     { key: "packing", label: "Paklijst", icon: "suitcase" },
-    { key: "map", label: "Kaart", icon: "map" },
     { key: "quiz", label: "Fotoquiz", icon: "sparkle" },
     // Het fotoboek is niet voor meekijkers: een deel-link laat de reis zien,
     // niet het boek dat je er achteraf van maakt. De server weigert het ook
@@ -144,23 +142,21 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     ...(readOnly ? [] : [{ key: "photobook", label: "Fotoboek", icon: "frame" }]),
   ];
 
-  // De onderste balk hoort te gaan over wat je onderweg het vaakst doet. De
-  // fotoquiz stond daar met een vaste plek terwijl je die hooguit één avond per
-  // reis speelt; de kaart — "waar is dit, waar ben ik" — zat juist weggestopt
-  // achter "Meer". Die twee zijn omgewisseld.
+  // De onderste balk hoort te gaan over wat je onderweg het vaakst doet, en dat
+  // zijn de planning en het dagboek. Er stond ook een losse kaart-bestemming,
+  // maar planning en dagboek hebben allebei hun eigen kaartje gekregen — precies
+  // op de plek waar de vraag opkomt — dus die aparte kaart voegde niets meer toe.
   const bottomNavItems = [
     { key: "days", icon: "route", label: "Planning" },
     ...(currentUserId ? [{ key: "journal", icon: "book", label: "Dagboek" }] : []),
-    { key: "map", icon: "map", label: "Kaart" },
   ];
-  // Alleen bereikbaar via "Meer". Zeven losse regels lazen als één lange lijst;
-  // met kopjes valt in één oogopslag te zien waar iets bij hoort. Bewust géén
-  // samenvoeging van Foto's/Fotoboek/Fotoquiz tot één bestemming met subtabs:
-  // dat maakt er twee tikken van in plaats van één, en dat is meer frictie, niet
-  // minder. Ze horen bij elkaar, dus staan ze onder één kopje.
+  // Alleen bereikbaar via "Meer". Losse regels lazen als één lange lijst; met
+  // kopjes valt in één oogopslag te zien waar iets bij hoort. Er stond hier ook
+  // een aparte fotogalerij, maar foto's worden inmiddels vanuit het dagboek
+  // geüpload en daar ook per dag getoond — twee plekken voor dezelfde foto's
+  // maakt alleen maar de vraag welke van de twee je moet hebben.
   const moreMenuGroups = [
     { titel: "Onderweg", items: [
-      { key: "photos", icon: "camera", label: "Foto's" },
       { key: "packing", icon: "suitcase", label: "Paklijst" },
       ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
     ] },
@@ -187,8 +183,8 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const heroCity = heroComma > 0 ? heroDest.slice(0, heroComma).trim() : heroDest;
   const heroCountry = heroComma > 0 ? heroDest.slice(heroComma + 1).trim() : null;
   const heroDuration = tripDuration(trip.start_date, trip.end_date);
-  const heroShowBudget = viewTrip.budget && tab !== "journal" && tab !== "photos";
-  const heroShowActions = isOwnerActions && tab !== "journal" && tab !== "photos";
+  const heroShowBudget = viewTrip.budget && tab !== "journal";
+  const heroShowActions = isOwnerActions && tab !== "journal";
   // Op de twee werk-tabs (planning en dagboek) is de grote fto-hero te fors — daar
   // volstaat een slanke balk van één regel met de reisnaam, zonder omslagfoto.
   const heroCompact = tab === "days" || tab === "journal";
@@ -291,7 +287,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
       )}
 
       {/* Budget balk */}
-      {viewTrip.budget && tab !== "journal" && tab !== "photos" && (() => {
+      {viewTrip.budget && tab !== "journal" && (() => {
         const transportTotal = viewTransports.reduce((s, t) => s + Number(t.cost || 0), 0);
         const accommodationTotal = viewAccommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
         const activityTotal = viewDays.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
@@ -354,19 +350,15 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
 
       {readOnly ? (
         <>
-          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel
-              dagboek, kaart en de fotoquiz — die wijzigt niets aan de reis,
-              dus past prima bij alleen-lezen toegang. */}
+          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel het
+              dagboek en de fotoquiz — die wijzigt niets aan de reis, dus past
+              prima bij alleen-lezen toegang. De kaart stond hier ook nog als
+              aparte bestemming; die zit nu in het dagboek zelf. */}
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
             <button onClick={() => setTab("journal")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "journal" || tab === "days" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-              style={tab === "journal" || tab === "days" ? { color: legibleOn(accent) } : {}}>
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab !== "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+              style={tab !== "quiz" ? { color: legibleOn(accent) } : {}}>
               <Icon name="book" size={15} />Dagboek
-            </button>
-            <button onClick={() => setTab("map")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "map" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-              style={tab === "map" ? { color: legibleOn(accent) } : {}}>
-              <Icon name="map" size={15} />Kaart
             </button>
             <button onClick={() => setTab("quiz")}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
@@ -374,19 +366,15 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
               <Icon name="sparkle" size={15} />Fotoquiz
             </button>
           </div>
-          {tab === "map"
-            ? <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />
-            : <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />}
+          <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />
         </>
       ) : (
         <>
           {tab === "days" && <DayPlanningTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} onShareEditor={isOwnerActions ? () => setSharing("editor") : null} onEditTrip={isOwnerActions ? () => setEditing(true) : null} />}
           {tab === "journal" && <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} />}
-          {tab === "photos" && <PhotoGalleryTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "accommodation" && <AccommodationTab trip={viewTrip} accommodations={viewAccommodations} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "transport" && <TransportTab trip={viewTrip} transports={viewTransports} onRefresh={load} readOnly={readOnly} currentUserId={currentUserId} />}
           {tab === "budget" && !readOnly && <BudgetTab trip={viewTrip} expenses={viewExpenses} transports={viewTransports} accommodations={viewAccommodations} days={viewDays} onRefresh={load} />}
-          {tab === "map" && <TripMapTab trip={trip} accommodations={accommodations} transports={transports} days={days} />}
           {tab === "packing" && <PackingTab tripId={trip.id} readOnly={readOnly} />}
         </>
       )}
