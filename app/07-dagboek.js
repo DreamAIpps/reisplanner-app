@@ -234,7 +234,7 @@ function JournalActivityTitle({ act, readOnly, onSave }) {
 // dagen zelf staat dat verspreid over de hele reis — ben je een paar dagen weg
 // geweest, dan is er geen doen aan om terug te scrollen en te zoeken wat er
 // nieuw is. Hier staat het bij elkaar, met wie het deed en waar het over ging.
-function RecenteReacties({ tripId, onNaarDag, onSluiten }) {
+function RecenteReacties({ tripId, onNaarInhoud, onSluiten }) {
   const [dagen, setDagen] = useState(7);
   const [data, setData] = useState(null);
   const [fout, setFout] = useState(null);
@@ -275,8 +275,8 @@ function RecenteReacties({ tripId, onNaarDag, onSluiten }) {
         <div className="space-y-1.5">
           {items.map((it) => (
             <div key={`${it.soort}-${it.id}`}
-              onClick={() => it.dagId && onNaarDag?.(it.dagId)}
-              className={`rounded-xl border border-gray-100 bg-white px-3 py-2.5 flex items-start gap-2.5 ${it.dagId ? "cursor-pointer hover:border-sky-200" : ""}`}>
+              onClick={() => (it.activiteitId || it.dagId) && onNaarInhoud?.(it)}
+              className={`rounded-xl border border-gray-100 bg-white px-3 py-2.5 flex items-start gap-2.5 ${(it.activiteitId || it.dagId) ? "cursor-pointer hover:border-sky-200" : ""}`}>
               <Icon name={it.soort === "duimpje" ? "thumb" : "chat"} size={15}
                 className={`mt-0.5 shrink-0 ${it.soort === "duimpje" ? "text-sky-500" : "text-gray-400"}`} />
               <div className="min-w-0 flex-1">
@@ -616,7 +616,15 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
 
       {toonReacties && (
         <RecenteReacties tripId={trip.id}
-          onNaarDag={(dagId) => { setToonReacties(false); scrollNaarElement(`journal-day-${dagId}`); }}
+          // Naar de activiteit als de reactie daarbij hoort, anders naar de dag.
+          // Zonder dat kwam je bovenaan een dag uit en mocht je zelf zoeken
+          // waar de reactie precies over ging.
+          onNaarInhoud={(it) => {
+            setToonReacties(false);
+            const doel = it.activiteitId ? `journal-activity-${it.activiteitId}` : `journal-day-${it.dagId}`;
+            scrollNaarElement(doel, { blok: it.activiteitId ? "center" : "start" });
+            lichtOp(doel);
+          }}
           onSluiten={() => setToonReacties(false)} />
       )}
       {addingActivity && (

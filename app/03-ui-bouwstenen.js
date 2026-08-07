@@ -439,3 +439,15 @@ function Voortgangsbalk({ done, total, label, ariaLabel, className = "" }) {
     </div>
   );
 }
+
+// Even aanwijzen waar je terechtkomt. Spring je vanuit het reactie-overzicht
+// naar een dag of activiteit, dan sta je ineens ergens middenin een lange
+// pagina en is het maar de vraag welk blok nu bedoeld werd — zeker als er twee
+// activiteiten onder elkaar staan. Een randje van een paar tellen beantwoordt
+// die vraag zonder er iets bij te hoeven schrijven.
+function lichtOp(id, ms = 2200) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add("rp-aangewezen");
+  setTimeout(() => el.classList.remove("rp-aangewezen"), ms);
+}

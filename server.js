@@ -2306,9 +2306,14 @@ route("GET", "/api/trips/:id/reacties", async (req, res, params) => {
 
   const { rows } = await query(
     `SELECT x.*,
-            COALESCE(d.date, pd.date) AS dag_datum,
+            COALESCE(d.date, ad.date, pd.date) AS dag_datum,
+            -- De dag waar dit bij hoort: rechtstreeks, via de activiteit, of via
+            -- de foto. Zonder die omweg had een reactie op een activiteit geen
+            -- dag en dus geen terugvaloptie om naartoe te springen.
+            COALESCE(x.day_id, a.day_id, pd.id) AS anker_dag_id,
             COALESCE(d.title, pd.title) AS dag_titel,
-            a.title AS activiteit,
+            COALESCE(a.id, pa.id) AS anker_activiteit_id,
+            COALESCE(a.title, pa.title) AS activiteit,
             t.type AS vervoer_type, t.from_location, t.to_location,
             acc.name AS verblijf
        FROM (
@@ -2336,10 +2341,12 @@ route("GET", "/api/trips/:id/reacties", async (req, res, params) => {
        ) x
        LEFT JOIN days d ON d.id = x.day_id
        LEFT JOIN activities a ON a.id = x.activity_id
+       LEFT JOIN days ad ON ad.id = a.day_id
        LEFT JOIN transports t ON t.id = x.transport_id
        LEFT JOIN accommodations acc ON acc.id = x.accommodation_id
        LEFT JOIN photos p ON p.id = x.photo_id
        LEFT JOIN days pd ON pd.id = p.day_id
+       LEFT JOIN activities pa ON pa.id = p.activity_id
       ORDER BY x.wanneer DESC
       LIMIT 300`,
     [params.id, dagen]
@@ -2358,7 +2365,11 @@ route("GET", "/api/trips/:id/reacties", async (req, res, params) => {
       // COALESCE hierboven levert de voornaam óf de volledige naam; firstName
       // knipt in dat tweede geval alsnog de voornaam eraf.
       opReactieVan: firstName({ name: r.op_reactie_van }) || null,
-      dagId: r.day_id,
+      // Waar de app naartoe moet springen. Een reactie op een foto krijgt de
+      // activiteit of dag van die foto mee, want de foto zelf staat in een
+      // horizontaal schuivende strook en is geen plek om naartoe te springen.
+      dagId: r.anker_dag_id,
+      activiteitId: r.anker_activiteit_id,
       dagDatum: r.dag_datum,
       // Waar het over gaat, van specifiek naar algemeen. De client hoeft dan
       // alleen nog maar te tonen wat hier staat.
