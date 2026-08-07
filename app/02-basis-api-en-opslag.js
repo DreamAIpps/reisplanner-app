@@ -310,6 +310,9 @@ const api = {
   importEmail: (tripId, text) => _guestMode ? guestApi.importEmail() : apiFetch(`/api/trips/${tripId}/import`, { method: "POST", body: JSON.stringify({ text }) }),
   createInvite: (tripId, role) => _guestMode ? guestApi.createInvite() : apiFetch(`/api/trips/${tripId}/invite`, { method: "POST", body: JSON.stringify({ role }) }),
   getShareStats: (tripId) => _guestMode ? Promise.resolve({ members: [], total_views: 0, views_24h: 0 }) : apiFetch(`/api/trips/${tripId}/share-stats`),
+  // Reacties en duimpjes van de afgelopen dagen. In gastmodus bestaat er geen
+  // server om het aan te vragen — daar reageert ook niemand, dus leeg.
+  getReacties: (tripId, dagen = 7) => _guestMode ? Promise.resolve({ dagen, items: [] }) : apiFetch(`/api/trips/${tripId}/reacties?dagen=${dagen}`),
   getQuizSession: (tripId) => _guestMode ? Promise.resolve({ session: null }) : apiFetch(`/api/trips/${tripId}/quiz/session`),
   createQuizSession: (tripId, opts) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: JSON.stringify(opts || {}) }),
   startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),

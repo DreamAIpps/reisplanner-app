@@ -230,12 +230,91 @@ function JournalActivityTitle({ act, readOnly, onSave }) {
   );
 }
 
+// Alles wat er de afgelopen dagen gereageerd en geliket is, op een rij. Op de
+// dagen zelf staat dat verspreid over de hele reis — ben je een paar dagen weg
+// geweest, dan is er geen doen aan om terug te scrollen en te zoeken wat er
+// nieuw is. Hier staat het bij elkaar, met wie het deed en waar het over ging.
+function RecenteReacties({ tripId, onNaarDag, onSluiten }) {
+  const [dagen, setDagen] = useState(7);
+  const [data, setData] = useState(null);
+  const [fout, setFout] = useState(null);
+
+  useEffect(() => {
+    let vervallen = false;
+    setData(null); setFout(null);
+    api.getReacties(tripId, dagen)
+      .then((d) => { if (!vervallen) setData(d); })
+      .catch((err) => { if (!vervallen) setFout(err.message || "Ophalen is niet gelukt"); });
+    return () => { vervallen = true; };
+  }, [tripId, dagen]);
+
+  const items = data?.items || [];
+
+  return (
+    <Modal title="Reacties en duimpjes" onClose={onSluiten} wide>
+      <div className="space-y-3">
+        {/* Zeven dagen is waar je meestal naar zoekt; de andere twee zijn er
+            voor als je langer weg was. */}
+        <div className="flex gap-1 bg-gray-100 rounded-full p-1 w-fit">
+          {[[7, "7 dagen"], [14, "14 dagen"], [30, "30 dagen"]].map(([n, label]) => (
+            <button key={n} type="button" onClick={() => setDagen(n)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${dagen === n ? "bg-white shadow-sm text-gray-800 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {fout && <div className="text-sm text-red-600">{fout}</div>}
+        {!data && !fout && <div className="text-sm text-gray-400 py-6 text-center">Laden...</div>}
+        {data && items.length === 0 && (
+          <div className="text-sm text-gray-400 py-6 text-center">
+            Niemand heeft de afgelopen {dagen} dagen gereageerd of iets geliket.
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          {items.map((it) => (
+            <div key={`${it.soort}-${it.id}`}
+              onClick={() => it.dagId && onNaarDag?.(it.dagId)}
+              className={`rounded-xl border border-gray-100 bg-white px-3 py-2.5 flex items-start gap-2.5 ${it.dagId ? "cursor-pointer hover:border-sky-200" : ""}`}>
+              <Icon name={it.soort === "duimpje" ? "thumb" : "chat"} size={15}
+                className={`mt-0.5 shrink-0 ${it.soort === "duimpje" ? "text-sky-500" : "text-gray-400"}`} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-gray-800">
+                  <span className="font-semibold">{it.vanMij ? "Jij" : it.wie}</span>
+                  {it.soort === "duimpje"
+                    ? (it.opReactie
+                      ? <> vond de reactie van <span className="font-medium">{it.opReactieVan || "iemand"}</span> leuk</>
+                      : <> vond dit leuk</>)
+                    : <> reageerde</>}
+                  {it.onderwerp && <> bij <span className="font-medium">{it.onderwerp}</span></>}
+                </div>
+                {/* Bij een reactie de tekst zelf; bij een duimpje op een reactie
+                    de reactie waar het over ging, zodat het niet los hangt. */}
+                {(it.tekst || it.opReactie) && (
+                  <p className="text-sm text-gray-600 mt-0.5 leading-snug whitespace-pre-wrap break-words">
+                    {it.soort === "duimpje" ? `"${it.opReactie}"` : it.tekst}
+                  </p>
+                )}
+                <div className="text-[11px] text-gray-400 mt-1">
+                  {fmtDatetime(it.wanneer)}{it.dagDatum ? ` · ${fmt(it.dagDatum)}` : ""}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function JournalTab({ trip, days, transports, accommodations, readOnly, currentUserId, onRefresh, onPreviewViewer, onShare, onGoToPlanning }) {
   const [entries, setEntries] = useState([]);
   const [comments, setComments] = useState([]);
   const [slotLikes, setSlotLikes] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
   const [addingActivity, setAddingActivity] = useState(null);
+  const [toonReacties, setToonReacties] = useState(false);
   const [entriesLoaded, setEntriesLoaded] = useState(false);
   const didAutoScroll = useRef(false);
   const accent = trip.cover_color || PALETTE.primary;
@@ -365,6 +444,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               je op dat moment naar kijkt in plaats van altijd bij vandaag — dus
               deze knop deed hetzelfde, alleen minder precies. */}
           {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
+          {currentUserId && (
+            <Button onClick={() => setToonReacties(true)} variant="secondary"><Icon name="chat" size={14} className="mr-1.5" />Reacties</Button>
+          )}
           {onShare && !readOnly && (
             <Button onClick={onShare} variant="secondary"><Icon name="share" size={14} className="mr-1.5" />Delen</Button>
           )}
@@ -532,6 +614,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
         })()}
       </div>
 
+      {toonReacties && (
+        <RecenteReacties tripId={trip.id}
+          onNaarDag={(dagId) => { setToonReacties(false); scrollNaarElement(`journal-day-${dagId}`); }}
+          onSluiten={() => setToonReacties(false)} />
+      )}
       {addingActivity && (
         <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days} showPhotos
           stayOpenAfterCreate

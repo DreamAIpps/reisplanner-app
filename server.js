@@ -2292,6 +2292,86 @@ route("GET", "/api/trips/:id/journal", async (req, res, params) => {
   });
 }, { tripScope: "param" });
 
+// Alles wat er de afgelopen dagen op de reis gereageerd en geliket is, door
+// elkaar en op tijd gesorteerd. Reacties en duimpjes staan in twee tabellen en
+// hangen bovendien aan verschillende soorten plekken (een dag, een activiteit,
+// een vervoer, een verblijf, een foto, of aan een andere reactie); ze hier
+// samenvoegen en meteen van een leesbaar onderwerp voorzien scheelt de client
+// een hoop uitzoekwerk — en het is precies wat je wilt zien als je even weg
+// bent geweest.
+route("GET", "/api/trips/:id/reacties", async (req, res, params) => {
+  const url = new URL(req.url, "http://localhost");
+  // Zeven dagen als standaard, met een grens: dit is een terugblik, geen archief.
+  const dagen = Math.min(90, Math.max(1, parseInt(url.searchParams.get("dagen"), 10) || 7));
+
+  const { rows } = await query(
+    `SELECT x.*,
+            COALESCE(d.date, pd.date) AS dag_datum,
+            COALESCE(d.title, pd.title) AS dag_titel,
+            a.title AS activiteit,
+            t.type AS vervoer_type, t.from_location, t.to_location,
+            acc.name AS verblijf
+       FROM (
+         SELECT c.id, 'reactie' AS soort, c.created_at AS wanneer, c.body AS tekst,
+                c.user_id, u.given_name, u.name AS user_name,
+                c.day_id, c.activity_id, c.transport_id, c.accommodation_id, c.photo_id,
+                NULL::text AS op_reactie, NULL::text AS op_reactie_van
+           FROM journal_comments c
+           LEFT JOIN users u ON u.id = c.user_id
+          WHERE c.trip_id = $1 AND c.created_at > NOW() - ($2 || ' days')::interval
+         UNION ALL
+         -- Een duimpje op een reactie erft de plek van die reactie, zodat het
+         -- onderwerp ook dan klopt.
+         SELECT l.id, 'duimpje', l.created_at, NULL,
+                l.user_id, u.given_name, u.name,
+                COALESCE(l.day_id, c.day_id), COALESCE(l.activity_id, c.activity_id),
+                COALESCE(l.transport_id, c.transport_id), COALESCE(l.accommodation_id, c.accommodation_id),
+                COALESCE(l.photo_id, c.photo_id),
+                c.body, COALESCE(cu.given_name, cu.name)
+           FROM journal_likes l
+           LEFT JOIN users u ON u.id = l.user_id
+           LEFT JOIN journal_comments c ON c.id = l.comment_id
+           LEFT JOIN users cu ON cu.id = c.user_id
+          WHERE l.trip_id = $1 AND l.created_at > NOW() - ($2 || ' days')::interval
+       ) x
+       LEFT JOIN days d ON d.id = x.day_id
+       LEFT JOIN activities a ON a.id = x.activity_id
+       LEFT JOIN transports t ON t.id = x.transport_id
+       LEFT JOIN accommodations acc ON acc.id = x.accommodation_id
+       LEFT JOIN photos p ON p.id = x.photo_id
+       LEFT JOIN days pd ON pd.id = p.day_id
+      ORDER BY x.wanneer DESC
+      LIMIT 300`,
+    [params.id, dagen]
+  );
+
+  sendJson(res, 200, {
+    dagen,
+    items: rows.map((r) => ({
+      id: r.id,
+      soort: r.soort,
+      wanneer: r.wanneer,
+      tekst: r.tekst,
+      wie: firstName({ given_name: r.given_name, name: r.user_name }) || "Iemand",
+      vanMij: r.user_id === req.user.id,
+      opReactie: r.op_reactie,
+      // COALESCE hierboven levert de voornaam óf de volledige naam; firstName
+      // knipt in dat tweede geval alsnog de voornaam eraf.
+      opReactieVan: firstName({ name: r.op_reactie_van }) || null,
+      dagId: r.day_id,
+      dagDatum: r.dag_datum,
+      // Waar het over gaat, van specifiek naar algemeen. De client hoeft dan
+      // alleen nog maar te tonen wat hier staat.
+      onderwerp: r.activiteit
+        || (r.vervoer_type ? [r.vervoer_type, [r.from_location, r.to_location].filter(Boolean).join(" → ")].filter(Boolean).join(": ") : null)
+        || r.verblijf
+        || (r.photo_id ? "een foto" : null)
+        || r.dag_titel
+        || null,
+    })),
+  });
+}, { tripScope: "param" });
+
 route("POST", "/api/trips/:id/journal-comments", async (req, res, params, body) => {
   const { body: text } = body;
   if (!text || !text.trim()) return sendError(res, 400, "Reactie mag niet leeg zijn");
