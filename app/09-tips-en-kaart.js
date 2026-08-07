@@ -991,7 +991,9 @@ function DayMiniMap({ places, accommodation }) {
         // dagfoto's) blijft de oude foto-preview over als enige zinvolle actie.
         marker.on("click", () => {
           if (pl.activityId) scrollNaarElement(`journal-activity-${pl.activityId}`, { blok: "center" });
-          else setViewing({ photos: pl.photos, index: 0 });
+          // Een geplande plek heeft nog geen foto's; dan valt er ook niets te
+          // openen. Zonder deze controle kreeg de fotoviewer niets binnen.
+          else if (pl.photos?.length) setViewing({ photos: pl.photos, index: 0 });
         });
         if (pl.label) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
@@ -1045,6 +1047,59 @@ function DayMiniMap({ places, accommodation }) {
       )}
     </div>
   );
+}
+
+// De plekken van één geplande dag op een kaartje. Het dagboek heeft zoiets al
+// voor dagen die geweest zijn — daar komen de stippen uit de GPS van je foto's.
+// Vooruitkijken kan dat niet: een dag die nog moet komen heeft alleen
+// locatieteksten bij de activiteiten, dus die moeten eerst opgezocht worden.
+// Daarna is het dezelfde kaart, dus die wordt hier gewoon hergebruikt.
+function PlanningDagKaart({ activities, accommodation }) {
+  const [plekken, setPlekken] = useState([]);
+
+  // De locatieteksten van deze dag, in de volgorde van de dag zelf en zonder
+  // dubbele: twee activiteiten op hetzelfde adres zijn één plek.
+  const teZoeken = React.useMemo(() => {
+    const gezien = new Set();
+    return (activities || [])
+      .filter((a) => a.location && a.location.trim())
+      .filter((a) => {
+        const sleutel = a.location.trim().toLowerCase();
+        if (gezien.has(sleutel)) return false;
+        gezien.add(sleutel);
+        return true;
+      });
+  }, [activities]);
+
+  useEffect(() => {
+    if (teZoeken.length < 2) { setPlekken([]); return; }
+    let vervallen = false;
+    (async () => {
+      const gevonden = [];
+      for (const act of teZoeken) {
+        const geo = await geocode(act.location).catch(() => null);
+        if (vervallen) return;
+        if (geo?.lat != null) {
+          gevonden.push({
+            lat: geo.lat, lon: geo.lon,
+            label: act.title || null,
+            time: roundTimeToQuarterHour(act.time),
+            // Geen activityId: die laat de kaart naar het dagboek springen, en
+            // daar staat een dag die nog moet komen nog niet in.
+            photos: [],
+          });
+        }
+      }
+      if (!vervallen) setPlekken(gevonden);
+    })();
+    return () => { vervallen = true; };
+  }, [teZoeken]);
+
+  // Pas tonen als er echt meer dan één plek op de kaart komt te staan. Bij één
+  // stip valt er niets te overzien, en dat is precies waar dit kaartje voor is:
+  // zien hoe de dag over de stad verspreid ligt.
+  if (plekken.length < 2) return null;
+  return <DayMiniMap places={plekken} accommodation={accommodation} />;
 }
 
 // Toont waar je die nacht sliep, met een schone plaatsnaam (geocodeerd, net als

@@ -255,6 +255,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
               : (day.activities.find((a) => a.location)?.location || null);
 
             const isToday = dayStr === todayIso(trip.timezone);
+            const isTomorrow = dayStr === tomorrowIso(trip.timezone);
 
             const tipsButton = (loc) => (
               <button onClick={(e) => { e.stopPropagation(); setTipsLocation(loc); }}
@@ -289,6 +290,19 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         <span className="truncate">{nightAccommodation.address || nightAccommodation.name}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Een kaartje van de dag, maar alleen voor vandaag en morgen:
+                    dat zijn de dagen waarop je je afvraagt of alles wel bij
+                    elkaar in de buurt ligt en in welke volgorde je het beste
+                    kunt gaan. Voor volgende week is dat nog niet aan de orde, en
+                    een kaartje bij elke dag van drie weken maakt de planning
+                    onleesbaar. De kaart verschijnt vanzelf pas als er meer dan
+                    één plek op staat — zie PlanningDagKaart. */}
+                {(isToday || isTomorrow) && (
+                  <div className="pl-8 mb-4">
+                    <PlanningDagKaart activities={day.activities} accommodation={nightAccommodation} />
                   </div>
                 )}
 
