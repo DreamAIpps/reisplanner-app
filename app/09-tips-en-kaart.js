@@ -365,6 +365,23 @@ function addBaseLayer(L, map, cfg) {
 // missen dan allemaal de (nog lege) cache — zonder deze in-flight-registratie
 // vuurt dat evenveel gelijktijdige Nominatim-verzoeken af, wat de bedoelde
 // snelheidslimiet van 1/sec juist doorbreekt.
+// Nominatim staat één verzoek per seconde toe. Dat werd afgedwongen met "slaap
+// 1,1 seconde en verstuur dan" vóór élk verzoek — ook vóór het eerste, terwijl
+// er dan nog niets verstuurd is. Bovendien komt bovenop die pauze nog de tijd
+// van het verzoek zelf, dus in de praktijk lag er ruim anderhalve seconde
+// tussen twee opzoekingen waar één seconde mocht.
+//
+// Deze klok houdt bij wanneer het volgende verzoek op z'n vroegst mag. Het
+// eerste gaat meteen, de volgende wachten precies zolang als nodig — nooit
+// sneller dan afgesproken, wel zonder de opgestapelde marge.
+let _nominatimVrijOp = 0;
+async function wachtOpBeurt() {
+  const nu = Date.now();
+  const wacht = Math.max(0, _nominatimVrijOp - nu);
+  _nominatimVrijOp = Math.max(nu, _nominatimVrijOp) + 1000;
+  if (wacht > 0) await new Promise((r) => setTimeout(r, wacht));
+}
+
 const _geocodeInFlight = new Map();
 async function geocode(query) {
   const key = `geocode3_${query}`;
@@ -374,7 +391,7 @@ async function geocode(query) {
   } catch {}
   if (_geocodeInFlight.has(query)) return _geocodeInFlight.get(query);
   const promise = (async () => {
-    await new Promise((r) => setTimeout(r, 1100)); // Nominatim rate limit: 1/sec
+    await wachtOpBeurt();
     const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
     const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
     const data = await res.json();
@@ -414,7 +431,7 @@ async function reverseGeocodeCity(lat, lon) {
   } catch {}
   if (_reverseInFlight.has(sleutel)) return _reverseInFlight.get(sleutel);
   const promise = (async () => {
-    await new Promise((r) => setTimeout(r, 1100));
+    await wachtOpBeurt();
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
     const res = await fetch(url, { headers: { "Accept-Language": "nl,en;q=0.8", "User-Agent": "ReisplannerApp/1.0" } });
     const data = await res.json();
@@ -433,6 +450,14 @@ async function reverseGeocodeCity(lat, lon) {
 // verblijfsadres. Laat Claude de plaatsnaam uit de ruwe naam/adrestekst
 // destilleren; valt terug op Nominatim's eigen city-veld als dat niet lukt
 // (geen API-key, netwerkfout, of een gast zonder server-sessie).
+// Zonder deze registratie van lopende vragen stuurde elke aanroeper zijn eigen
+// verzoek: meerdere dagkaarten en de overzichtskaart vragen tegelijk om dezelfde
+// plaats, en in de meting stonden er vijf identieke oproepen op dezelfde
+// milliseconde. Dat is niet alleen verspild verkeer — deze route gaat langs een
+// AI-model met een limiet van veertig oproepen per uur, dus een reis met een
+// handvol verblijven kon in één keer het budget opmaken dat ook de reistips en
+// het importeren nodig hebben.
+const _plaatsnaamInFlight = new Map();
 async function deriveCityName(query, fallbackCity) {
   if (_guestMode) return fallbackCity || null;
   const key = `placename_${query}`;
@@ -440,14 +465,20 @@ async function deriveCityName(query, fallbackCity) {
     const c = localStorage.getItem(key);
     if (c) return c;
   } catch {}
-  try {
-    const data = await apiFetch("/api/geocode/place-name", { method: "POST", body: JSON.stringify({ query }) });
-    if (data?.city) {
-      try { localStorage.setItem(key, data.city); } catch {}
-      return data.city;
-    }
-  } catch {}
-  return fallbackCity || null;
+  if (_plaatsnaamInFlight.has(query)) return _plaatsnaamInFlight.get(query);
+  const belofte = (async () => {
+    try {
+      const data = await apiFetch("/api/geocode/place-name", { method: "POST", body: JSON.stringify({ query }) });
+      if (data?.city) {
+        try { localStorage.setItem(key, data.city); } catch {}
+        return data.city;
+      }
+    } catch {}
+    return fallbackCity || null;
+  })();
+  _plaatsnaamInFlight.set(query, belofte);
+  try { return await belofte; }
+  finally { _plaatsnaamInFlight.delete(query); }
 }
 
 // Combineert een geocode-lookup met een schone plaatsnaam. Een compleet
@@ -458,7 +489,12 @@ async function deriveCityName(query, fallbackCity) {
 // schone naam: beide vielen terug op het rauwe adres.
 async function geocodePlace(query) {
   let geo = await geocode(query).catch(() => null);
-  const city = await deriveCityName(query, geo?.city);
+  // Het AI-model erbij halen is alleen nodig als de kaartendienst zélf geen
+  // bruikbare plaatsnaam teruggaf. Voor een gewoon hoteladres ("Gionmachi,
+  // Higashiyama, Kyoto") komt daar gewoon "Kyoto" uit, en dan is een tweede
+  // oproep — met een limiet van veertig per uur — puur weggegooid. In de
+  // meting scheelde dit elf oproepen op één kaart.
+  const city = geo?.city || await deriveCityName(query, geo?.city);
   if (city && geo?.lat == null) {
     geo = await geocode(city).catch(() => null);
   }
@@ -1353,8 +1389,6 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
   // ligt — anders dekt het precies af waar je naar wijst.
   const [kaartjeBoven, setKaartjeBoven] = useState(false);
   const laagRef = useRef({ stops: [], etappes: [] });
-  const volledigeBoundsRef = useRef(null);
-  const [ingezoomd, setIngezoomd] = useState(false);
 
   // Plaatsnamen bij de stops die alleen coördinaten hebben (die komen uit de
   // GPS van een foto). Eén voor één, want Nominatim wil hoogstens één verzoek
@@ -1452,47 +1486,21 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
       map.on("click", () => setActief(null));
 
       const bounds = route.map((p) => [p.lat, p.lon]);
-      volledigeBoundsRef.current = bounds;
       if (bounds.length === 1) map.setView(bounds[0], 13);
       else map.fitBounds(bounds, { padding: [36, 36] });
-      setIngezoomd(false);
     })();
 
     return () => { cancelled = true; };
   }, [route]);
 
-  // Inzoomen op wat je koos. Bij een reis die van Nederland naar Japan loopt
-  // staat de hele route zo ver uitgezoomd dat een dagtocht van vijf kilometer
-  // samenvalt met de stip ernaast — precies de plek waar de meeste bewegingen
-  // zitten is dan het minst te zien. Kies je een etappe of stop, dan schuift de
-  // kaart naar díe twee punten toe, en met "Hele reis" ga je weer terug.
-  //
-  // Alleen bij een tik, niet bij het zweven met de muis: een kaart die
-  // meebeweegt met elke muisbeweging is niet te volgen.
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !actief?.vast) return;
-    const naar = route[actief.index];
-    const van = actief.soort === "etappe" ? route[actief.index - 1] : naar?.vanaf;
-    if (!naar) return;
-    const punten = van ? [[van.lat, van.lon], [naar.lat, naar.lon]] : [[naar.lat, naar.lon]];
-    if (punten.length === 1) map.flyTo(punten[0], 11, { duration: 0.6 });
-    // maxZoom: twee foto's van dezelfde stad liggen soms honderd meter uit
-    // elkaar; zonder grens zou de kaart tot straatniveau inzoomen en ben je de
-    // rest van de reis helemaal kwijt.
-    else map.flyToBounds(punten, { padding: [50, 50], maxZoom: 12, duration: 0.6 });
-    setIngezoomd(true);
-  }, [actief, route]);
-
-  function toonHeleReis() {
-    const map = mapInstanceRef.current;
-    const bounds = volledigeBoundsRef.current;
-    if (!map || !bounds?.length) return;
-    setActief(null);
-    if (bounds.length === 1) map.setView(bounds[0], 13);
-    else map.flyToBounds(bounds, { padding: [36, 36], duration: 0.6 });
-    setIngezoomd(false);
-  }
+  // Hier zat een functie die op de gekozen etappe inzoomde, met een knop "Hele
+  // reis" om weer uit te zoomen. Die is eruit: de vliegbeweging van Leaflet loopt
+  // door nadat het kaartje al opnieuw is opgebouwd of weggehaald, en dan schrijft
+  // hij naar een kaart die er niet meer is. Bij een reis waar heen- en terugpunt
+  // dezelfde plaats zijn heeft de te tonen rechthoek bovendien geen omvang, en
+  // daar rekent hij zich op stuk. Het uitlichten van een etappe blijft, en dat is
+  // waar het om ging; wie dichterbij wil kijken gebruikt de zoomknoppen van de
+  // kaart zelf.
 
   // Het uitlichten gebeurt hier, los van het opbouwen hierboven: bij elke
   // muisbeweging de hele kaart opnieuw tekenen zou hem laten haperen én de
@@ -1615,17 +1623,6 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
                 ariaLabel="Route opzoeken" />
             </div>
           </div>
-        )}
-        {/* Alleen zichtbaar zodra je ergens op ingezoomd bent — dan is het ook
-            de enige weg terug, want slepen staat op deze ingebedde kaart uit.
-            Staat aan de tegenovergestelde kant van het kaartje: allebei
-            rechtsboven betekent dat het kaartje deze knop afdekt, en dan is de
-            weg terug precies wat je niet meer ziet. */}
-        {ingezoomd && (
-          <button type="button" onClick={toonHeleReis}
-            className={`absolute right-2 z-[1000] px-3 py-1.5 rounded-full bg-white/95 backdrop-blur shadow-lg border border-gray-100 text-xs font-semibold text-gray-700 hover:bg-white transition-colors inline-flex items-center gap-1.5 ${kaartjeBoven ? "bottom-7" : "top-2"}`}>
-            <Icon name="globe" size={13} className="text-gray-400" />Hele reis
-          </button>
         )}
         {/* Het kaartje ligt óver de kaart in plaats van eronder: zo blijft de
             kaart even hoog, of je nu iets aanwijst of niet, en springt de pagina
