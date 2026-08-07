@@ -121,7 +121,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [tipsLocation, setTipsLocation] = useState(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const didAutoScroll = useRef(false);
-  const accent = trip.cover_color || PALETTE.primary;
 
   const loadJournal = useCallback(async () => {
     try { setTripJournal(asList((await api.getJournal(trip.id)).entries)); } catch {}
@@ -129,10 +128,6 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   useEffect(() => { loadJournal(); }, [loadJournal]);
 
   const handleDeleteActivity = (act) => verwijderActiviteit(act, onRefresh);
-  async function handleDeleteDay(id) {
-    if (!confirm("Dag verwijderen (inclusief activiteiten)?")) return;
-    await api.deleteDay(id); onRefresh();
-  }
 
   const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
   const todayDay = days.find((d) => isoDate(d.date) === todayIso(trip.timezone));

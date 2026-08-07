@@ -354,7 +354,7 @@ function ImportModal({ tripId, onImported, onClose }) {
 // als je toevallig een kijk-link aan het maken was) als te ruim (het hoort bij
 // het beheer, niet bij het delen). Staat nu in het beheeroverzicht bij de
 // gebruikers, en is daarom een eigen component geworden.
-function KijkStatistieken({ tripId, days, transports, accommodations, onJumpToDay }) {
+function KijkStatistieken({ tripId }) {
   const [stats, setStats] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [fout, setFout] = useState(null);
@@ -424,20 +424,19 @@ function KijkStatistieken({ tripId, days, transports, accommodations, onJumpToDa
                       </div>
                       {m.recent.length > 0 && (
                         <div className="space-y-1">
-                          {m.recent.map((a, i) => {
-                            const target = onJumpToDay ? recentActivityTarget(a, days || [], transports, accommodations) : null;
-                            return (
-                              <div key={i} onClick={() => target && onJumpToDay(target.dayId)}
-                                className={`text-xs text-gray-500 flex gap-2 rounded-md -mx-1 px-1 py-0.5 ${target ? "cursor-pointer hover:bg-white hover:text-sky-700 transition-colors" : ""}`}>
-                                <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
-                                  {target && <div className="text-[10px] text-gray-400 truncate">bij {target.label}</div>}
-                                </div>
-                                <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                          {/* Alleen lezen, niet aanklikbaar: dit paneel staat in het
+                              beheeroverzicht en niet in een geopende reis, dus er is
+                              geen dagboek om naartoe te springen. In het dagboek zelf
+                              doet "Reacties" dat wel. */}
+                          {m.recent.map((a, i) => (
+                            <div key={i} className="text-xs text-gray-500 flex gap-2 -mx-1 px-1 py-0.5">
+                              <Icon name={a.kind === "comment" ? "chat" : "thumb"} size={13} className="mt-0.5 text-gray-400 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
                               </div>
-                            );
-                          })}
+                              <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -460,38 +459,6 @@ function fmtDuration(minutes) {
   return rest ? `${h} u ${rest} min` : `${h} uur`;
 }
 
-// Herleidt een reactie/duimpje naar de dag waar die bij hoort: dezelfde
-// dag/activiteit/vervoer/verblijf-koppeling die een foto ook heeft, maar dan
-// met de dag-id als navigatiedoel in plaats van een label alleen.
-function recentActivityTarget(item, days, transports, accommodations) {
-  if (item.day_id) {
-    const day = days.find((d) => d.id === item.day_id);
-    return day ? { dayId: day.id, label: dayOptionLabel(day) } : null;
-  }
-  if (item.activity_id) {
-    for (const day of days) {
-      const act = (day.activities || []).find((a) => a.id === item.activity_id);
-      if (act) return { dayId: day.id, label: act.title };
-    }
-    return null;
-  }
-  if (item.transport_id) {
-    const t = (transports || []).find((t) => t.id === item.transport_id);
-    if (!t) return null;
-    const dayStr = t.departure_time ? String(t.departure_time).slice(0, 10) : t.arrival_time ? String(t.arrival_time).slice(0, 10) : null;
-    const day = days.find((d) => d.date && String(d.date).slice(0, 10) === dayStr);
-    return day ? { dayId: day.id, label: `${t.from_location} → ${t.to_location}` } : null;
-  }
-  if (item.accommodation_id) {
-    const a = (accommodations || []).find((a) => a.id === item.accommodation_id);
-    if (!a) return null;
-    const dayStr = a.check_in ? String(a.check_in).slice(0, 10) : null;
-    const day = days.find((d) => d.date && String(d.date).slice(0, 10) === dayStr);
-    return day ? { dayId: day.id, label: a.name } : null;
-  }
-  return null;
-}
-
 // Alleen nog het maken en delen van de link. De kijkcijfers die hier ook
 // stonden zijn verhuisd naar het beheeroverzicht (zie KijkStatistieken).
 function ShareModal({ tripId, onClose, role = "viewer" }) {
@@ -503,7 +470,9 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
   function generateLink(r) {
     setLink(null); setLoading(true); setError(null);
     api.createInvite(tripId, r)
-      .then((d) => setLink(d.link))
+      // Een antwoord zonder link telt ook als mislukt: anders bleef er precies
+      // hetzelfde lege scherm over als bij een afgewezen verzoek.
+      .then((d) => d?.link ? setLink(d.link) : setError("Delen is niet gelukt"))
       // Guest trips report is_owner, so the Delen button is offered and this
       // rejected with no handler — an unhandled rejection and a blank modal.
       .catch((err) => setError(err.message || "Delen is niet gelukt"))
@@ -532,8 +501,15 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
           </div>
         </div>
 
+        {/* De catch hieronder ving de mislukking al op, maar niemand kreeg het te
+            zien: het scherm ging van "Link aanmaken..." naar leeg. */}
         {loading ? (
           <div className="text-center py-4 text-gray-400">Link aanmaken...</div>
+        ) : error ? (
+          <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2.5 space-y-2">
+            <div className="text-sm text-red-700">{error}</div>
+            <Button variant="secondary" onClick={() => generateLink(role)}>Opnieuw proberen</Button>
+          </div>
         ) : link && (
           <>
             <div className="flex gap-2">

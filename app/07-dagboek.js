@@ -318,7 +318,6 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const [bulkUploaden, setBulkUploaden] = useState(false);
   const [entriesLoaded, setEntriesLoaded] = useState(false);
   const didAutoScroll = useRef(false);
-  const accent = trip.cover_color || PALETTE.primary;
 
   const loadEntries = useCallback(async () => {
     try {
