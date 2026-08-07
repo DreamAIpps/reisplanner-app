@@ -460,9 +460,9 @@ function fmtDuration(minutes) {
   return rest ? `${h} u ${rest} min` : `${h} uur`;
 }
 
-// Herleidt een reactie/duimpje naar de dag waar die bij hoort — dezelfde
-// dag/activiteit/vervoer/verblijf-koppeling als photoAssignmentInfo hierboven,
-// maar dan met de dag-id als navigatiedoel in plaats van een label alleen.
+// Herleidt een reactie/duimpje naar de dag waar die bij hoort: dezelfde
+// dag/activiteit/vervoer/verblijf-koppeling die een foto ook heeft, maar dan
+// met de dag-id als navigatiedoel in plaats van een label alleen.
 function recentActivityTarget(item, days, transports, accommodations) {
   if (item.day_id) {
     const day = days.find((d) => d.id === item.day_id);
@@ -566,30 +566,12 @@ function ShareModal({ tripId, onClose, role = "viewer" }) {
   );
 }
 
-// ---------- Photo gallery tab ----------
-function photoAssignmentInfo(photo, days, transports, accommodations) {
-  if (photo.activity_id) {
-    for (const day of days) {
-      const act = (day.activities || []).find((a) => a.id === photo.activity_id);
-      if (act) return { icon: categoryIcon(act.category), text: act.title };
-    }
-    return { icon: categoryIcon(), text: "Activiteit" };
-  }
-  if (photo.transport_id) {
-    const t = transports.find((t) => t.id === photo.transport_id);
-    return { icon: transportIcon(t?.type), text: t ? `${t.from_location} → ${t.to_location}` : "Vervoer" };
-  }
-  if (photo.accommodation_id) {
-    const a = accommodations.find((a) => a.id === photo.accommodation_id);
-    return { icon: "bed", text: a ? a.name : "Verblijf" };
-  }
-  if (photo.day_id) {
-    const day = days.find((d) => d.id === photo.day_id);
-    return { icon: "calendar", text: day ? dayOptionLabel(day) : "Dag" };
-  }
-  return null;
-}
-
+// ---------- Foto's aan een dag/activiteit koppelen ----------
+// Hier stond ook een aparte fotogalerij-tab. Die is weg: foto's worden vanuit
+// het dagboek geüpload en daar per dag getoond, dus een tweede plek met
+// dezelfde foto's leverde alleen de vraag op welke van de twee je moest hebben.
+// Deze drie helpers bleven wel nodig — de fotostrook in het dagboek en de
+// lightbox gebruiken ze om een foto aan een dag of activiteit te hangen.
 function photoTargetValue(photo) {
   if (photo.activity_id) return `activity:${photo.activity_id}`;
   if (photo.transport_id) return `transport:${photo.transport_id}`;
@@ -633,122 +615,6 @@ function assignPhotoPayload(days, value) {
   } else if (type === "transport") payload.transport_id = id;
   else if (type === "accommodation") payload.accommodation_id = id;
   return payload;
-}
-
-function PhotoGalleryTab({ trip, days, transports, accommodations, readOnly, currentUserId }) {
-  const [photos, setPhotos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [viewingIndex, setViewingIndex] = useState(null);
-  const [bulkUploading, setBulkUploading] = useState(false);
-  const [comments, setComments] = useState([]);
-  const [slotLikes, setSlotLikes] = useState({});
-
-  const loadPhotos = useCallback(async () => {
-    try { setPhotos(await api.getPhotos(trip.id)); } catch {} finally { setLoading(false); }
-  }, [trip.id]);
-  useEffect(() => { loadPhotos(); }, [loadPhotos]);
-
-  // Alleen nodig voor de reacties-laag in de fotoviewer — dezelfde bron als
-  // het dagboek, hier gebruikt om los van dat tabblad te kunnen reageren.
-  const loadComments = useCallback(async () => {
-    try {
-      const d = await api.getJournal(trip.id);
-      setComments(asList(d.comments));
-      setSlotLikes(d.slot_likes || {});
-    } catch {}
-  }, [trip.id]);
-  useEffect(() => { loadComments(); }, [loadComments]);
-
-  const isoDate = (dt) => dt ? String(dt).slice(0, 10) : null;
-  const { dayGroups, otherTransports, otherAccommodations } = computeDayGroups(days, transports, accommodations);
-
-  const todayGroup = dayGroups.find((g) => isoDate(g.day.date) === todayIso(trip.timezone));
-  const todayPhoto = todayGroup && photos.find((p) => {
-    if (p.day_id === todayGroup.day.id) return true;
-    if (p.activity_id && (todayGroup.day.activities || []).some((a) => a.id === p.activity_id)) return true;
-    if (p.transport_id && todayGroup.transports.some((t) => t.id === p.transport_id)) return true;
-    if (p.accommodation_id && todayGroup.accommodations.some((a) => a.id === p.accommodation_id)) return true;
-    if (isoDate(p.taken_at) === todayIso(trip.timezone)) return true;
-    return false;
-  });
-  function scrollToToday() {
-    if (!todayPhoto) return;
-    scrollNaarElement(`gallery-photo-${todayPhoto.id}`, { blok: "center" });
-  }
-
-
-
-
-  async function handleAssign(photo, value) {
-    const updated = await api.updatePhoto(photo.id, assignPhotoPayload(days, value));
-    setPhotos((prev) => prev.map((p) => (p.id === photo.id ? updated : p)));
-  }
-
-  async function handleDelete(photo) {
-    if (!confirm("Foto verwijderen?")) return;
-    await api.deletePhoto(photo.id);
-    setViewingIndex(null);
-    loadPhotos();
-  }
-
-  if (loading) return <div className="text-center py-16 text-gray-400">Laden...</div>;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
-        <h3 className="font-display text-[21px] text-gray-800">Foto's{photos.length > 0 ? ` (${photos.length})` : ""}</h3>
-        <div className="flex gap-2">
-          {todayPhoto && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
-          {!readOnly && <Button onClick={() => setBulkUploading(true)}><Icon name="camera" size={14} className="mr-1.5" />Foto's uploaden</Button>}
-        </div>
-      </div>
-
-      {bulkUploading && (
-        <BulkPhotoUpload tripId={trip.id} days={days}
-          onClose={() => setBulkUploading(false)}
-          onUploaded={loadPhotos} />
-      )}
-
-      {photos.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <Icon name="camera" size={40} strokeWidth={1.2} className="mx-auto mb-3 text-gray-300" />
-          <div className="font-medium">Nog geen foto's</div>
-          <div className="text-sm mt-1">Gebruik "Foto's uploaden" hierboven, of voeg ze toe bij een verhaal in het Dagboek</div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {photos.map((p, i) => {
-            const assignment = photoAssignmentInfo(p, days, transports, accommodations);
-            return (
-              <button key={p.id} id={`gallery-photo-${p.id}`} onClick={() => setViewingIndex(i)}
-                className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 group"
-                style={{ scrollMarginTop: "5rem", boxShadow: p.id === todayPhoto?.id ? `0 0 0 3px ${PALETTE.coral}` : undefined }}>
-                <img src={p.thumb_url || p.url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                {assignment ? (
-                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white text-xs font-medium truncate flex items-center gap-1">
-                    <Icon name={assignment.icon} size={13} /><span className="truncate">{assignment.text}</span>
-                  </div>
-                ) : (
-                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-white/80 text-xs font-semibold">Niet toegewezen</div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {viewingIndex != null && (
-        <PhotoLightbox photos={photos} index={viewingIndex}
-          onClose={() => setViewingIndex(null)} onIndexChange={setViewingIndex}
-          assign={readOnly ? null : { dayGroups, otherTransports, otherAccommodations, onChange: handleAssign }}
-          onDelete={readOnly ? null : handleDelete}
-          onRotate={readOnly ? null : async (p) => { await api.rotatePhoto(p.id); await loadPhotos(); }}
-          onCaption={readOnly ? null : async (p, text) => { await api.setPhotoCaption(p.id, text); await loadPhotos(); }}
-          comments={comments} slotLikes={slotLikes} tripId={trip.id} currentUserId={currentUserId} isOwner={trip.is_owner} onCommentsChange={loadComments} />
-      )}
-    </div>
-  );
 }
 
 // ---------- Packing tab ----------

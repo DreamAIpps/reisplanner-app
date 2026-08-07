@@ -315,6 +315,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const [tripPhotos, setTripPhotos] = useState([]);
   const [addingActivity, setAddingActivity] = useState(null);
   const [toonReacties, setToonReacties] = useState(false);
+  const [bulkUploaden, setBulkUploaden] = useState(false);
   const [entriesLoaded, setEntriesLoaded] = useState(false);
   const didAutoScroll = useRef(false);
   const accent = trip.cover_color || PALETTE.primary;
@@ -444,6 +445,15 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
               je op dat moment naar kijkt in plaats van altijd bij vandaag — dus
               deze knop deed hetzelfde, alleen minder precies. */}
           {todayDay && <Button onClick={scrollToToday} variant="secondary"><Icon name="pin" size={14} className="mr-1.5" />Vandaag</Button>}
+          {/* Een hele kaartlezer in één keer leegtrekken hoorde bij de losse
+              fotogalerij. Die galerij is weg — foto's staan nu bij de dag waar
+              ze bij horen — maar het in bulk uploaden zelf is te handig om mee
+              te verdwijnen: het leest de opnamedatum uit en zet elke foto
+              meteen op de goede reisdag. De "+" bij een dag blijft voor de
+              losse foto die je er nu bij wilt hebben. */}
+          {!readOnly && (
+            <Button onClick={() => setBulkUploaden(true)} variant="secondary"><Icon name="camera" size={14} className="mr-1.5" />Foto's uploaden</Button>
+          )}
           {currentUserId && (
             <Button onClick={() => setToonReacties(true)} variant="secondary"><Icon name="chat" size={14} className="mr-1.5" />Reacties</Button>
           )}
@@ -626,6 +636,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
             lichtOp(doel);
           }}
           onSluiten={() => setToonReacties(false)} />
+      )}
+      {bulkUploaden && (
+        <BulkPhotoUpload tripId={trip.id} days={days}
+          onClose={() => setBulkUploaden(false)}
+          onUploaded={() => { loadPhotos(); onRefresh?.(); }} />
       )}
       {addingActivity && (
         <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days} showPhotos
