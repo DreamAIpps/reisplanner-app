@@ -1094,6 +1094,42 @@ route("GET", "/api/admin/users", async (req, res) => {
   sendJson(res, 200, rows);
 });
 
+// Per gebruiker: elke reis waar hij lid van is, met wanneer hij daar voor het
+// laatst gekeken heeft. Dezelfde twee bronnen als de kijkcijfers per reis —
+// trip_views legt vast dát een reis geopend werd, trip_pings per minuut dat hij
+// openstond. De laatste ping is de scherpste "voor het laatst gezien"; is er
+// geen ping (een kort bezoek van onder de minuut), dan valt hij terug op de
+// laatste opening, zodat er niet ten onrechte "nooit" staat.
+//
+// Op verzoek pas, niet meegestuurd met de gebruikerslijst: dat zou bij elk
+// openen van het beheerscherm een kruistabel over alle gebruikers en al hun
+// reizen opleveren voor iets wat je per keer voor één iemand wilt weten.
+route("GET", "/api/admin/users/:id/reizen", async (req, res, params) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query(
+    `SELECT t.id, t.name, t.destination, t.start_date, t.end_date,
+            tm.role, (t.user_id = $1) AS is_owner,
+            v.aantal AS views, v.laatste AS last_viewed_at,
+            p.laatste AS last_active_at, COALESCE(p.minuten, 0) AS minutes
+       FROM trip_members tm
+       JOIN trips t ON t.id = tm.trip_id
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS aantal, MAX(viewed_at) AS laatste
+           FROM trip_views WHERE trip_id = t.id AND user_id = $1
+       ) v ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS minuten, MAX(minute) AS laatste
+           FROM trip_pings WHERE trip_id = t.id AND user_id = $1
+       ) p ON true
+      WHERE tm.user_id = $1
+      ORDER BY GREATEST(COALESCE(p.laatste, '-infinity'::timestamptz),
+                        COALESCE(v.laatste, '-infinity'::timestamptz)) DESC,
+               t.start_date DESC NULLS LAST`,
+    [params.id]
+  );
+  sendJson(res, 200, rows);
+});
+
 route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { user_id } = body;

@@ -641,12 +641,72 @@ function CockpitPanel() {
   );
 }
 
+// Per gebruiker: elke reis waar hij bij mag, en wanneer hij daar voor het laatst
+// keek. De kijkcijfers per reis (KijkStatistieken) beantwoorden de omgekeerde
+// vraag — "wie heeft déze reis gezien" — en dat is precies de verkeerde kant op
+// als je wilt weten of iemand nog meeleest.
+//
+// De laatste ping is nauwkeuriger dan de laatste opening: die telt per minuut
+// dat de reis openstond, terwijl een opening ook een tik kan zijn die meteen
+// weer weg is. Staat er geen ping, dan valt het terug op de opening — anders
+// las een kort bezoek als "nog nooit gekeken".
+function GebruikerReizen({ userId }) {
+  const [reizen, setReizen] = useState(null);
+  const [fout, setFout] = useState(null);
+
+  useEffect(() => {
+    let vervallen = false;
+    api.getAdminUserReizen(userId)
+      .then((d) => { if (!vervallen) setReizen(asList(d)); })
+      .catch((err) => { if (!vervallen) setFout(err.message || "Kon de reizen niet ophalen"); });
+    return () => { vervallen = true; };
+  }, [userId]);
+
+  if (fout) return <div className="text-xs text-gray-400 py-2">{fout}</div>;
+  if (!reizen) return <div className="text-xs text-gray-400 py-2">Laden...</div>;
+  if (!reizen.length) return <div className="text-xs text-gray-400 py-2">Deze gebruiker heeft geen reizen.</div>;
+
+  return (
+    <div className="space-y-1.5">
+      {reizen.map((r) => {
+        const gezien = r.last_active_at || r.last_viewed_at;
+        return (
+          <div key={r.id} className="flex items-start gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5">
+            {/* Sleutel = van hem, pen = mag wijzigen, oog = mag alleen kijken. */}
+            <Icon name={r.is_owner ? "key" : r.role === "viewer" ? "eye" : "pen"} size={13}
+              className="mt-1 text-gray-400 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-gray-700 truncate">{r.name}</div>
+              <div className="text-xs text-gray-400">
+                {r.is_owner ? "Eigenaar" : r.role === "viewer" ? "Alleen-lezen" : "Bewerker"}
+                {Number(r.views) > 0 && <> · <span className="tnum">{r.views}</span>x geopend</>}
+                {Number(r.minutes) > 0 && <> · {fmtDuration(Number(r.minutes))} gelezen</>}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              {gezien ? (
+                <>
+                  <div className="text-xs font-medium text-gray-600">{fmtDatetime(gezien)}</div>
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wide">laatst gekeken</div>
+                </>
+              ) : (
+                <div className="text-xs text-gray-300">nooit gekeken</div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AdminView({ onBack, currentUserId }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("trips");
   const [openStats, setOpenStats] = useState(null); // welke reis zijn kijkcijfers open heeft staan
+  const [openReizen, setOpenReizen] = useState(null); // welke gebruiker zijn reizen open heeft staan
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
   const [storage, setStorage] = useState(null);
@@ -894,7 +954,8 @@ function AdminView({ onBack, currentUserId }) {
       ) : tab === "users" ? (
         <div className="space-y-2">
           {users.map((u) => (
-            <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4">
+            <div key={u.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center gap-4">
               {u.avatar
                 ? <img src={u.avatar} className="w-10 h-10 rounded-full shrink-0" />
                 : <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm shrink-0">
@@ -918,15 +979,27 @@ function AdminView({ onBack, currentUserId }) {
                     : <span className="text-gray-300">● niet actief vandaag</span>}
                 </div>
               </div>
-              <div className="text-xs text-gray-400 shrink-0 text-right">
-                {(byUser[u.id]?.trips.length || 0)} rei{(byUser[u.id]?.trips.length || 0) !== 1 ? "zen" : "s"}
-              </div>
+              {/* Pas ophalen als iemand het openklapt: anders kost het openen van
+                  dit scherm een verzoek per gebruiker, voor een vraag die je
+                  telkens over één iemand hebt. */}
+              <button type="button" onClick={() => setOpenReizen(openReizen === u.id ? null : u.id)}
+                className="shrink-0 text-right text-xs text-sky-700 hover:underline">
+                <span className="tnum">{byUser[u.id]?.trips.length || 0}</span> eigen rei{(byUser[u.id]?.trips.length || 0) !== 1 ? "zen" : "s"}
+                <span className="block text-gray-400">{openReizen === u.id ? "verbergen ▲" : "laatst gekeken ▼"}</span>
+              </button>
               {u.id !== currentUserId && (
                 <button type="button" onClick={() => handleDeleteUser(u)} aria-label="Gebruiker verwijderen"
                   className="shrink-0 text-gray-300 hover:text-red-500 transition-colors p-1">
                   <Icon name="trash" size={16} />
                 </button>
               )}
+            </div>
+            {openReizen === u.id && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Reizen en laatste bezoek</div>
+                <GebruikerReizen userId={u.id} />
+              </div>
+            )}
             </div>
           ))}
           {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}

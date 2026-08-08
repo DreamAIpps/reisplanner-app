@@ -636,12 +636,55 @@ function DayWeatherBadge({ query, date, size = 13 }) {
 // Een aparte laag buiten dat blok heeft dat probleem niet, en een tweede
 // Leaflet-kaart is goedkoop: de plekken zijn al opgezocht, er gaat geen enkel
 // nieuw verzoek uit.
+const TOOLTIP_OPTIES = {
+  permanent: true, direction: "top", offset: [0, -8], opacity: 0.95,
+  className: "leaflet-reisplanner-tooltip",
+};
+
 function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [viewing, setViewing] = useState(null);
   const alleBoundsRef = useRef(null);
   const [verschoven, setVerschoven] = useState(false);
+  const labelsRef = useRef([]);
+
+  // Drie plekken in dezelfde wijk liggen op een kaartje van 190 pixels een paar
+  // pixels uit elkaar, en hun naamlabels dus bovenop elkaar. Leaflet tekent ze
+  // gewoon over elkaar heen: alleen de laatste is leesbaar en de rest lijkt
+  // simpelweg te ontbreken — "waarom staat dat café er niet bij?", terwijl de
+  // stip er wel degelijk is.
+  //
+  // Wie botst met een label dat er al staat, verliest zijn eigen label en wordt
+  // geteld bij de winnaar: "Cafe Annon Namba +2". Zo zie je meteen dat er meer
+  // op die plek staat, en inzoomen (of volledig scherm) haalt ze weer uit
+  // elkaar — vandaar dat dit ook na elke zoom en verschuiving opnieuw loopt.
+  const herschikLabelsRef = useRef(() => {
+    const items = labelsRef.current;
+    if (!items.length) return;
+    // Eerst iedereen terug naar zijn eigen naam, anders stapelen de tellingen
+    // van de vorige ronde op.
+    for (const it of items) {
+      if (it.marker.getTooltip()) it.marker.setTooltipContent(it.basis);
+      else it.marker.bindTooltip(it.basis, TOOLTIP_OPTIES);
+    }
+    const gehouden = [];
+    for (const it of items) {
+      const el = it.marker.getTooltip()?.getElement();
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const botsing = gehouden.find(({ r: g }) =>
+        !(r.right <= g.left || r.left >= g.right || r.bottom <= g.top || r.top >= g.bottom));
+      if (botsing) { botsing.aantal += 1; it.marker.unbindTooltip(); }
+      else gehouden.push({ it, r, aantal: 0 });
+    }
+    for (const g of gehouden) {
+      if (g.aantal > 0) {
+        g.it.marker.setTooltipContent(
+          `${g.it.basis}<span style="color:#9A8F8A"> +${g.aantal}</span>`);
+      }
+    }
+  });
 
   // Iets ruimer uitgezoomd dan strikt nodig — met de naam-labels erbij oogt een
   // kaartje dat precies om de stippen sluit al snel te vol. Zonder animatie:
@@ -692,6 +735,10 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       const L = window.L;
       if (!L) return;
       if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+      // De labels van de vorige kaart wijzen naar markers die zojuist zijn
+      // opgeruimd; laat je die staan, dan meet de herschikking straks lege
+      // elementen op.
+      labelsRef.current = [];
       // Dit kaartje stond helemaal vast: geen zoomknoppen, geen slepen. Bij een
       // dag met drie plekken in dezelfde stad liggen de stippen dan boven op
       // elkaar en valt er niets uit op te maken. In- en uitzoomen kan hier dus
@@ -704,6 +751,7 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
 
+      const labels = [];
       places.forEach((pl) => {
         const marker = L.marker([pl.lat, pl.lon], {
           icon: L.divIcon({
@@ -725,12 +773,12 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
         if (pl.label) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
           const timeSuffix = pl.time ? ` · ${escapeHtml(pl.time)}` : "";
-          marker.bindTooltip(`<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}`, {
-            permanent: true, direction: "top", offset: [0, -8], opacity: 0.95,
-            className: "leaflet-reisplanner-tooltip",
-          });
+          const basis = `<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}`;
+          marker.bindTooltip(basis, TOOLTIP_OPTIES);
+          labels.push({ marker, basis });
         }
       });
+      labelsRef.current = labels;
 
       // Een huisje in plaats van de oranje foto-stippen, zodat meteen duidelijk
       // is dat dit het startpunt (verblijf) is en niet nog een bezochte plek.
@@ -760,6 +808,11 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       // zodat er een weg terug in beeld komt.
       setVerschoven(false);
       map.on("zoomend dragend", () => setVerschoven(true));
+      // Leaflet zet de labels pas neer nadat de uitsnede staat, dus meten kan
+      // een frame later. Daarna bij elke beweging opnieuw: inzoomen haalt
+      // stippen uit elkaar en dan horen hun namen weer los te staan.
+      requestAnimationFrame(() => { if (!cancelled) herschikLabelsRef.current(); });
+      map.on("zoomend moveend", () => herschikLabelsRef.current());
 
       // Waar je zelf bent: het blauwe bolletje dat iedereen van kaarten kent,
       // met een lichte ring die laat zien hoe nauwkeurig de peiling is.
