@@ -1043,11 +1043,18 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   }
   function addPage() {
     pushHistory();
-    setPages((ps) => [...ps, {
-      title: null,
-      background: bookBackground ? { type: "color", value: bookBackground } : null,
-      photos: [],
-    }]);
+    setPages((ps) => {
+      const nieuw = {
+        title: null,
+        background: bookBackground ? { type: "color", value: bookBackground } : null,
+        photos: [],
+      };
+      // Achter de achterkant plakken zou de kaft middenin het boek zetten. Een
+      // nieuwe pagina hoort bij het binnenwerk, dus vlak vóór de achterkant.
+      const achter = ps.findIndex((p) => p.role === "cover_back");
+      if (achter < 0) return [...ps, nieuw];
+      return [...ps.slice(0, achter), nieuw, ...ps.slice(achter)];
+    });
     setDirty(true);
   }
   // Legt de foto's in de gekozen verhouding neer — elke foto naar het vak dat
@@ -1310,7 +1317,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setSaving(true); setError(null);
     try {
       await api.savePhotobookPages(bookId, momentopname.map((p) => ({
-        title: p.title, titleAlign: p.titleAlign,
+        title: p.title, titleAlign: p.titleAlign, role: p.role || null,
         titleX: p.titleX, titleY: p.titleY, titleWidth: p.titleWidth, titleHeight: p.titleHeight,
         background: !p.background ? null
           : p.background.type === "color" ? { type: "color", value: p.background.value }
@@ -2021,7 +2028,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "none" : "rotate(-90deg)" }} />
             </button>
             <span className="text-white/70 text-xs tnum text-center min-w-[4.5rem] shrink-0">
-              {pages.length === 0 ? "Geen pagina's" : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
+              {pages.length === 0 ? "Geen pagina's"
+                : page?.role === "cover_front" ? "Voorkant"
+                : page?.role === "cover_back" ? "Achterkant"
+                : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
             </span>
             <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
               className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
@@ -2178,6 +2188,22 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
 // straks een miniatuur tekenen allemaal hetzelfde, zodat ze niet uit elkaar
 // kunnen lopen. Alles staat in fracties van de pagina, dus de component is
 // maatloos: hij vult wat de ouder hem geeft.
+// Een gekozen lettergrootte staat in punten, want dat is wat de drukker krijgt.
+// Maar een voorbeeld is geen A4: een pagina van 200 pixels breed met 32-punts
+// tekst erin geeft letters van een halve pagina hoog, tekst die uit zijn kader
+// loopt en een titel die over zijn ondertitel heen valt. Dat is geen voorbeeld
+// meer. Een punt omrekenen naar een percentage van de paginabreedte (cqi, want
+// de pagina is de container) laat de tekst meeschalen — hoe groot het voorbeeld
+// ook staat, de verhouding klopt met het gedrukte boek.
+const A4_BREEDTE_PT = { portrait: 595.28, landscape: 841.89 };
+function schaalPunten(html, orientation) {
+  const breedte = A4_BREEDTE_PT[orientation === "landscape" ? "landscape" : "portrait"];
+  return String(html || "").replace(
+    /font-size:\s*([\d.]+)pt/gi,
+    (_, pt) => `font-size: ${(Number(pt) / breedte * 100).toFixed(3)}cqi`
+  );
+}
+
 function PhotobookPageView({ page, orientation, className = "", titleClassName = "font-display text-base text-gray-800", textClassName = "text-sm" }) {
   return (
     <div className={`overflow-hidden relative ${className}`}
@@ -2207,7 +2233,7 @@ function PhotobookPageView({ page, orientation, className = "", titleClassName =
       {(page.textBoxes || []).map((box, k) => (
         <div key={box.id ?? k} className="absolute overflow-hidden rounded-xl p-0.5"
           style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`, background: box.backgroundColor || "transparent" }}>
-          <RichTextView html={box.html} align={box.align} className={textClassName} />
+          <RichTextView html={schaalPunten(box.html, orientation)} align={box.align} className={textClassName} />
         </div>
       ))}
       {page.title && (
@@ -2216,7 +2242,7 @@ function PhotobookPageView({ page, orientation, className = "", titleClassName =
             left: `${(page.titleX ?? 0.15) * 100}%`, top: `${(page.titleY ?? 0.14) * 100}%`,
             width: `${(page.titleWidth ?? 0.7) * 100}%`, height: `${(page.titleHeight ?? 0.1) * 100}%`,
           }}>
-          <RichTextView html={page.title} align={page.titleAlign} className={titleClassName} />
+          <RichTextView html={schaalPunten(page.title, orientation)} align={page.titleAlign} className={titleClassName} />
         </div>
       )}
     </div>
@@ -2255,13 +2281,31 @@ function PhotobookPreview({ title, pages, orientation, onClose }) {
 // de hele pagina is de knop, niet een klein pictogrammetje in een hoek.
 function photobookSpreads(pages) {
   if (!pages.length) return [];
-  // Pagina 1 is de kaft en staat alleen; daarna vormen 2-3, 4-5, ... telkens
-  // een opengeslagen paar. Zo klopt wat je hier ziet met het gedrukte boek.
-  const spreads = [{ key: "kaft", label: "Kaft", items: [{ page: pages[0], index: 0 }] }];
-  for (let i = 1; i < pages.length; i += 2) {
-    const items = [{ page: pages[i], index: i }];
-    if (pages[i + 1]) items.push({ page: pages[i + 1], index: i + 1 });
-    spreads.push({ key: `spread-${i}`, label: null, items });
+  // Een kaft is één vel: achterkant links, rug in het midden, voorkant rechts.
+  // Zo komt hij van de drukker en zo staat hij hier, want anders is er niets aan
+  // te zien dat er twéé kanten te ontwerpen zijn — de achterkant bleef ergens
+  // achteraan hangen als "de laatste pagina" en kreeg nooit aandacht.
+  const voorIndex = pages.findIndex((p) => p.role === "cover_front");
+  const achterIndex = pages.findIndex((p) => p.role === "cover_back");
+  const spreads = [];
+  const binnenwerk = [];
+  if (voorIndex >= 0 || achterIndex >= 0) {
+    const items = [];
+    if (achterIndex >= 0) items.push({ page: pages[achterIndex], index: achterIndex, label: "Achterkant" });
+    if (voorIndex >= 0) items.push({ page: pages[voorIndex], index: voorIndex, label: "Voorkant" });
+    spreads.push({ key: "kaft", kaft: true, items });
+    pages.forEach((p, i) => { if (i !== voorIndex && i !== achterIndex) binnenwerk.push({ page: p, index: i }); });
+  } else {
+    // Boeken van vóór de losse kaftpagina's: pagina 1 stond alleen en heette
+    // "Kaft". Dat blijft zo, anders verspringt bij die boeken ineens alles.
+    spreads.push({ key: "kaft", items: [{ page: pages[0], index: 0, label: "Kaft" }] });
+    pages.forEach((p, i) => { if (i !== 0) binnenwerk.push({ page: p, index: i }); });
+  }
+  // Het binnenwerk twee aan twee, zoals het opengeslagen tegenover elkaar ligt.
+  for (let i = 0; i < binnenwerk.length; i += 2) {
+    const items = [{ ...binnenwerk[i], label: String(i + 1) }];
+    if (binnenwerk[i + 1]) items.push({ ...binnenwerk[i + 1], label: String(i + 2) });
+    spreads.push({ key: `spread-${binnenwerk[i].index}`, items });
   }
   return spreads;
 }
@@ -2276,10 +2320,18 @@ function PhotobookOverview({ pages, orientation, onOpenPage, onAddPage }) {
         // zich met flex-1, zodat het nummerregeltje eronder exact dezelfde
         // verdeling volgt en elk nummer onder zijn eigen pagina blijft staan.
         <div key={spread.key} className="mx-auto" style={{ width: spread.items.length === 1 ? "50%" : "100%" }}>
+          {/* Eén regel uitleg boven het kaftvel. Zonder dat is "Achterkant |
+              Voorkant" nog steeds te raden, maar niet te wéten — en dit is
+              precies het punt dat mensen missen. */}
+          {spread.kaft && (
+            <div className="text-[11px] text-white/50 mb-1.5 text-center leading-snug">
+              De kaft wordt als één vel gedrukt: achterkant links, voorkant rechts. Beide kanten ontwerp je zelf.
+            </div>
+          )}
           <div className="flex gap-0.5">
-            {spread.items.map(({ page, index }) => (
+            {spread.items.map(({ page, index, label }) => (
               <button key={index} type="button" onClick={() => onOpenPage(index)}
-                title={`Pagina ${index + 1} bewerken`}
+                title={`${spread.kaft ? label : `Pagina ${label}`} bewerken`}
                 className="rp-press relative block flex-1 min-w-0 shadow-2xl hover:ring-2 hover:ring-sky-400 transition-shadow">
                 <PhotobookPageView page={page} orientation={orientation}
                   titleClassName="font-display text-[9px] text-gray-800"
@@ -2291,10 +2343,10 @@ function PhotobookOverview({ pages, orientation, onOpenPage, onAddPage }) {
             ))}
           </div>
           <div className="flex gap-0.5 mt-1.5">
-            {spread.items.map(({ index }, i) => (
-              <div key={index} className="flex-1 min-w-0 text-[11px] text-white/50 tnum"
+            {spread.items.map(({ index, label }, i) => (
+              <div key={index} className={`flex-1 min-w-0 text-[11px] text-white/50 ${spread.kaft ? "font-semibold" : "tnum"}`}
                 style={{ textAlign: spread.items.length === 1 ? "center" : i === 0 ? "left" : "right" }}>
-                {spread.label && i === 0 ? spread.label : index + 1}
+                {label}
               </div>
             ))}
           </div>
