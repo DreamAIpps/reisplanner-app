@@ -329,6 +329,7 @@ const api = {
   getPhotobookPrintQuote: (id) => _guestMode ? Promise.resolve({ available: false }) : apiFetch(`/api/photobooks/${id}/print-quote`),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
+  getAdminUserReizen: (userId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/admin/users/${userId}/reizen`),
   assignTrip: (tripId, userId) => _guestMode ? guestApi.assignTrip() : apiFetch(`/api/admin/trips/${tripId}/assign`, { method: "PATCH", body: JSON.stringify({ user_id: userId }) }),
   deleteAdminTrip: (tripId) => apiFetch(`/api/admin/trips/${tripId}`, { method: "DELETE" }),
   deleteAdminUser: (userId) => apiFetch(`/api/admin/users/${userId}`, { method: "DELETE" }),
