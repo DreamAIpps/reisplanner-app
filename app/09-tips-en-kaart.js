@@ -427,12 +427,68 @@ const GROVE_SOORTEN = new Set([
 function isGrof(geo) {
   return !!geo?.soort && GROVE_SOORTEN.has(String(geo.soort).toLowerCase());
 }
+// Mapbox' eigen opzoekdienst, als er een token is. Die is er voor de kaarttegels
+// meestal al, en dan is dit gratis meegenomen: hij kent huisnummers en zaaknamen
+// waar Nominatim op afhaakt — precies de adressen waar dit mee begon. Geen
+// wachtrij van één verzoek per seconde, dus een dag met vijf plekken tekent in
+// één keer in plaats van in vijf tellen.
+//
+// Is er geen token, of geeft Mapbox niets terug, dan verandert er niets: de
+// oude ladder met Nominatim staat er nog precies zo onder.
+const GROVE_MAPBOX_SOORTEN = new Set([
+  "postcode", "place", "locality", "neighborhood", "district", "region", "country",
+]);
+const _mapboxInFlight = new Map();
+async function geocodeMapbox(query) {
+  const cfg = await mapConfig().catch(() => null);
+  const token = cfg?.mapboxToken;
+  if (!token || !query) return null;
+  const key = `mapbox1_${query}`;
+  try {
+    const c = localStorage.getItem(key);
+    if (c) return JSON.parse(c);
+  } catch {}
+  if (_mapboxInFlight.has(query)) return _mapboxInFlight.get(query);
+  const belofte = (async () => {
+    const url = `https://api.mapbox.com/search/geocode/v6/forward?q=${encodeURIComponent(query)}&limit=1&access_token=${encodeURIComponent(token)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Mapbox gaf ${res.status}`);
+    const data = await res.json();
+    const kenmerk = data?.features?.[0];
+    const coord = kenmerk?.geometry?.coordinates;
+    // Mapbox geeft lengte- vóór breedtegraad; de rest van de app doet het
+    // andersom. Hier omdraaien, niet overal anders.
+    const result = Array.isArray(coord) && coord.length === 2
+      ? {
+        lat: Number(coord[1]), lon: Number(coord[0]),
+        display: kenmerk.properties?.full_address || kenmerk.properties?.name || null,
+        city: kenmerk.properties?.context?.place?.name || null,
+        soort: kenmerk.properties?.feature_type || null,
+        precies: !GROVE_MAPBOX_SOORTEN.has(String(kenmerk.properties?.feature_type || "")),
+      }
+      : null;
+    // Ook een "niet gevonden" onthouden, om dezelfde reden als bij Nominatim.
+    try { localStorage.setItem(key, JSON.stringify(result)); } catch {}
+    return result;
+  })();
+  _mapboxInFlight.set(query, belofte);
+  try { return await belofte; }
+  catch { return null; }
+  finally { _mapboxInFlight.delete(query); }
+}
+
 async function geocodeSlim(query, naam) {
   if (!query) return null;
   // Staan de coördinaten in de tekst, dan zijn we klaar voordat we begonnen.
   const uitLink = coordinatenUitLink(query);
   if (uitLink) return uitLink;
   if (isWebadres(query)) return null;
+  // Mapbox krijgt het volledige adres zoals het er staat — geen gestreepte
+  // varianten, want juist het huisnummer is waar hij goed in is. Lukt dat, dan
+  // is de hele ladder hieronder overbodig.
+  const viaMapbox = await geocodeMapbox(naam && !String(query).toLowerCase().includes(String(naam).toLowerCase())
+    ? `${naam}, ${query}` : query);
+  if (viaMapbox?.lat != null && viaMapbox.precies) return viaMapbox;
   // De náám van de plek eerst, met de stad erbij. "Cafe Annon Namba, Osaka"
   // wijst een pand aan; het bijbehorende adres met postcode en verdieping is
   // voor een kaartendienst juist te veel van het goede en levert de wijk op.
@@ -454,7 +510,12 @@ async function geocodeSlim(query, naam) {
     if (geo?.lat != null) return { ...geo, precies: false };
   }
   geo = await geocodePlace(query).catch(() => null);
-  return geo?.lat != null ? { ...geo, precies: false } : null;
+  if (geo?.lat != null) return { ...geo, precies: false };
+  // Als laatste alsnog de grove treffer van Mapbox, die we hierboven opzij
+  // legden omdat hij niet nauwkeurig genoeg was. Een open ring in de goede wijk
+  // is beter dan een plek die helemaal van de kaart verdwijnt — en hij staat er
+  // eerlijk bij, want precies is hij niet.
+  return viaMapbox?.lat != null ? { ...viaMapbox, precies: false } : null;
 }
 
 // Waar je nu bent. Eén keer vragen en het antwoord delen: er staan meerdere
