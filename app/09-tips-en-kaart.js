@@ -330,7 +330,10 @@ function vereenvoudigdAdres(query) {
 
 const _geocodeInFlight = new Map();
 async function geocode(query) {
-  const key = `geocode3_${query}`;
+  // geocode4 en niet 3: het antwoord draagt sinds kort het soort plek mee
+  // (huis, straat, stad), en zonder nieuwe sleutel zouden oude opgeslagen
+  // antwoorden zonder dat veld als "precies" doorgaan terwijl ze dat niet zijn.
+  const key = `geocode4_${query}`;
   try {
     const c = localStorage.getItem(key);
     if (c) return JSON.parse(c);
@@ -343,7 +346,11 @@ async function geocode(query) {
     const data = await res.json();
     const addr = data[0]?.address || {};
     const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || null;
-    const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city } : null;
+    // addresstype zegt op welk niveau de treffer zit — "house" en "amenity"
+    // wijzen een pand aan, "city" en "postcode" een heel gebied. Dat verschil is
+    // het enige waaraan te zien is of een stip echt het adres is.
+    const soort = data[0]?.addresstype || data[0]?.type || null;
+    const result = data[0] ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, city, soort } : null;
     if (result) { try { localStorage.setItem(key, JSON.stringify(result)); } catch {} }
     // Ook een "niet gevonden" onthouden. Anders kost elk bezoek aan de planning
     // opnieuw een verzoek per adres dat toch nooit gevonden wordt — en die
@@ -374,15 +381,34 @@ async function geocode(query) {
 // bewust als laatste en het antwoord wordt bewaard, want dat model heeft een
 // limiet die de reistips ook nodig hebben. Een geplakte link slaan we helemaal
 // over: daar staat geen plaats in.
+//
+// Wat elke stap teruggaf zag er daarna identiek uit: één stip, even stellig.
+// Terwijl stap 3 niets anders is dan het midden van de stad — twee restaurants
+// in verschillende wijken kwamen zo op precies dezelfde plek te staan, en het
+// kaartje beweerde dat ze op hetzelfde adres zitten. Vandaar dat er nu bij komt
+// hóe scherp een stip is; de kaart tekent een benadering anders.
+const GROVE_SOORTEN = new Set([
+  "postcode", "suburb", "neighbourhood", "quarter", "city_district", "district",
+  "city", "town", "village", "hamlet", "municipality", "county", "state",
+  "province", "region", "country",
+]);
+function isGrof(geo) {
+  return !!geo?.soort && GROVE_SOORTEN.has(String(geo.soort).toLowerCase());
+}
 async function geocodeSlim(query) {
   if (!query || isWebadres(query)) return null;
   let geo = await geocode(query).catch(() => null);
-  if (!geo?.lat) {
-    const korter = vereenvoudigdAdres(query);
-    if (korter) geo = await geocode(korter).catch(() => null);
+  // Ook een geslaagde eerste poging kan grof zijn: kent de kaartendienst het
+  // huisnummer niet, dan antwoordt hij welwillend met de stad eromheen en
+  // meldt dat alleen in het soort-veld.
+  if (geo?.lat != null) return { ...geo, precies: !isGrof(geo) };
+  const korter = vereenvoudigdAdres(query);
+  if (korter) {
+    geo = await geocode(korter).catch(() => null);
+    if (geo?.lat != null) return { ...geo, precies: false };
   }
-  if (!geo?.lat) geo = await geocodePlace(query).catch(() => null);
-  return geo?.lat != null ? geo : null;
+  geo = await geocodePlace(query).catch(() => null);
+  return geo?.lat != null ? { ...geo, precies: false } : null;
 }
 
 // Waar je nu bent. Eén keer vragen en het antwoord delen: er staan meerdere
@@ -814,12 +840,20 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
 
       const labels = [];
       places.forEach((pl) => {
+        // Een dichte stip betekent: hier is het, op het adres. Een open ring
+        // betekent: ergens hier in de buurt — het exacte adres was niet te
+        // vinden en dit is de wijk of de plaats. Zonder dat onderscheid stonden
+        // twee restaurants in verschillende wijken als twee even stellige
+        // stippen op precies hetzelfde punt.
+        const benadering = pl.precies === false;
         const marker = L.marker([pl.lat, pl.lon], {
           icon: L.divIcon({
             className: "leaflet-reisplanner-icon",
-            html: `<div style="width:14px;height:14px;border-radius:50%;background:${PALETTE.coralDeep};border:2px solid #fff;box-shadow:0 1px 4px rgba(55,52,50,.4)"></div>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7],
+            html: benadering
+              ? `<div style="width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.9);border:2px dashed ${PALETTE.coralDeep};box-sizing:border-box"></div>`
+              : `<div style="width:14px;height:14px;border-radius:50%;background:${PALETTE.coralDeep};border:2px solid #fff;box-shadow:0 1px 4px rgba(55,52,50,.4)"></div>`,
+            iconSize: benadering ? [16, 16] : [14, 14],
+            iconAnchor: benadering ? [8, 8] : [7, 7],
           }),
         }).addTo(map);
         // Heeft de stip een activiteit als label, dan ga je daar naartoe — dat is
@@ -834,11 +868,15 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
         if (pl.label) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
           const timeSuffix = pl.time ? ` · ${escapeHtml(pl.time)}` : "";
-          const basis = `<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}`;
+          // "± buurt" erachter zodra de stip niet het echte adres is. Zonder dat
+          // leest een naam bij een stip als een belofte die niet waargemaakt
+          // wordt — en dat was precies de klacht.
+          const ruw = benadering ? `<span class="rp-ruw" title="Het exacte adres is niet gevonden; dit is de buurt of plaats">± buurt</span>` : "";
+          const basis = `<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}${ruw}`;
           // Naast de ingekorte regel ook de hele naam. Op de kaart moet een label
           // smal blijven, maar in de opengeklapte lijst is de vraag juist "wélke
           // plek is dat dan" — daar is een afgekapte naam het antwoord niet.
-          const volledig = `<span style="font-weight:600">${escapeHtml(pl.label)}</span>${timeSuffix}`;
+          const volledig = `<span style="font-weight:600">${escapeHtml(pl.label)}</span>${timeSuffix}${ruw}`;
           marker.bindTooltip(basis, TOOLTIP_OPTIES);
           labels.push({ marker, basis, volledig, idx: labels.length });
         }
@@ -1013,6 +1051,7 @@ function PlanningDagKaart({ activities, accommodation }) {
             lat: geo.lat, lon: geo.lon,
             label: act.title || null,
             time: roundTimeToQuarterHour(act.time),
+            precies: geo.precies !== false,
             // Geen activityId: die laat de kaart naar het dagboek springen, en
             // daar staat een dag die nog moet komen nog niet in.
             photos: [],
@@ -1020,6 +1059,19 @@ function PlanningDagKaart({ activities, accommodation }) {
         } else {
           mislukt.push(act.title || act.location);
         }
+      }
+      // Twee verschillende adressen op exact dezelfde coördinaat kunnen niet
+      // allebei kloppen — dan is minstens één van de twee teruggevallen op het
+      // midden van de wijk of de stad. Wat de soort-velden ook beweren: hier is
+      // het bewijs dat het geen echte adressen zijn, dus die stippen gaan
+      // allemaal als benadering de kaart op.
+      const perPunt = new Map();
+      for (const p of gevonden) {
+        const sleutel = `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+        perPunt.set(sleutel, (perPunt.get(sleutel) || 0) + 1);
+      }
+      for (const p of gevonden) {
+        if (perPunt.get(`${p.lat.toFixed(4)},${p.lon.toFixed(4)}`) > 1) p.precies = false;
       }
       if (!vervallen) { setPlekken(gevonden); setNietGevonden(mislukt); }
     })();
@@ -1035,6 +1087,16 @@ function PlanningDagKaart({ activities, accommodation }) {
       {nietGevonden.length > 0 && (
         <div className="mt-1.5 text-[11px] text-gray-400 leading-snug">
           Niet op de kaart: {nietGevonden.join(", ")} — dit adres is niet terug te vinden.
+        </div>
+      )}
+      {/* De open ringen op de kaart uitgelegd in woorden. Nodig, want anders
+          lijkt zo'n stip gewoon een stip: twee plekken kwamen op precies
+          hetzelfde punt terecht en het kaartje leek te beweren dat ze op
+          hetzelfde adres zitten. */}
+      {plekken.some((p) => p.precies === false) && (
+        <div className="mt-1.5 text-[11px] text-gray-400 leading-snug">
+          Bij benadering: {plekken.filter((p) => p.precies === false).map((p) => p.label).filter(Boolean).join(", ")}
+          {" "}— van dit adres is alleen de buurt of plaats gevonden, dus die stip staat er als open ring en niet op de deur.
         </div>
       )}
     </div>

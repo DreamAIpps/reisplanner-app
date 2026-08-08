@@ -83,6 +83,13 @@
 .rp-meer-regel {
   max-width: 78vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* "± buurt" achter een naam: deze stip is niet het adres zelf maar het gebied
+   eromheen. Bewust bleek en klein — het is een voorbehoud, geen waarschuwing. */
+.rp-ruw {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border-radius: 999px; border: 1px dashed #D8C7C0; color: #9A8F8A;
+  font-size: 9px; letter-spacing: .02em;
+}
 /* De weg terug, zodra de lijst openstaat. */
 .rp-meer-sluit {
   margin-top: 2px; padding-top: 2px; border-top: 1px solid #F1E7E3;
