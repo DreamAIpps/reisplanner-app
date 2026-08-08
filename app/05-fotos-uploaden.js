@@ -1,18 +1,19 @@
 // ---------- Photo gallery / uploader ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
-// Er stond nergens een grens op hóéveel foto's je in één keer kiest, en dat is
-// niet gratis. Gemeten met een telefoonfoto van 4032x3024 (8,3 MB): na het
-// verkleinen naar 2000px is dat 0,8 MB, maar als base64-tekst staat hij met
-// 2,1 MB in het geheugen — JavaScript bewaart tekst met twee bytes per teken.
+// Er stond nergens een grens op hóéveel foto's je in één keer kiest. Dat kon
+// niet blijven: een telefoonfoto van 4032x3024 (8,3 MB) weegt na het verkleinen
+// 0,8 MB, maar stond als base64-tekst met 2,1 MB in het geheugen van de pagina —
+// JavaScript bewaart tekst met twee bytes per teken. Honderd foto's was ruim
+// 200 MB, en daar wordt een tab op een telefoon om afgeschoten.
 //
-// Het uploadscherm houdt ze allemaal tegelijk vast, want je moet ze nog kunnen
-// nalopen en per stuk een dag kunnen kiezen. Honderd foto's is dan al ruim
-// 200 MB, en daar wordt een tab op een telefoon om afgeschoten — met alles wat
-// je net hebt ingelezen erbij. Vandaar een harde grens dáár, en een vraag
-// vooraf bij de losse strook, die foto's wél een voor een verwerkt en dus
-// alleen tijd kost.
-const FOTOS_MAX_TEGELIJK = 100;
+// Sinds de wachtrij hieronder staan de foto's als Blob op schijf en telt dat
+// niet meer mee. Wat overblijft is de lijst zelf: één rij per foto, met een
+// afbeelding erin. Vandaar dat de grens omhoog kan maar niet weg — bij duizend
+// rijen is het scherm onwerkbaar, hoe zuinig het geheugen ook is. De losse
+// fotostrook verwerkt foto's een voor een en heeft die grens niet nodig; die
+// vraagt alleen om bevestiging boven de vijftig, want het kost tijd.
+const FOTOS_MAX_TEGELIJK = 250;
 const FOTOS_VEEL = 50;
 
 // EXIF GPS coordinates come as [degrees, minutes, seconds]
@@ -66,30 +67,119 @@ function downscaleImage(file) {
       canvas.width = Math.round(img.naturalWidth * scale);
       canvas.height = Math.round(img.naturalHeight * scale);
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        if (!blob) { resolve(null); return; }
-        const reader = new FileReader();
-        reader.onload = () => resolve({ dataUrl: reader.result, mediaType: "image/jpeg" });
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      }, "image/jpeg", 0.85);
+      // De Blob zoals canvas 'm geeft, niet als tekst. Wie hem als base64 wil
+      // (de upload zelf) vraagt daar apart om; wie hem alleen wil tónen heeft
+      // aan een object-URL genoeg en hoeft die bytes nooit in het geheugen van
+      // de pagina te hebben.
+      canvas.toBlob((blob) => resolve(blob ? { blob, mediaType: "image/jpeg" } : null), "image/jpeg", 0.85);
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
   });
 }
 
-function readAsDataUrl(file) {
+// Als Blob. Een bestand ís al een Blob, dus wat niet verkleind kan worden
+// (HEIC bijvoorbeeld) gaat gewoon zoals het is door.
+async function readForUploadBlob(file) {
+  return (await downscaleImage(file)) || { blob: file, mediaType: file.type };
+}
+
+// Pas op het moment van versturen naar base64, want de API verwacht JSON. Zo
+// bestaat die dure tekstversie alleen tijdens het ene verzoek waar hij voor
+// nodig is, in plaats van voor de hele stapel tegelijk.
+function blobNaarBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
     reader.onerror = () => reject(new Error("Kon foto niet lezen"));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
 }
 
 async function readForUpload(file) {
-  return (await downscaleImage(file)) || { dataUrl: await readAsDataUrl(file), mediaType: file.type };
+  const { blob, mediaType } = await readForUploadBlob(file);
+  return { dataUrl: `data:${mediaType};base64,${await blobNaarBase64(blob)}`, mediaType };
+}
+
+// ---------- Wachtrij voor uploads, op schijf ----------
+// Foto's stonden als base64-tekst in het geheugen van de pagina te wachten tot
+// ze verstuurd werden. Dat is twee keer duur: tekst kost in JavaScript twee
+// bytes per teken, en base64 is zelf al een derde groter dan de bytes die het
+// beschrijft. Ging de tab eraan — en dat gebeurt op een telefoon bij een paar
+// honderd megabyte — dan was alles weg wat je net had ingelezen.
+//
+// Nu gaan ze als Blob naar IndexedDB. Die staat op schijf, telt niet mee voor
+// het geheugen van de pagina, en blijft staan als de app afgeschoten wordt of
+// je hem gewoon sluit: bij de volgende keer openen staat de stapel er nog.
+const WACHTRIJ_DB = "reisplanner-uploads";
+const WACHTRIJ_STORE = "wachtrij";
+let _wachtrijDb = null;
+function wachtrijDb() {
+  if (_wachtrijDb) return _wachtrijDb;
+  _wachtrijDb = new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") { reject(new Error("Geen IndexedDB")); return; }
+    const verzoek = indexedDB.open(WACHTRIJ_DB, 1);
+    verzoek.onupgradeneeded = () => {
+      const db = verzoek.result;
+      if (!db.objectStoreNames.contains(WACHTRIJ_STORE)) {
+        const store = db.createObjectStore(WACHTRIJ_STORE, { keyPath: "id", autoIncrement: true });
+        store.createIndex("tripId", "tripId");
+      }
+    };
+    verzoek.onsuccess = () => resolve(verzoek.result);
+    verzoek.onerror = () => reject(verzoek.error || new Error("Wachtrij openen mislukt"));
+  });
+  return _wachtrijDb;
+}
+
+// Privémodus en oudere browsers kunnen IndexedDB weigeren. Dan houden we de
+// Blobs gewoon in een Map: dat overleeft geen herlaad, maar het is nog altijd
+// stukken zuiniger dan base64-tekst, en de app blijft werken.
+const _wachtrijNood = new Map();
+let _noodTeller = 0;
+
+async function wachtrijDoe(modus, fn) {
+  const db = await wachtrijDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WACHTRIJ_STORE, modus);
+    const uitkomst = fn(tx.objectStore(WACHTRIJ_STORE));
+    tx.oncomplete = () => resolve(uitkomst.result !== undefined ? uitkomst.result : uitkomst);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function wachtrijToevoegen(item) {
+  try {
+    return await wachtrijDoe("readwrite", (store) => store.add(item));
+  } catch {
+    const id = `nood-${++_noodTeller}`;
+    _wachtrijNood.set(id, { ...item, id });
+    return id;
+  }
+}
+async function wachtrijVoorReis(tripId) {
+  try {
+    const alles = await wachtrijDoe("readonly", (store) => store.index("tripId").getAll(tripId));
+    return asList(alles);
+  } catch {
+    return [..._wachtrijNood.values()].filter((it) => it.tripId === tripId);
+  }
+}
+async function wachtrijLezen(id) {
+  if (_wachtrijNood.has(id)) return _wachtrijNood.get(id);
+  try { return await wachtrijDoe("readonly", (store) => store.get(id)); }
+  catch { return null; }
+}
+async function wachtrijBijwerken(id, patch) {
+  if (_wachtrijNood.has(id)) { _wachtrijNood.set(id, { ..._wachtrijNood.get(id), ...patch }); return; }
+  const bestaand = await wachtrijLezen(id);
+  if (!bestaand) return;
+  try { await wachtrijDoe("readwrite", (store) => store.put({ ...bestaand, ...patch })); } catch {}
+}
+async function wachtrijVerwijderen(id) {
+  if (_wachtrijNood.delete(id)) return;
+  try { await wachtrijDoe("readwrite", (store) => store.delete(id)); } catch {}
 }
 
 // Onderweg is de verbinding niet de vraag maar het probleem: van 22 foto's over
@@ -769,7 +859,39 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   const [verwerken, setVerwerken] = useState({ done: 0, total: 0 });
   const [grensmelding, setGrensmelding] = useState(null);
   const [uploadMelding, setUploadMelding] = useState(null);
+  const [hervat, setHervat] = useState(0);
   const fileRef = useRef(null);
+  // Object-URL's zijn verwijzingen naar de Blobs op schijf; zolang je ze niet
+  // intrekt houdt de browser die bytes vast. Bijhouden welke er open staan is
+  // dus geen boekhoudkundige netheid maar precies waar dit hele verhaal om
+  // begonnen is.
+  const urlsRef = useRef(new Set());
+  function maakUrl(blob) {
+    const url = URL.createObjectURL(blob);
+    urlsRef.current.add(url);
+    return url;
+  }
+  function trekUrlIn(url) {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    urlsRef.current.delete(url);
+  }
+  useEffect(() => () => { urlsRef.current.forEach((u) => URL.revokeObjectURL(u)); urlsRef.current.clear(); }, []);
+
+  // Wat er van een vorige keer nog klaarstaat. Sloot de app halverwege — of
+  // schoot de telefoon hem af — dan hoef je niet opnieuw te beginnen.
+  useEffect(() => {
+    let vervallen = false;
+    wachtrijVoorReis(tripId).then((rijen) => {
+      if (vervallen || !rijen.length) return;
+      setItems(rijen.map((r) => ({
+        id: r.id, name: r.name, mediaType: r.mediaType, exif: r.exif || {},
+        dayId: r.dayId || "", thumbUrl: maakUrl(r.blob),
+      })));
+      setHervat(rijen.length);
+    }).catch(() => {});
+    return () => { vervallen = true; };
+  }, [tripId]);
 
   function matchDay(takenAt) {
     if (!takenAt) return "";
@@ -795,19 +917,24 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
       setGrensmelding(null);
     }
     setProcessing(true);
+    setHervat(0);
     // Optellen bij wat er al stond: kiest iemand er halverwege nog een map bij,
     // dan hoort de balk dóór te lopen en niet terug te springen naar nul.
     setVerwerken((v) => ({ done: v.done, total: v.total + files.length }));
     const newItems = await mapWithConcurrency(files, 4, async (file) => {
-      const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
       try {
-        const [image, exif] = await Promise.all([readForUpload(file), readExif(file)]);
+        const [image, exif] = await Promise.all([readForUploadBlob(file), readExif(file)]);
         // Pas ná het eventueel verkleinen checken: anders werd precies de grote
-        // telefoonfoto die downscaleImage moest redden alsnog geweigerd.
-        if ((image.dataUrl.split(",")[1].length * 3) / 4 > MAX_PHOTO_BYTES) return { key, name: file.name, error: "Te groot (max 8 MB)" };
-        return { key, name: file.name, dataUrl: image.dataUrl, mediaType: image.mediaType, exif, dayId: matchDay(exif.taken_at) };
+        // telefoonfoto die downscaleImage moest redden alsnog geweigerd. Op de
+        // Blob zelf, want die kent zijn omvang zonder dat er iets omgezet hoeft.
+        if (image.blob.size > MAX_PHOTO_BYTES) return { id: `fout-${file.name}-${file.lastModified}`, name: file.name, error: "Te groot (max 8 MB)" };
+        const dayId = matchDay(exif.taken_at);
+        const id = await wachtrijToevoegen({
+          tripId, name: file.name, blob: image.blob, mediaType: image.mediaType, exif, dayId,
+        });
+        return { id, name: file.name, mediaType: image.mediaType, exif, dayId, thumbUrl: maakUrl(image.blob) };
       } catch {
-        return { key, name: file.name, error: "Kon foto niet lezen" };
+        return { id: `fout-${file.name}-${file.lastModified}`, name: file.name, error: "Kon foto niet lezen" };
       } finally {
         // In finally, niet na de return: een foto die niet te lezen is telt ook
         // als afgehandeld, anders bleef de balk bij een rotte foto hangen.
@@ -818,11 +945,18 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
     setProcessing(false);
   }
 
-  function setItemDay(key, dayId) {
-    setItems((prev) => prev.map((it) => it.key === key ? { ...it, dayId } : it));
+  function setItemDay(id, dayId) {
+    setItems((prev) => prev.map((it) => it.id === id ? { ...it, dayId } : it));
+    // Ook op schijf, anders is de dagkeuze na een herlaad weer weg terwijl de
+    // foto er nog staat.
+    wachtrijBijwerken(id, { dayId });
   }
-  function removeItem(key) {
-    setItems((prev) => prev.filter((it) => it.key !== key));
+  function removeItem(id) {
+    setItems((prev) => {
+      trekUrlIn(prev.find((it) => it.id === id)?.thumbUrl);
+      return prev.filter((it) => it.id !== id);
+    });
+    wachtrijVerwijderen(id);
   }
 
   const uploadable = items.filter((it) => !it.error);
@@ -834,29 +968,42 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
     const gelukt = new Set();
     const redenen = new Map();
     await mapWithConcurrency(uploadable, 3, async (it) => {
-      const base64 = it.dataUrl.split(",")[1];
       try {
+        // De Blob pas hier van schijf halen en pas hier naar base64 omzetten:
+        // met drie tegelijk bestaan er dus nooit meer dan drie dure tekstversies,
+        // hoe lang de stapel ook is.
+        const rij = await wachtrijLezen(it.id);
+        if (!rij?.blob) throw new Error("Foto niet meer gevonden");
+        const base64 = await blobNaarBase64(rij.blob);
         await metHerkansing(() => api.addPhoto(tripId, {
           day_id: it.dayId || null, activity_id: null,
           image: { data: base64, mediaType: it.mediaType },
           taken_at: it.exif.taken_at || null, latitude: it.exif.latitude ?? null, longitude: it.exif.longitude ?? null,
         }));
-        gelukt.add(it.key);
+        await wachtrijVerwijderen(it.id);
+        gelukt.add(it.id);
       } catch (err) {
-        redenen.set(it.key, err.message || "mislukt");
+        redenen.set(it.id, err.message || "mislukt");
       }
       setProgress((p) => p + 1);
     });
     setUploading(false);
     onUploaded();
-    if (!redenen.size) { onClose(); return; }
+    if (!redenen.size) {
+      setItems((prev) => { prev.forEach((it) => trekUrlIn(it.thumbUrl)); return []; });
+      onClose();
+      return;
+    }
     // Wat gelukt is verdwijnt uit de lijst, wat niet gelukt is blijft staan met
     // de reden erbij. Het scherm sloot voorheen hoe dan ook, en dan waren die
     // foto's weg: opnieuw opzoeken in je fotorol, opnieuw inlezen, opnieuw een
     // dag kiezen. Terwijl er niets mis is met de foto — het netwerk hikte even.
-    setItems((prev) => prev
-      .filter((it) => !gelukt.has(it.key))
-      .map((it) => redenen.has(it.key) ? { ...it, uploadFout: redenen.get(it.key) } : it));
+    setItems((prev) => {
+      prev.forEach((it) => { if (gelukt.has(it.id)) trekUrlIn(it.thumbUrl); });
+      return prev
+        .filter((it) => !gelukt.has(it.id))
+        .map((it) => redenen.has(it.id) ? { ...it, uploadFout: redenen.get(it.id) } : it);
+    });
     setUploadMelding(`${gelukt.size} van de ${uploadable.length} foto's geüpload. ${redenen.size === 1 ? "Deze bleef" : `Deze ${redenen.size} bleven`} achter — meestal een haperende verbinding.`);
   }
 
@@ -890,12 +1037,17 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
           </div>
           {grensmelding && <Grensmelding tekst={grensmelding} />}
           {uploadMelding && <Grensmelding tekst={uploadMelding} />}
+          {!uploadMelding && hervat > 0 && (
+            <Grensmelding tekst={`${hervat === 1 ? "Deze foto stond" : `Deze ${hervat} foto's stonden`} nog klaar van de vorige keer — je hoeft ze niet opnieuw te kiezen.`} />
+          )}
           {processing && <VerwerkVoortgang {...verwerken} />}
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {items.map((it) => (
-              <div key={it.key} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
-                {it.dataUrl ? (
-                  <img src={it.dataUrl} alt="" className="w-20 h-20 rounded-lg object-cover shrink-0" />
+              <div key={it.id} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
+                {it.thumbUrl ? (
+                  // lazy: bij een lijst van honderden zou de browser anders elke
+                  // foto op volle grootte decoderen om 'm 80 bij 80 te tonen.
+                  <img src={it.thumbUrl} alt="" loading="lazy" decoding="async" className="w-20 h-20 rounded-lg object-cover shrink-0" />
                 ) : (
                   <div className="w-20 h-20 rounded-lg bg-red-50 flex items-center justify-center text-red-400 shrink-0"><Icon name="alert" size={22} /></div>
                 )}
@@ -910,12 +1062,12 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
                   )}
                 </div>
                 {!it.error && (
-                  <Select value={it.dayId} onChange={(e) => setItemDay(it.key, e.target.value)} className="!w-40 shrink-0">
+                  <Select value={it.dayId} onChange={(e) => setItemDay(it.id, e.target.value)} className="!w-40 shrink-0">
                     <option value="">Geen dag</option>
                     {days.map((d) => <option key={d.id} value={d.id}>{dayOptionLabel(d)}</option>)}
                   </Select>
                 )}
-                <button type="button" onClick={() => removeItem(it.key)} className="text-gray-300 hover:text-red-500 p-1 shrink-0" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
+                <button type="button" onClick={() => removeItem(it.id)} className="text-gray-300 hover:text-red-500 p-1 shrink-0" aria-label="Verwijderen"><Icon name="trash" size={15} /></button>
               </div>
             ))}
           </div>
