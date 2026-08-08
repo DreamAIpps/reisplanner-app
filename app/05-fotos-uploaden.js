@@ -470,6 +470,17 @@ function UploadProgress({ done, total, className = "" }) {
   );
 }
 
+// Klaarmaken is niet hetzelfde als uploaden, dus het zegt ook wat anders. Bij
+// een grote stapel is dit de fase waarin je zit te wachten zonder dat er iets
+// het netwerk op gaat: decoderen, verkleinen, opnamedatum uitlezen.
+function VerwerkVoortgang({ done, total, className = "" }) {
+  return (
+    <Voortgangsbalk done={done} total={total} className={className}
+      label={`${done} van de ${total} ${total === 1 ? "foto" : "foto's"} klaargemaakt`}
+      ariaLabel="Voortgang foto's klaarmaken" />
+  );
+}
+
 function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -698,6 +709,12 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Het uploaden had al een balk, het inlezen niet — terwijl dát bij een hele
+  // kaartlezer de lange wacht is: elke foto wordt gedecodeerd, verkleind en op
+  // zijn Exif nagekeken vóórdat er ook maar iets verstuurd wordt. Bij tweehonderd
+  // vakantiefoto's stond er minutenlang "Foto's verwerken..." zonder dat iets
+  // liet zien of het opschoot of vastliep.
+  const [verwerken, setVerwerken] = useState({ done: 0, total: 0 });
   const fileRef = useRef(null);
 
   function matchDay(takenAt) {
@@ -712,6 +729,9 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
     e.target.value = "";
     if (!files.length) return;
     setProcessing(true);
+    // Optellen bij wat er al stond: kiest iemand er halverwege nog een map bij,
+    // dan hoort de balk dóór te lopen en niet terug te springen naar nul.
+    setVerwerken((v) => ({ done: v.done, total: v.total + files.length }));
     const newItems = await mapWithConcurrency(files, 4, async (file) => {
       const key = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
       try {
@@ -722,6 +742,10 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
         return { key, name: file.name, dataUrl: image.dataUrl, mediaType: image.mediaType, exif, dayId: matchDay(exif.taken_at) };
       } catch {
         return { key, name: file.name, error: "Kon foto niet lezen" };
+      } finally {
+        // In finally, niet na de return: een foto die niet te lezen is telt ook
+        // als afgehandeld, anders bleef de balk bij een rotte foto hangen.
+        setVerwerken((v) => ({ ...v, done: v.done + 1 }));
       }
     });
     setItems((prev) => [...prev, ...newItems]);
@@ -764,7 +788,10 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   }
 
   return (
-    <Modal title="Foto's uploaden" onClose={onClose} wide>
+    // Niet te sluiten zolang er foto's klaargemaakt of verstuurd worden: half
+    // ingelezen werk weggooien of een upload afbreken is nooit wat iemand
+    // bedoelt met een tik naast het venster.
+    <Modal title="Foto's uploaden" onClose={() => { if (!processing && !uploading) onClose(); }} wide>
       {items.length === 0 ? (
         <div>
           <p className="text-sm text-gray-500 mb-4">
@@ -774,6 +801,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
             className="w-full border-2 border-dashed border-gray-200 rounded-xl py-10 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
             {processing ? "Foto's verwerken..." : <><Icon name="camera" size={15} className="mr-1.5" />Klik om foto's te kiezen</>}
           </button>
+          {processing && <VerwerkVoortgang {...verwerken} className="mt-3" />}
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
         </div>
       ) : (
@@ -786,7 +814,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
               className="text-xs font-medium text-sky-600 hover:text-sky-700 disabled:opacity-50">+ Meer foto's</button>
             <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
           </div>
-          {processing && <div className="text-xs text-gray-400">Nieuwe foto's verwerken...</div>}
+          {processing && <VerwerkVoortgang {...verwerken} />}
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {items.map((it) => (
               <div key={it.key} className="flex items-center gap-3 border border-gray-100 rounded-lg p-2">
@@ -815,7 +843,7 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
           </div>
           {uploading && <UploadProgress done={progress} total={uploadable.length} />}
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={uploading}>Annuleren</Button>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={uploading || processing}>Annuleren</Button>
             <Button type="button" onClick={handleUploadAll} disabled={uploading || !uploadable.length}>
               {uploading ? "Uploaden..." : `Uploaden (${uploadable.length})`}
             </Button>
