@@ -257,6 +257,55 @@ function mapConfig() {
   return _mapConfig;
 }
 
+// Wie de kaart onder je vinger geleverd heeft. Mapbox en OpenStreetMap eisen
+// allebei dat dit zichtbaar is — daar valt niet aan te tornen omdat een kaartje
+// klein is. Op de grote kaart staat het als gewone regel onderaan; op een
+// kaartje van 190 pixels zou die regel een tiende van de hoogte opeten, en
+// daarvoor staat een knopje toe dat de vermelding bij een tik laat zien.
+function kaartBronnen(cfg) {
+  return cfg?.mapboxToken
+    ? [{ naam: "Mapbox", url: "https://www.mapbox.com/about/maps/" },
+       { naam: "OpenStreetMap", url: "https://www.openstreetmap.org/copyright" }]
+    : [{ naam: "OpenStreetMap", url: "https://www.openstreetmap.org/copyright" },
+       { naam: "CARTO", url: "https://carto.com/" }];
+}
+
+function BronKnopje({ className = "", style }) {
+  const [bronnen, setBronnen] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let vervallen = false;
+    mapConfig().then((cfg) => { if (!vervallen) setBronnen(kaartBronnen(cfg)); }).catch(() => {});
+    return () => { vervallen = true; };
+  }, []);
+  if (!bronnen) return null;
+  return (
+    <div className={`absolute z-[1000] ${className}`} style={style}>
+      {open && (
+        // Boven het knopje, want eronder zit de rand van de kaart. De links
+        // openen in een nieuw tabblad: je bent een kaart aan het lezen, daar
+        // hoor je niet uit weggeklikt te worden.
+        <div className="absolute bottom-8 left-0 whitespace-nowrap rounded-lg bg-white/95 backdrop-blur shadow-md border border-gray-100 px-2 py-1 text-[10px] text-gray-500">
+          {bronnen.map((b, i) => (
+            <React.Fragment key={b.naam}>
+              {i > 0 && " "}©{" "}
+              <a href={b.url} target="_blank" rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-sky-700 hover:underline">{b.naam}</a>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        title="Bronvermelding van de kaart" aria-label="Bronvermelding van de kaart"
+        aria-expanded={open}
+        className="w-6 h-6 rounded-full flex items-center justify-center bg-white/90 backdrop-blur shadow border border-gray-100 text-[11px] font-semibold text-gray-500 hover:text-gray-800 transition-colors">
+        i
+      </button>
+    </div>
+  );
+}
+
 function addBaseLayer(L, map, cfg) {
   if (cfg && cfg.mapboxToken) {
     // Een rustige ondergrond: het spoor is het onderwerp, niet de kaart.
@@ -1083,6 +1132,11 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
         style={{ top: vol ? "calc(0.5rem + env(safe-area-inset-top))" : "0.5rem" }}>
         <Icon name={vol ? "close" : "arrowUpRight"} size={16} />
       </button>
+      {/* Alleen op de vergrote kaart. Linksonder is daar de enige vrije hoek:
+          linksboven staan de zoomknoppen, rechtsboven de sluitknop en
+          rechtsonder "Hele dag". Op het kaartje in de pagina zelf staat niets —
+          daar is elke pixel er een die je van de kaart afsnoept. */}
+      {vol && <BronKnopje className="left-2" style={{ bottom: "calc(0.5rem + env(safe-area-inset-bottom))" }} />}
       {/* Zodra je zelf gezoomd of geschoven hebt: de weg terug naar de hele dag.
           Rechtsonder, want linksboven staan de zoomknoppen. */}
       {verschoven && (
@@ -1602,6 +1656,12 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
         zoomControl: false, scrollWheelZoom: false, doubleClickZoom: false,
         touchZoom: false, boxZoom: false, keyboard: false, dragging: false, tap: false,
       });
+      // Leaflet zet standaard zijn eigen naam vóór de bronvermelding. Dat is de
+      // handtekening van de tekenbibliotheek, niet van wie de kaart geleverd
+      // heeft — en anders dan Mapbox en OpenStreetMap vraagt Leaflet er niet om.
+      // Onder een kaartje van een paar centimeter telt elk woord, dus weg ermee;
+      // de bronnen die er wél moeten staan blijven staan.
+      map.attributionControl?.setPrefix(false);
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
       laagRef.current = { stops: [], etappes: [] };
