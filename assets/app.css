@@ -67,6 +67,27 @@
   padding: 2px 7px; font-size: 11px; line-height: 1.5; border-radius: 6px;
   border: none; box-shadow: 0 1px 3px rgba(55,52,50,.18);
 }
+/* "+2" achter een naam: hier staan er nog twee op vrijwel dezelfde plek, en dit
+   label is aan te tikken om ze te zien. Als los grijs tekstje las dat als een
+   voetnoot; met een eigen vlakje leest het als het knopje dat het is. */
+.rp-meer {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border-radius: 999px; background: #F1E7E3; color: #6B605B;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+/* Regels in de opengeklapte lijst. Daar staan de volledige namen, en die mogen
+   breder zijn dan het ingekorte label op de kaart — maar niet breder dan het
+   kaartje. Eén regel per plek: laten afbreken maakte van drie namen een blok
+   van negen regels dat alsnog het kaartje uit liep, en dan is er niets gewonnen.
+   Past een naam echt niet, dan kapt de browser 'm hier af. */
+.rp-meer-regel {
+  max-width: 78vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* De weg terug, zodra de lijst openstaat. */
+.rp-meer-sluit {
+  margin-top: 2px; padding-top: 2px; border-top: 1px solid #F1E7E3;
+  font-size: 10px; color: #9A8F8A;
+}
 
 /* Cijfers die onder elkaar horen te staan — tijden, bedragen, dagnummers. */
 .tnum { font-variant-numeric: tabular-nums; }
