@@ -636,9 +636,12 @@ function DayWeatherBadge({ query, date, size = 13 }) {
 // Een aparte laag buiten dat blok heeft dat probleem niet, en een tweede
 // Leaflet-kaart is goedkoop: de plekken zijn al opgezocht, er gaat geen enkel
 // nieuw verzoek uit.
+// interactive, omdat een label met "+1" erop aangetikt moet kunnen worden om te
+// laten zien wát daar nog meer staat. Zonder deze vlag laat Leaflet muis- en
+// tikgebeurtenissen door het label heen naar de kaart eronder vallen.
 const TOOLTIP_OPTIES = {
   permanent: true, direction: "top", offset: [0, -8], opacity: 0.95,
-  className: "leaflet-reisplanner-tooltip",
+  className: "leaflet-reisplanner-tooltip", interactive: true,
 };
 
 function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
@@ -659,14 +662,23 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
   // geteld bij de winnaar: "Cafe Annon Namba +2". Zo zie je meteen dat er meer
   // op die plek staat, en inzoomen (of volledig scherm) haalt ze weer uit
   // elkaar — vandaar dat dit ook na elke zoom en verschuiving opnieuw loopt.
+  //
+  // Alleen een aantal is niet genoeg: "+1" zegt dát er nog iets is, niet wát.
+  // Tik op het label en het klapt open tot de hele lijst; nog een tik en het is
+  // weer één regel. Uitzoomen of verschuiven vouwt alles dicht, want dan is de
+  // groepering toch opnieuw bepaald.
+  const uitgeklaptRef = useRef(new Set());
   const herschikLabelsRef = useRef(() => {
     const items = labelsRef.current;
     if (!items.length) return;
-    // Eerst iedereen terug naar zijn eigen naam, anders stapelen de tellingen
-    // van de vorige ronde op.
+    // Eerst iedereen helemaal terug naar af: eigen naam, en opnieuw gebonden met
+    // de standaardopties. Dat laatste is geen overdaad — een opengeklapte lijst
+    // kan hieronder naar "onder de stip" zijn omgeklapt, en met die stand nog
+    // actief meet de volgende ronde heel andere botsingen op. Eén keer is een
+    // label dan verdwenen dat er hoorde te staan.
     for (const it of items) {
-      if (it.marker.getTooltip()) it.marker.setTooltipContent(it.basis);
-      else it.marker.bindTooltip(it.basis, TOOLTIP_OPTIES);
+      if (it.marker.getTooltip()) it.marker.unbindTooltip();
+      it.marker.bindTooltip(it.basis, TOOLTIP_OPTIES);
     }
     const gehouden = [];
     for (const it of items) {
@@ -675,13 +687,61 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       const r = el.getBoundingClientRect();
       const botsing = gehouden.find(({ r: g }) =>
         !(r.right <= g.left || r.left >= g.right || r.bottom <= g.top || r.top >= g.bottom));
-      if (botsing) { botsing.aantal += 1; it.marker.unbindTooltip(); }
-      else gehouden.push({ it, r, aantal: 0 });
+      if (botsing) { botsing.groep.push(it); it.marker.unbindTooltip(); }
+      else gehouden.push({ it, r, groep: [it] });
     }
     for (const g of gehouden) {
-      if (g.aantal > 0) {
-        g.it.marker.setTooltipContent(
-          `${g.it.basis}<span style="color:#9A8F8A"> +${g.aantal}</span>`);
+      const el = g.it.marker.getTooltip()?.getElement();
+      if (!el) continue;
+      // Een label dat niets verbergt hoort ook niet aan te voelen alsof je erop
+      // kunt tikken. Leaflet zet met `interactive` een handje-cursor en vangt de
+      // klik af; bij een enkel label halen we dat weer weg, zodat slepen dat op
+      // een naam begint gewoon de kaart verschuift.
+      if (g.groep.length < 2) {
+        el.classList.remove("leaflet-interactive");
+        el.removeAttribute("title");
+        continue;
+      }
+      el.classList.add("leaflet-interactive");
+      const open = uitgeklaptRef.current.has(g.it.idx);
+      const inhoud = open
+        ? g.groep.map((m) => `<div class="rp-meer-regel">${m.volledig}</div>`).join("")
+          + `<div class="rp-meer-sluit">tik om in te klappen</div>`
+        : `${g.it.basis}<span class="rp-meer">+${g.groep.length - 1}</span>`;
+      g.it.marker.setTooltipContent(inhoud);
+      el.title = open ? "Tik om in te klappen" : "Tik om te zien wat hier nog meer staat";
+      // Een label staat bóven zijn stip. Klapt het open tot drie regels en zit
+      // die stip hoog in beeld, dan groeit de lijst het kaartje uit en zie je
+      // juist de bovenste namen niet — precies wat het moest oplossen. Past het
+      // niet, dan hangt de lijst onder de stip.
+      if (open) {
+        const kaartVak = g.it.marker._map?.getContainer().getBoundingClientRect();
+        if (kaartVak && el.getBoundingClientRect().top < kaartVak.top) {
+          g.it.marker.unbindTooltip();
+          g.it.marker.bindTooltip(inhoud, { ...TOOLTIP_OPTIES, direction: "bottom", offset: [0, 8] });
+        }
+      }
+      // Ná het eventuele omklappen ophalen: dat bindt opnieuw en levert dus een
+      // nieuw element op. Zou de klik aan het oude hangen, dan viel de lijst
+      // niet meer dicht te tikken.
+      const tikEl = g.it.marker.getTooltip()?.getElement();
+      if (!tikEl) continue;
+      if (open) {
+        // Boven de andere labels, anders schuift een buurlabel er half overheen.
+        tikEl.style.zIndex = 1000;
+        tikEl.classList.add("leaflet-interactive");
+        tikEl.title = "Tik om in te klappen";
+      }
+      // Eén keer per label-element aanhaken: setTooltipContent hergebruikt het
+      // element, dus zonder deze vlag stapelen de luisteraars zich op.
+      if (!tikEl._rpTik) {
+        tikEl._rpTik = true;
+        tikEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const nu = uitgeklaptRef.current;
+          if (nu.has(g.it.idx)) nu.delete(g.it.idx); else nu.add(g.it.idx);
+          herschikLabelsRef.current();
+        });
       }
     }
   });
@@ -739,6 +799,7 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       // opgeruimd; laat je die staan, dan meet de herschikking straks lege
       // elementen op.
       labelsRef.current = [];
+      uitgeklaptRef.current.clear();
       // Dit kaartje stond helemaal vast: geen zoomknoppen, geen slepen. Bij een
       // dag met drie plekken in dezelfde stad liggen de stippen dan boven op
       // elkaar en valt er niets uit op te maken. In- en uitzoomen kan hier dus
@@ -774,8 +835,12 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
           const shortLabel = pl.label.length > 20 ? pl.label.slice(0, 19) + "…" : pl.label;
           const timeSuffix = pl.time ? ` · ${escapeHtml(pl.time)}` : "";
           const basis = `<span style="font-weight:600">${escapeHtml(shortLabel)}</span>${timeSuffix}`;
+          // Naast de ingekorte regel ook de hele naam. Op de kaart moet een label
+          // smal blijven, maar in de opengeklapte lijst is de vraag juist "wélke
+          // plek is dat dan" — daar is een afgekapte naam het antwoord niet.
+          const volledig = `<span style="font-weight:600">${escapeHtml(pl.label)}</span>${timeSuffix}`;
           marker.bindTooltip(basis, TOOLTIP_OPTIES);
-          labels.push({ marker, basis });
+          labels.push({ marker, basis, volledig, idx: labels.length });
         }
       });
       labelsRef.current = labels;
@@ -812,7 +877,12 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       // een frame later. Daarna bij elke beweging opnieuw: inzoomen haalt
       // stippen uit elkaar en dan horen hun namen weer los te staan.
       requestAnimationFrame(() => { if (!cancelled) herschikLabelsRef.current(); });
-      map.on("zoomend moveend", () => herschikLabelsRef.current());
+      map.on("zoomend moveend", () => {
+        // Wat openstond hoorde bij de vorige indeling; na een zoom of
+        // verschuiving zitten er andere labels bij elkaar, dus alles dicht.
+        uitgeklaptRef.current.clear();
+        herschikLabelsRef.current();
+      });
 
       // Waar je zelf bent: het blauwe bolletje dat iedereen van kaarten kent,
       // met een lichte ring die laat zien hoe nauwkeurig de peiling is.
