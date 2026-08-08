@@ -314,6 +314,38 @@ async function wachtOpBeurt() {
 function isWebadres(tekst) {
   return /^https?:\/\//i.test(String(tekst).trim());
 }
+
+// Een geplakte Google Maps-link werd tot nu toe helemaal overgeslagen: "geen
+// plaats, geen kans". Maar in zo'n link staan de coördinaten meestal gewoon,
+// en dan is er niets meer op te zoeken — dit is het scherpste antwoord dat we
+// kunnen krijgen, gratis en zonder wachttijd.
+//
+// De drie vormen die Google gebruikt:
+//   .../@34.6640,135.5045,17z        het midden van de kaart
+//   ...!3d34.6640!4d135.5045         de aangewezen plek in een deel-link
+//   ...?q=34.6640,135.5045           een directe zoekopdracht op coördinaten
+// !3d/!4d gaat vóór op @: die eerste wijst de plék aan, de @ alleen waar de
+// kaart toevallig gecentreerd stond toen de link gemaakt werd.
+const KAARTLINK_PATRONEN = [
+  /!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/,
+  /[?&]q=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/,
+  /@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/,
+];
+function coordinatenUitLink(tekst) {
+  const s = String(tekst || "");
+  for (const patroon of KAARTLINK_PATRONEN) {
+    const m = patroon.exec(s);
+    if (!m) continue;
+    const lat = Number(m[1]);
+    const lon = Number(m[2]);
+    // Een getal uit een URL is nog geen coördinaat: buiten deze grenzen is het
+    // iets anders dat toevallig op een komma-paar leek.
+    if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+      return { lat, lon, precies: true, soort: "link" };
+    }
+  }
+  return null;
+}
 function vereenvoudigdAdres(query) {
   // Per woord wegstrepen wat cijfers bevat, niet per komma-deel: in
   // "〒542-0075 Osaka" zit de postcode én de stad, en juist die stad is het
@@ -395,8 +427,22 @@ const GROVE_SOORTEN = new Set([
 function isGrof(geo) {
   return !!geo?.soort && GROVE_SOORTEN.has(String(geo.soort).toLowerCase());
 }
-async function geocodeSlim(query) {
-  if (!query || isWebadres(query)) return null;
+async function geocodeSlim(query, naam) {
+  if (!query) return null;
+  // Staan de coördinaten in de tekst, dan zijn we klaar voordat we begonnen.
+  const uitLink = coordinatenUitLink(query);
+  if (uitLink) return uitLink;
+  if (isWebadres(query)) return null;
+  // De náám van de plek eerst, met de stad erbij. "Cafe Annon Namba, Osaka"
+  // wijst een pand aan; het bijbehorende adres met postcode en verdieping is
+  // voor een kaartendienst juist te veel van het goede en levert de wijk op.
+  // Een naam die al in het adres voorkomt slaan we over — dan zou het dezelfde
+  // vraag zijn met extra woorden, en elke poging kost een seconde wachttijd.
+  if (naam && !String(query).toLowerCase().includes(String(naam).toLowerCase())) {
+    const plaatsdeel = vereenvoudigdAdres(query) || query;
+    const opNaam = await geocode(`${naam}, ${plaatsdeel}`).catch(() => null);
+    if (opNaam?.lat != null && !isGrof(opNaam)) return { ...opNaam, precies: true };
+  }
   let geo = await geocode(query).catch(() => null);
   // Ook een geslaagde eerste poging kan grof zijn: kent de kaartendienst het
   // huisnummer niet, dan antwoordt hij welwillend met de stad eromheen en
@@ -816,7 +862,9 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
     (async () => {
       const cfg = await mapConfig();
       const accQuery = accommodation?.address || accommodation?.name;
-      const accGeo = await geocodeSlim(accQuery);
+      // De naam van het verblijf erbij: "Ryokan Sakura, Gionmachi, Kyoto" wijst
+      // het pand aan waar het losse adres vaak alleen de straat oplevert.
+      const accGeo = await geocodeSlim(accQuery, accommodation?.name);
       if (cancelled || !mapRef.current) return;
       const L = window.L;
       if (!L) return;
@@ -1018,9 +1066,10 @@ function PlanningDagKaart({ activities, accommodation }) {
     const gezien = new Set();
     return (activities || [])
       .filter((a) => a.location && a.location.trim())
-      // Een geplakte Google Maps-link is geen adres; die valt niet op te zoeken
-      // en kost anders wel een verzoek van een seconde.
-      .filter((a) => !isWebadres(a.location))
+      // Een geplakte kaartlink met coördinaten erin is juist de beste bron die
+      // er is — die gaat mee. Een link zonder coördinaten valt niet op te
+      // zoeken en kost anders wel een verzoek van een seconde: die blijft eruit.
+      .filter((a) => !isWebadres(a.location) || coordinatenUitLink(a.location))
       .filter((a) => {
         const sleutel = a.location.trim().toLowerCase();
         if (gezien.has(sleutel)) return false;
@@ -1044,7 +1093,7 @@ function PlanningDagKaart({ activities, accommodation }) {
       for (const act of teZoeken) {
         // Een stip in de goede wijk is oneindig veel bruikbaarder dan helemaal
         // geen kaart — zie geocodeSlim voor hoe hard er gezocht wordt.
-        const geo = await geocodeSlim(act.location);
+        const geo = await geocodeSlim(act.location, act.title);
         if (vervallen) return;
         if (geo?.lat != null) {
           gevonden.push({
