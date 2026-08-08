@@ -12,6 +12,12 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [previewViewer, setPreviewViewer] = useState(false);
+  // Mag een alleen-lezen bezoeker de fotoquiz zien? Alleen als hij meespeelt.
+  // Wie via een deel-link meekijkt heeft niets met de quiz te maken. Maar wie de
+  // QR-code scant wordt door de server als deelnemer ingeschreven én als viewer
+  // aan de reis toegevoegd, en landt daarna op tab=quiz — die hoort hem juist
+  // wél te zien, anders is de QR-code een doodlopende weg.
+  const [magQuiz, setMagQuiz] = useState(false);
   // Budgetbalk op planning is standaard ingeklapt (klein) — de uitsplitsing per
   // categorie komt pas als je 'm openklapt.
   const [budgetExpanded, setBudgetExpanded] = useState(false);
@@ -22,6 +28,17 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [showMoreMenu]);
+
+  // Alleen voor alleen-lezen bezoekers opvragen: voor een eigenaar of reisgenoot
+  // staat de quiz toch al in het menu, en dan is dit een verzoek om niets.
+  useEffect(() => {
+    if (trip?.role !== "viewer") { setMagQuiz(false); return; }
+    let vervallen = false;
+    api.getQuizSession(tripId, true)
+      .then((d) => { if (!vervallen) setMagQuiz(!!d?.session?.isParticipant); })
+      .catch(() => { if (!vervallen) setMagQuiz(false); });
+    return () => { vervallen = true; };
+  }, [tripId, trip?.role]);
 
   // Elke wijziging (activiteit toevoegen, verblijf opslaan, uitgave wissen)
   // roept load() opnieuw aan. Doe je er twee vlak achter elkaar, dan is niet
@@ -339,22 +356,25 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
 
       {readOnly ? (
         <>
-          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, maar wel het
-              dagboek en de fotoquiz — die wijzigt niets aan de reis, dus past
-              prima bij alleen-lezen toegang. De kaart stond hier ook nog als
-              aparte bestemming; die zit nu in het dagboek zelf. */}
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
-            <button onClick={() => setTab("journal")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab !== "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-              style={tab !== "quiz" ? { color: legibleOn(accent) } : {}}>
-              <Icon name="book" size={15} />Dagboek
-            </button>
-            <button onClick={() => setTab("quiz")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-              style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
-              <Icon name="sparkle" size={15} />Fotoquiz
-            </button>
-          </div>
+          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, alleen het
+              dagboek. De fotoquiz stond hier ook, maar wie via een deel-link
+              meekijkt heeft daar niets mee te maken; die verschijnt alleen voor
+              wie daadwerkelijk meespeelt. Zonder tweede knop is de balk zelf ook
+              overbodig — één tab is geen keuze. */}
+          {magQuiz && (
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
+              <button onClick={() => setTab("journal")}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab !== "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+                style={tab !== "quiz" ? { color: legibleOn(accent) } : {}}>
+                <Icon name="book" size={15} />Dagboek
+              </button>
+              <button onClick={() => setTab("quiz")}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+                style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
+                <Icon name="sparkle" size={15} />Fotoquiz
+              </button>
+            </div>
+          )}
           <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />
         </>
       ) : (
@@ -373,7 +393,9 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           (een nieuwe sessie aanmaken/starten/stoppen), niet alleen
           eigenaar/editor. Wie een sessie aanmaakt wordt daar zelf gastheer
           van, ongeacht wie de reis bezit. */}
-      {tab === "quiz" && (
+      {/* Ook het scherm zelf achter dezelfde voorwaarde: anders komt een
+          alleen-lezen bezoeker er alsnog in via ?tab=quiz in de adresbalk. */}
+      {tab === "quiz" && (!readOnly || magQuiz) && (
         <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")} label="Fotoquiz sluiten">
           <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>

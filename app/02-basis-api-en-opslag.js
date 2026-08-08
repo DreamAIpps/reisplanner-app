@@ -313,7 +313,10 @@ const api = {
   // Reacties en duimpjes van de afgelopen dagen. In gastmodus bestaat er geen
   // server om het aan te vragen — daar reageert ook niemand, dus leeg.
   getReacties: (tripId, dagen = 7) => _guestMode ? Promise.resolve({ dagen, items: [] }) : apiFetch(`/api/trips/${tripId}/reacties?dagen=${dagen}`),
-  getQuizSession: (tripId) => _guestMode ? Promise.resolve({ session: null }) : apiFetch(`/api/trips/${tripId}/quiz/session`),
+  // alleenKijken: opvragen zonder jezelf als deelnemer in te schrijven. Nodig om
+  // te bepalen of de quiz aan een alleen-lezen bezoeker getoond moet worden.
+  getQuizSession: (tripId, alleenKijken) => _guestMode ? Promise.resolve({ session: null })
+    : apiFetch(`/api/trips/${tripId}/quiz/session${alleenKijken ? "?kijk=1" : ""}`),
   createQuizSession: (tripId, opts) => _guestMode ? Promise.reject(new Error("De fotoquiz vereist een account.")) : apiFetch(`/api/trips/${tripId}/quiz/sessions`, { method: "POST", body: JSON.stringify(opts || {}) }),
   startQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/start`, { method: "POST", body: "{}" }),
   stopQuizSession: (tripId, sessionId) => apiFetch(`/api/trips/${tripId}/quiz/sessions/${sessionId}/stop`, { method: "POST", body: "{}" }),

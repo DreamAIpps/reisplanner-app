@@ -3505,7 +3505,13 @@ route("GET", "/api/trips/:id/quiz/session", async (req, res, params) => {
   // fotoquiz-tab opent, doet daarmee impliciet mee — geen aparte QR-link meer
   // nodig. Alleen zinvol zolang de sessie nog leeft; een allang afgelopen
   // sessie hoeft niemand er nog bij te trekken.
-  if (loaded && !loaded.isParticipant && computeQuizPhase(loaded.session).phase !== "done") {
+  //
+  // Met ?kijk=1 gebeurt dat inschrijven niet. Dat is nodig sinds de app aan een
+  // alleen-lezen bezoeker vraagt óf hij meespeelt, om te bepalen of de quiz
+  // getoond moet worden: zonder deze uitzondering zou juist die vraag hem
+  // inschrijven, en dan speelt iedereen die de reis opent automatisch mee.
+  const alleenKijken = new URL(req.url, "http://localhost").searchParams.get("kijk") === "1";
+  if (!alleenKijken && loaded && !loaded.isParticipant && computeQuizPhase(loaded.session).phase !== "done") {
     await query("INSERT INTO quiz_participants (session_id, user_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
       [loaded.session.id, req.user.id, req.user.given_name || req.user.name || "Speler"]);
     loaded = await loadQuizSessionForUser(params.id, req.user.id);
