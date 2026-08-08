@@ -1039,13 +1039,17 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
           labels.push({ marker, basis, volledig, idx: labels.length });
         }
       });
-      labelsRef.current = labels;
 
-      // Een huisje in plaats van de oranje foto-stippen, zodat meteen duidelijk
-      // is dat dit het startpunt (verblijf) is en niet nog een bezochte plek.
-      // Geen naamlabel erbij — het icoon alleen zegt al genoeg.
+      // Een huisje in plaats van de oranje stippen, zodat meteen duidelijk is
+      // dat dit het verblijf is en niet nog een plek waar je heen gaat.
+      //
+      // Er stond bewust geen naam bij — "het icoon zegt al genoeg". Dat bleek
+      // niet zo: op een kaartje vol benoemde plekken is een naamloos donker
+      // bolletje juist het enige waarvan je je afvraagt wát het is. Het krijgt
+      // nu dezelfde behandeling als de rest, inclusief het inklappen bij
+      // botsende labels.
       if (accGeo) {
-        L.marker([accGeo.lat, accGeo.lon], {
+        const huis = L.marker([accGeo.lat, accGeo.lon], {
           icon: L.divIcon({
             className: "leaflet-reisplanner-icon",
             html: `<div style="width:18px;height:18px;border-radius:50%;background:${PALETTE.textPrimary};border:2px solid #fff;box-shadow:0 1px 4px rgba(55,52,50,.4);display:flex;align-items:center;justify-content:center">
@@ -1056,7 +1060,25 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
             iconAnchor: [9, 9],
           }),
         }).addTo(map);
+        const naam = accommodation?.name || accQuery;
+        if (naam) {
+          const kort = naam.length > 20 ? naam.slice(0, 19) + "…" : naam;
+          // "verblijf" erachter in plaats van een tijd: een hotel heeft geen
+          // aanvangstijd, en zonder dat woord leest het als nog een activiteit.
+          const staart = `<span style="color:#9A8F8A"> · verblijf</span>`;
+          const ruw = accGeo.precies === false ? `<span class="rp-ruw" title="Het exacte adres is niet gevonden; dit is de buurt of plaats">± buurt</span>` : "";
+          const basis = `<span style="font-weight:600">${escapeHtml(kort)}</span>${staart}${ruw}`;
+          huis.bindTooltip(basis, TOOLTIP_OPTIES);
+          labels.push({
+            marker: huis, basis, idx: labels.length,
+            volledig: `<span style="font-weight:600">${escapeHtml(naam)}</span>${staart}${ruw}`,
+          });
+        }
       }
+      // Pas hier, als het verblijf er ook bij staat: de herschikking moet alle
+      // labels tegelijk kunnen wegen, anders botst het huisje met een activiteit
+      // zonder dat iemand dat opmerkt.
+      labelsRef.current = labels;
 
       // Iets ruimer uitgezoomd dan strikt nodig — met de naam-labels erbij oogt
       // een kaartje dat precies om de stippen sluit al snel te vol.
