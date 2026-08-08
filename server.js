@@ -3738,6 +3738,63 @@ const PHOTOBOOK_MAX_CORNER = 0.05;
 // wat in een style-attribuut iets anders zou kunnen betekenen.
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
+// De reisnaam gaat als tekst een HTML-veld in (titels en tekstvakken zijn rich
+// text), dus een reis met een & of < erin moet hier ontsnapt worden — anders
+// staat er straks kapotte opmaak in het boek, of erger.
+function escapeHtmlText(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// "5 – 11 augustus 2026", of over de maandgrens heen "28 juli – 11 augustus
+// 2026". Jaartal en maandnaam één keer noemen waar dat kan: op een kaft telt
+// elke regel, en "5 augustus 2026 – 11 augustus 2026" leest als een formulier.
+function reisPeriodeTekst(start, eind) {
+  if (!start) return null;
+  const MAANDEN = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
+  const s = new Date(start);
+  const e = eind ? new Date(eind) : null;
+  const deel = (d, metMaand, metJaar) =>
+    `${d.getUTCDate()}${metMaand ? ` ${MAANDEN[d.getUTCMonth()]}` : ""}${metJaar ? ` ${d.getUTCFullYear()}` : ""}`;
+  if (!e || e.getTime() === s.getTime()) return deel(s, true, true);
+  const zelfdeJaar = s.getUTCFullYear() === e.getUTCFullYear();
+  const zelfdeMaand = zelfdeJaar && s.getUTCMonth() === e.getUTCMonth();
+  return `${deel(s, !zelfdeMaand, !zelfdeJaar)} – ${deel(e, true, true)}`;
+}
+
+// De standaardkaft: de reisnaam groot in het midden, met de reisperiode eronder.
+// Los van de smaak is dit het enige ontwerp dat meteen ergens op slaat zonder
+// dat iemand iets invult — en het maakt in één blik duidelijk dat een kaft over
+// tekst gaat en niet over een foto die toevallig de eerste was.
+async function maakKaftPaginas(bookId, boekTitel, periode, achtergrondkleur, laatstePositie) {
+  const titelHtml = `<font style="font-size: 32pt">${escapeHtmlText(boekTitel)}</font>`;
+  const achterkantHtml = `<font style="font-size: 12pt">${escapeHtmlText(boekTitel)}</font>`;
+  const kaften = [
+    { positie: 0, role: "cover_front", titel: titelHtml, sub: periode ? `<font style="font-size: 14pt">${escapeHtmlText(periode)}</font>` : null,
+      titelVak: { x: 0.1, y: 0.32, w: 0.8, h: 0.18 }, subVak: { x: 0.15, y: 0.53, w: 0.7, h: 0.08 } },
+    // De achterkant krijgt dezelfde naam klein onderaan: een boek dat op de
+    // plank ligt hoort ook op zijn rug te zeggen wat het is. Verder leeg — daar
+    // is juist ruimte voor een slotfoto of een paar woorden.
+    { positie: laatstePositie, role: "cover_back", titel: achterkantHtml, sub: null,
+      titelVak: { x: 0.15, y: 0.82, w: 0.7, h: 0.07 }, subVak: null },
+  ];
+  for (const k of kaften) {
+    const { rows } = await query(
+      `INSERT INTO photobook_pages
+         (photobook_id, position, role, title, title_align, title_x, title_y, title_width, title_height,
+          background_type, background_color)
+       VALUES ($1,$2,$3,$4,'center',$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [bookId, k.positie, k.role, k.titel, k.titelVak.x, k.titelVak.y, k.titelVak.w, k.titelVak.h,
+       achtergrondkleur ? "color" : null, achtergrondkleur]
+    );
+    if (k.sub) {
+      await query(
+        "INSERT INTO photobook_page_textboxes (page_id, position, html, x, y, width, height, align) VALUES ($1,0,$2,$3,$4,$5,$6,'center')",
+        [rows[0].id, k.sub, k.subVak.x, k.subVak.y, k.subVak.w, k.subVak.h]
+      );
+    }
+  }
+}
+
 route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const title = (body?.title && String(body.title).trim()) || "Fotoboek";
   const autofill = body?.autofill !== false;
@@ -3749,14 +3806,24 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   const useJournalTitles = body?.useJournalTitles !== false;
   const backgroundColor = HEX_COLOR.test(String(body?.backgroundColor || "")) ? body.backgroundColor : null;
 
+  const { rows: reisRows } = await query("SELECT name, start_date, end_date FROM trips WHERE id = $1", [params.id]);
+  const reis = reisRows[0] || {};
+  // De reisnaam is een betere kaft-titel dan "Fotoboek": dat laatste is hoe je
+  // het bestand noemt, niet wat er op de voorkant hoort te staan.
+  const kaftTitel = title !== "Fotoboek" ? title : (reis.name || title);
+  const periode = reisPeriodeTekst(reis.start_date, reis.end_date);
+
   const { rows: bookRows } = await query(
     "INSERT INTO photobooks (trip_id, title, created_by, orientation, corner_radius, background_color) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
     [params.id, title, req.user.id, orientation, cornerRadius, backgroundColor]
   );
   const bookId = bookRows[0].id;
 
+  // Ook een leeg boek krijgt zijn twee kaften: je begint met een voorkant en een
+  // achterkant en vult de rest aan, niet andersom.
   if (!autofill) {
-    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 0, orientation, cornerRadius, backgroundColor });
+    await maakKaftPaginas(bookId, kaftTitel, periode, backgroundColor, 1);
+    return sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: 2, orientation, cornerRadius, backgroundColor });
   }
 
   const { rows: photos } = await query(
@@ -3780,7 +3847,9 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
   // afgeleide bijschrift-tekst als titel — een simpele, veilige start die de
   // gebruiker daarna zelf verder aanpast (samenvoegen, beschrijvingen, een
   // eigen achtergrond).
-  let pageCount = 0;
+  // Positie 0 is de voorkant, dus de fotopagina's beginnen op 1 en de
+  // achterkant sluit de rij.
+  let pageCount = 1;
   for (let i = 0; i < photos.length; i += photosPerPage) {
     const group = photos.slice(i, i + photosPerPage);
     // Het eigen onderschrift uit het dagboek gaat voor, want dat heeft iemand
@@ -3807,7 +3876,8 @@ route("POST", "/api/trips/:id/photobooks", async (req, res, params, body) => {
     pageCount++;
   }
 
-  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount, orientation, cornerRadius, backgroundColor });
+  await maakKaftPaginas(bookId, kaftTitel, periode, backgroundColor, pageCount);
+  sendJson(res, 201, { id: bookId, title, status: "draft", pageCount: pageCount + 1, orientation, cornerRadius, backgroundColor });
 }, { tripScope: "param" });
 
 // Elke foto op een pagina staat vrij gepositioneerd/geschaald (fractie van
@@ -3937,7 +4007,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     cornerRadius: bookRows[0].corner_radius ?? 0,
     backgroundColor: bookRows[0].background_color ?? null,
     pages: pages.map((pg) => ({
-      id: pg.id, title: pg.title, titleAlign: pg.title_align,
+      id: pg.id, title: pg.title, titleAlign: pg.title_align, role: pg.role || null,
       titleX: pg.title_x, titleY: pg.title_y, titleWidth: pg.title_width, titleHeight: pg.title_height,
       background: photobookBackground(pg),
       photos: photosByPage.get(pg.id) || [],
@@ -4028,6 +4098,11 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
       Math.min(1, Math.max(0, n(page.titleY, 0.14))),
       Math.min(1, Math.max(0.05, n(page.titleWidth, 0.7))),
       Math.min(1, Math.max(0.03, n(page.titleHeight, 0.1))),
+      // De rol reist mee met de pagina. Verplaats je de achterkant naar voren,
+      // dan blijft het de achterkant — dat is een keuze van de gebruiker, niet
+      // iets wat de positie mag bepalen. Alles buiten de twee kaftrollen wordt
+      // een gewone pagina.
+      page.role === "cover_front" || page.role === "cover_back" ? page.role : null,
     ];
   });
 
@@ -4040,14 +4115,14 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     // teruggegeven id's horen bij items[0], items[1], ...
     const kolommen = (rijen, aantal) =>
       Array.from({ length: aantal }, (_, k) => rijen.map((r) => r[k]));
-    const pk = kolommen(paginaRijen, 12);
+    const pk = kolommen(paginaRijen, 13);
     const { rows: nieuwePaginas } = await client.query(
       `INSERT INTO photobook_pages
          (photobook_id, position, title, background_type, background_color, background_photo_id,
-          background_overlay, title_align, title_x, title_y, title_width, title_height)
+          background_overlay, title_align, title_x, title_y, title_width, title_height, role)
        SELECT * FROM unnest(
          $1::int[], $2::int[], $3::text[], $4::text[], $5::text[], $6::int[],
-         $7::real[], $8::text[], $9::real[], $10::real[], $11::real[], $12::real[])
+         $7::real[], $8::text[], $9::real[], $10::real[], $11::real[], $12::real[], $13::text[])
        RETURNING id`,
       pk
     );

@@ -525,6 +525,12 @@ async function initDb() {
     -- Witte sluier over een achtergrondfoto (0 = geen, tot 0.75 = bijna wit),
     -- zodat voorgrondtekst/-foto's leesbaar blijven op een drukke achtergrond.
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_overlay REAL NOT NULL DEFAULT 0;
+    -- Welke rol een pagina in het boek speelt: 'cover_front', 'cover_back' of
+    -- leeg voor een gewone binnenpagina. Een kaft is geen gewone pagina — hij
+    -- wordt op één vel gedrukt met de achterkant links en de voorkant rechts —
+    -- en zonder dit veld was daar niets van te zien. Bestaande boeken houden
+    -- overal NULL en blijven zich dus gedragen zoals ze deden.
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS role TEXT;
     -- Uitlijning van titel (CEWE-achtige stijlopties).
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS title_align TEXT NOT NULL DEFAULT 'left';
     -- De titel is vrij versleepbaar/vergrootbaar op de pagina, net als een
