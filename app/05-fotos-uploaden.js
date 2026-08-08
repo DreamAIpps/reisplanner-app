@@ -1,6 +1,20 @@
 // ---------- Photo gallery / uploader ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
+// Er stond nergens een grens op hóéveel foto's je in één keer kiest, en dat is
+// niet gratis. Gemeten met een telefoonfoto van 4032x3024 (8,3 MB): na het
+// verkleinen naar 2000px is dat 0,8 MB, maar als base64-tekst staat hij met
+// 2,1 MB in het geheugen — JavaScript bewaart tekst met twee bytes per teken.
+//
+// Het uploadscherm houdt ze allemaal tegelijk vast, want je moet ze nog kunnen
+// nalopen en per stuk een dag kunnen kiezen. Honderd foto's is dan al ruim
+// 200 MB, en daar wordt een tab op een telefoon om afgeschoten — met alles wat
+// je net hebt ingelezen erbij. Vandaar een harde grens dáár, en een vraag
+// vooraf bij de losse strook, die foto's wél een voor een verwerkt en dus
+// alleen tijd kost.
+const FOTOS_MAX_TEGELIJK = 100;
+const FOTOS_VEEL = 50;
+
 // EXIF GPS coordinates come as [degrees, minutes, seconds]
 function exifGpsToDecimal(dms, ref) {
   if (!dms || dms.length < 3) return null;
@@ -76,6 +90,27 @@ function readAsDataUrl(file) {
 
 async function readForUpload(file) {
   return (await downscaleImage(file)) || { dataUrl: await readAsDataUrl(file), mediaType: file.type };
+}
+
+// Onderweg is de verbinding niet de vraag maar het probleem: van 22 foto's over
+// 5G vielen er drie om met "Load failed", terwijl er met die foto's niets aan de
+// hand was. Eén hapering hoorde geen verloren foto te betekenen, dus proberen we
+// het nog twee keer, met een pauze ertussen die oploopt — meteen opnieuw
+// aankloppen tijdens een storing helpt niemand.
+//
+// Alleen voor netwerkfouten zinvol; een foto die de server weigert (te groot,
+// geen toegang) faalt bij poging drie net zo hard. Dat kost twee wachtjes, en
+// dat is het waard tegenover het alternatief: iemand die zijn foto's kwijt is.
+async function metHerkansing(fn, pogingen = 3) {
+  let laatste;
+  for (let poging = 0; poging < pogingen; poging++) {
+    try { return await fn(); }
+    catch (err) {
+      laatste = err;
+      if (poging < pogingen - 1) await new Promise((r) => setTimeout(r, 700 * (poging + 1)));
+    }
+  }
+  throw laatste;
 }
 
 // Voert fn per item uit met maximaal `limit` tegelijk, zodat een batch foto's
@@ -473,6 +508,17 @@ function UploadProgress({ done, total, className = "" }) {
 // Klaarmaken is niet hetzelfde als uploaden, dus het zegt ook wat anders. Bij
 // een grote stapel is dit de fase waarin je zit te wachten zonder dat er iets
 // het netwerk op gaat: decoderen, verkleinen, opnamedatum uitlezen.
+// Geen rood: er is niets misgegaan en er is niets kapot. Dit is een grens waar
+// je tegenaan loopt, met er meteen bij wat je eraan doet.
+function Grensmelding({ tekst, className = "" }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-900 ${className}`}>
+      <Icon name="alert" size={15} className="mt-0.5 shrink-0" />
+      <span>{tekst}</span>
+    </div>
+  );
+}
+
 function VerwerkVoortgang({ done, total, className = "" }) {
   return (
     <Voortgangsbalk done={done} total={total} className={className}
@@ -503,6 +549,12 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     const files = [...e.target.files];
     e.target.value = "";
     if (!files.length) return;
+    // Deze strook verwerkt en verstuurt foto's een paar tegelijk en houdt ze
+    // daarna niet vast, dus het geheugen loopt hier niet vol — het kost alleen
+    // tijd, en die tijd moet je willen. Vandaar vragen in plaats van weigeren.
+    if (files.length > FOTOS_VEEL && !confirm(
+      `Je hebt ${files.length} foto's gekozen. Dat duurt een paar minuten en de app moet ondertussen open blijven staan. Doorgaan?`
+    )) return;
     setUploading(true);
     setProgress({ done: 0, total: files.length });
     // Each file stands alone: one failure used to abort the whole batch AND skip
@@ -715,6 +767,8 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   // vakantiefoto's stond er minutenlang "Foto's verwerken..." zonder dat iets
   // liet zien of het opschoot of vastliep.
   const [verwerken, setVerwerken] = useState({ done: 0, total: 0 });
+  const [grensmelding, setGrensmelding] = useState(null);
+  const [uploadMelding, setUploadMelding] = useState(null);
   const fileRef = useRef(null);
 
   function matchDay(takenAt) {
@@ -725,9 +779,21 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
   }
 
   async function handleSelectFiles(e) {
-    const files = [...e.target.files];
+    let files = [...e.target.files];
     e.target.value = "";
     if (!files.length) return;
+    // Snijden en zeggen wat er afvalt, niet stilzwijgend weigeren: wie er 150
+    // koos wil weten dat er 100 doorgaan en de rest een tweede ronde is.
+    const ruimte = FOTOS_MAX_TEGELIJK - items.length;
+    if (files.length > ruimte) {
+      setGrensmelding(ruimte <= 0
+        ? `Er staan al ${items.length} foto's klaar — meer dan ${FOTOS_MAX_TEGELIJK} tegelijk gaat niet goed. Upload deze eerst en kies daarna de rest.`
+        : `Je koos ${files.length} foto's; hier gaan er ${ruimte} van mee. Meer dan ${FOTOS_MAX_TEGELIJK} tegelijk gaat niet goed — upload deze eerst en kies daarna de rest.`);
+      files = files.slice(0, Math.max(0, ruimte));
+      if (!files.length) return;
+    } else {
+      setGrensmelding(null);
+    }
     setProcessing(true);
     // Optellen bij wat er al stond: kiest iemand er halverwege nog een map bij,
     // dan hoort de balk dóór te lopen en niet terug te springen naar nul.
@@ -764,27 +830,34 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
 
   async function handleUploadAll() {
     if (!uploadable.length) return;
-    setUploading(true); setProgress(0);
-    const failed = [];
+    setUploading(true); setProgress(0); setUploadMelding(null);
+    const gelukt = new Set();
+    const redenen = new Map();
     await mapWithConcurrency(uploadable, 3, async (it) => {
       const base64 = it.dataUrl.split(",")[1];
       try {
-        await api.addPhoto(tripId, {
+        await metHerkansing(() => api.addPhoto(tripId, {
           day_id: it.dayId || null, activity_id: null,
           image: { data: base64, mediaType: it.mediaType },
           taken_at: it.exif.taken_at || null, latitude: it.exif.latitude ?? null, longitude: it.exif.longitude ?? null,
-        });
+        }));
+        gelukt.add(it.key);
       } catch (err) {
-        failed.push(`${it.name} (${err.message || "mislukt"})`);
+        redenen.set(it.key, err.message || "mislukt");
       }
       setProgress((p) => p + 1);
     });
     setUploading(false);
     onUploaded();
-    onClose();
-    if (failed.length) {
-      alert(`${uploadable.length - failed.length} van ${uploadable.length} foto's geüpload.\n\nNiet gelukt:\n${failed.join("\n")}`);
-    }
+    if (!redenen.size) { onClose(); return; }
+    // Wat gelukt is verdwijnt uit de lijst, wat niet gelukt is blijft staan met
+    // de reden erbij. Het scherm sloot voorheen hoe dan ook, en dan waren die
+    // foto's weg: opnieuw opzoeken in je fotorol, opnieuw inlezen, opnieuw een
+    // dag kiezen. Terwijl er niets mis is met de foto — het netwerk hikte even.
+    setItems((prev) => prev
+      .filter((it) => !gelukt.has(it.key))
+      .map((it) => redenen.has(it.key) ? { ...it, uploadFout: redenen.get(it.key) } : it));
+    setUploadMelding(`${gelukt.size} van de ${uploadable.length} foto's geüpload. ${redenen.size === 1 ? "Deze bleef" : `Deze ${redenen.size} bleven`} achter — meestal een haperende verbinding.`);
   }
 
   return (
@@ -795,8 +868,9 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
       {items.length === 0 ? (
         <div>
           <p className="text-sm text-gray-500 mb-4">
-            Selecteer meerdere foto's tegelijk. Ze worden automatisch aan de juiste reisdag gekoppeld op basis van de datum waarop de foto is gemaakt.
+            Selecteer meerdere foto's tegelijk — maximaal {FOTOS_MAX_TEGELIJK} per keer. Ze worden automatisch aan de juiste reisdag gekoppeld op basis van de datum waarop de foto is gemaakt.
           </p>
+          {grensmelding && <Grensmelding tekst={grensmelding} className="mb-4" />}
           <button type="button" onClick={() => fileRef.current?.click()} disabled={processing}
             className="w-full border-2 border-dashed border-gray-200 rounded-xl py-10 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors">
             {processing ? "Foto's verwerken..." : <><Icon name="camera" size={15} className="mr-1.5" />Klik om foto's te kiezen</>}
@@ -814,6 +888,8 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
               className="text-xs font-medium text-sky-600 hover:text-sky-700 disabled:opacity-50">+ Meer foto's</button>
             <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleSelectFiles} />
           </div>
+          {grensmelding && <Grensmelding tekst={grensmelding} />}
+          {uploadMelding && <Grensmelding tekst={uploadMelding} />}
           {processing && <VerwerkVoortgang {...verwerken} />}
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {items.map((it) => (
@@ -827,6 +903,8 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
                   <div className="text-sm text-gray-700 truncate">{it.name}</div>
                   {it.error ? (
                     <div className="text-xs text-red-500">{it.error}</div>
+                  ) : it.uploadFout ? (
+                    <div className="text-xs text-amber-700">Niet gelukt: {it.uploadFout}</div>
                   ) : (
                     <div className="text-xs text-gray-400">{it.exif?.taken_at ? fmtDatetime(it.exif.taken_at) : "Geen datum gevonden"}</div>
                   )}
@@ -844,8 +922,10 @@ function BulkPhotoUpload({ tripId, days, onClose, onUploaded }) {
           {uploading && <UploadProgress done={progress} total={uploadable.length} />}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose} disabled={uploading || processing}>Annuleren</Button>
-            <Button type="button" onClick={handleUploadAll} disabled={uploading || !uploadable.length}>
-              {uploading ? "Uploaden..." : `Uploaden (${uploadable.length})`}
+            <Button type="button" onClick={handleUploadAll} disabled={uploading || processing || !uploadable.length}>
+              {uploading ? "Uploaden..."
+                : uploadMelding ? `Opnieuw proberen (${uploadable.length})`
+                : `Uploaden (${uploadable.length})`}
             </Button>
           </div>
         </div>
