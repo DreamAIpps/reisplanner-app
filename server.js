@@ -2909,6 +2909,85 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   catch { sendError(res, 500, "Kon tips niet verwerken"); }
 });
 
+// ---------- Top 3 hoogtepunten voor één dag ----------
+// De tips hierboven gaan over de reis als geheel en leveren tekst om te lezen.
+// Dit levert dingen om te dóen, op één dag, in een vorm die zo de planning in
+// kan: titel, categorie, adres en een tijd.
+//
+// De plaats komt uit het verblijf van die nacht en niet uit de bestemming van de
+// reis: bij "Japan" heb je aan hoogtepunten niets, bij het hotel in Kyoto wel.
+// Wat er al gepland staat gaat mee als "niet herhalen" — anders krijg je op een
+// dag met het Fushimi Inari-heiligdom prompt datzelfde heiligdom voorgesteld.
+route("POST", "/api/trips/:id/highlights", async (req, res, params, body) => {
+  bewaakAiGebruik(req);
+  if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
+  const dagId = body?.day_id;
+  if (!/^\d+$/.test(String(dagId ?? ""))) return sendError(res, 400, "Geen geldige dag opgegeven");
+
+  const { rows: dagen } = await query(
+    `SELECT d.id, d.date, d.title, t.destination
+       FROM days d JOIN trips t ON t.id = d.trip_id
+      WHERE d.id = $1 AND d.trip_id = $2`,
+    [dagId, params.id]
+  );
+  if (!dagen.length) return sendError(res, 404, "Dag niet gevonden");
+  const dag = dagen[0];
+
+  const { rows: verblijven } = await query(
+    `SELECT name, address FROM accommodations
+      WHERE trip_id = $1 AND check_in <= $2 AND (check_out IS NULL OR check_out >= $2)
+      ORDER BY check_in DESC LIMIT 1`,
+    [params.id, dag.date]
+  );
+  const { rows: bestaand } = await query("SELECT title, location FROM activities WHERE day_id = $1", [dagId]);
+
+  const verblijf = verblijven[0];
+  const plaats = verblijf?.address || verblijf?.name || dag.destination;
+  if (!plaats) return sendError(res, 400, "Deze dag heeft geen verblijf en de reis geen bestemming, dus er is geen plek om vanuit te zoeken");
+
+  const alGepland = bestaand.map((a) => a.title).filter(Boolean);
+  const datum = dag.date ? new Date(dag.date).toISOString().slice(0, 10) : null;
+  const CATEGORIEEN = "Bezienswaardigheid, Restaurant, Museum, Natuur, Sport, Shopping, Anders";
+  const prompt = [
+    `Noem de drie beste dingen om te doen op één dag in of vlak bij "${plaats}".`,
+    datum ? `Het gaat om ${datum}; houd rekening met het seizoen en met openingsdagen.` : "",
+    alGepland.length ? `Deze staan al gepland en mag je NIET herhalen of variëren: ${alGepland.join("; ")}.` : "",
+    `Kies dingen die op één dag te combineren zijn en niet ver uit elkaar liggen.`,
+    `Schrijf in het Nederlands. Gebruik voor "category" precies één van: ${CATEGORIEEN}.`,
+    `"location" moet een adres of plaatsaanduiding zijn waarop een kaartendienst de plek kan vinden — dus straat en stad, geen losse naam.`,
+    `"time" is een suggestie in HH:MM, oplopend over de dag. "notes" is één korte zin waarom het de moeite waard is.`,
+    `Return ONLY valid JSON, no markdown: {"items":[{"title":"","category":"","location":"","time":"","notes":""}]}`,
+  ].filter(Boolean).join(" ");
+
+  const msg = await anthropicClient.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 900,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { return sendError(res, 502, "Kon de hoogtepunten niet verwerken"); }
+
+  // Het model levert vrije tekst; alles wat de planning in gaat wordt hier op
+  // vorm en lengte gesnoeid, en een categorie buiten de lijst wordt "Anders" —
+  // anders staat er straks een activiteit met een icoon dat niet bestaat.
+  const TOEGESTAAN = new Set(CATEGORIEEN.split(", "));
+  const kort = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+  const items = (Array.isArray(parsed.items) ? parsed.items : [])
+    .map((it) => ({
+      title: kort(it?.title, 120),
+      category: TOEGESTAAN.has(kort(it?.category, 40)) ? kort(it.category, 40) : "Anders",
+      location: kort(it?.location, 300),
+      time: /^\d{1,2}:\d{2}$/.test(kort(it?.time, 5)) ? kort(it.time, 5) : "",
+      notes: kort(it?.notes, 400),
+    }))
+    .filter((it) => it.title)
+    .slice(0, 3);
+
+  sendJson(res, 200, { plaats: verblijf?.name || plaats, items });
+}, { tripScope: "param" });
+
 // ---------- Import (email parsing via Claude) ----------
 route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   bewaakAiGebruik(req);

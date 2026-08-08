@@ -109,6 +109,118 @@ async function verwijderActiviteit(act, onKlaar) {
   });
 }
 
+// Drie dingen om te doen op één dag, voorgesteld op basis van waar je die nacht
+// slaapt. Bewust met vinkjes en niet meteen toevoegen: een voorstel is een
+// voorstel, en een dag volzetten met iets waar je niet om vroeg is erger dan
+// een tik extra. Alles staat aan, want meestal wil je ze alle drie — en wat je
+// uitvinkt is één tik weg.
+function HoogtepuntenModal({ tripId, day, onToegevoegd, onClose }) {
+  const [bezig, setBezig] = useState(true);
+  const [fout, setFout] = useState(null);
+  const [plaats, setPlaats] = useState(null);
+  const [items, setItems] = useState([]);
+  const [gekozen, setGekozen] = useState([]);
+  const [opslaan, setOpslaan] = useState(false);
+
+  useEffect(() => {
+    let vervallen = false;
+    api.getHighlights(tripId, day.id)
+      .then((d) => {
+        if (vervallen) return;
+        const lijst = asList(d.items);
+        setItems(lijst);
+        setPlaats(d.plaats || null);
+        setGekozen(lijst.map((_, i) => i));
+      })
+      .catch((err) => { if (!vervallen) setFout(err.message || "Hoogtepunten ophalen is niet gelukt"); })
+      .finally(() => { if (!vervallen) setBezig(false); });
+    return () => { vervallen = true; };
+  }, [tripId, day.id]);
+
+  function wissel(i) {
+    setGekozen((g) => g.includes(i) ? g.filter((x) => x !== i) : [...g, i]);
+  }
+
+  async function toevoegen() {
+    setOpslaan(true);
+    try {
+      // Eén voor één en op volgorde: de server geeft ze in de volgorde van de
+      // dag, en tegelijk versturen zou die volgorde laten afhangen van welk
+      // verzoek toevallig het eerst terug is.
+      for (const i of gekozen.slice().sort((a, b) => a - b)) {
+        const it = items[i];
+        await api.addActivity(day.id, {
+          trip_id: tripId, title: it.title, category: it.category,
+          location: it.location || "", time: it.time || "", notes: it.notes || "",
+        });
+      }
+      onToegevoegd(gekozen.length);
+    } catch (err) {
+      setFout(err.message || "Toevoegen is niet gelukt");
+      setOpslaan(false);
+    }
+  }
+
+  return (
+    <Modal title="Top 3 voor deze dag" onClose={onClose} wide>
+      <div className="space-y-4">
+        {bezig ? (
+          <div className="text-center py-8 text-gray-400">
+            <Icon name="sparkle" size={26} strokeWidth={1.3} className="mx-auto mb-2 text-gray-300" />
+            Hoogtepunten zoeken...
+          </div>
+        ) : fout ? (
+          <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{fout}</div>
+        ) : items.length === 0 ? (
+          <div className="text-center py-8 text-gray-400">Geen hoogtepunten gevonden voor deze dag.</div>
+        ) : (
+          <>
+            {plaats && (
+              <div className="text-xs text-gray-400">
+                Gezocht rond <span className="font-semibold text-gray-600">{plaats}</span> — waar je die nacht slaapt.
+              </div>
+            )}
+            <div className="space-y-2">
+              {items.map((it, i) => {
+                const aan = gekozen.includes(i);
+                return (
+                  <button key={i} type="button" onClick={() => wissel(i)}
+                    className={`rp-press w-full text-left rounded-xl border px-3 py-2.5 transition-colors ${
+                      aan ? "border-sky-300 bg-sky-50" : "border-gray-200 bg-white hover:border-gray-300"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className={`shrink-0 mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center ${
+                        aan ? "bg-sky-500 border-sky-500 text-white" : "border-gray-300 text-transparent"}`}>
+                        <Icon name="check" size={13} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <Icon name={categoryIcon(it.category)} size={15} className="shrink-0 text-sky-700" />
+                          <span className="font-semibold text-gray-800">{it.title}</span>
+                          {it.time && <span className="text-xs text-gray-400 tnum">{it.time}</span>}
+                        </div>
+                        {it.notes && <div className="text-sm text-gray-500 mt-1 leading-snug">{it.notes}</div>}
+                        {it.location && <div className="text-xs text-gray-400 mt-1 truncate">{it.location}</div>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onClose}>{items.length ? "Annuleren" : "Sluiten"}</Button>
+          {items.length > 0 && (
+            <Button onClick={toevoegen} disabled={opslaan || gekozen.length === 0}>
+              {opslaan ? "Toevoegen..." : `${gekozen.length} toevoegen`}
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, readOnly, currentUserId, onShareEditor, onEditTrip }) {
   const [showActivityForm, setShowActivityForm] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
@@ -120,6 +232,7 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [tripJournal, setTripJournal] = useState([]);
   const [tipsLocation, setTipsLocation] = useState(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
+  const [hoogtepuntenDag, setHoogtepuntenDag] = useState(null);
   const didAutoScroll = useRef(false);
 
   const loadJournal = useCallback(async () => {
@@ -373,6 +486,18 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         + Iets toevoegen op deze dag
                       </button>
                     )}
+                    {/* Naast zelf invullen: laat de app drie dingen voorstellen
+                        rond het verblijf van die nacht. Staat op elke dag, ook
+                        een lege — juist een lege dag is de dag waarop je niet
+                        weet wat je gaat doen. */}
+                    {totalItems === 0 && !readOnly && (
+                      <div className="pl-8 mt-2">
+                        <button onClick={() => setHoogtepuntenDag(day)}
+                          className="rp-press inline-flex items-center gap-1.5 h-10 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
+                          <Icon name="sparkle" size={15} />Top 3 voorstellen
+                        </button>
+                      </div>
+                    )}
                     {/* Vaste "+ Activiteit"-knop per dag zodra er al iets staat:
                         zo hoef je niet meer via het algemene Toevoegen-blad de
                         juiste dag te kiezen — een tik voegt meteen aan díe dag
@@ -380,10 +505,14 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
                         dus dan geen tweede knop. pl-8 lijnt 'm uit met de
                         kaartjes (langs de tijdlijn), niet met de stip ervoor. */}
                     {totalItems > 0 && !readOnly && (
-                      <div className="pl-8">
+                      <div className="pl-8 flex gap-2 flex-wrap">
                         <button onClick={() => setShowActivityForm({ dayId: day.id })}
                           className="rp-press inline-flex items-center gap-1.5 h-10 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
                           <Icon name="plus" size={15} />Activiteit
+                        </button>
+                        <button onClick={() => setHoogtepuntenDag(day)}
+                          className="rp-press inline-flex items-center gap-1.5 h-10 px-3.5 rounded-full border border-gray-200 bg-white text-[13px] font-semibold text-gray-500 hover:text-sky-700 hover:border-sky-200 transition-colors">
+                          <Icon name="sparkle" size={15} />Top 3
                         </button>
                       </div>
                     )}
@@ -413,6 +542,15 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           onSaved={() => { setShowActivityForm(null); onRefresh(); }}
           onClose={() => setShowActivityForm(null)}
           onImport={() => { setShowActivityForm(null); setImporting(true); }} />
+      )}
+      {hoogtepuntenDag && (
+        <HoogtepuntenModal tripId={trip.id} day={hoogtepuntenDag}
+          onToegevoegd={(aantal) => {
+            setHoogtepuntenDag(null);
+            onRefresh();
+            toonMelding(`${aantal} ${aantal === 1 ? "activiteit" : "activiteiten"} toegevoegd`);
+          }}
+          onClose={() => setHoogtepuntenDag(null)} />
       )}
       {editingActivity && (
         <ActivityForm dayId={editingActivity.day_id} tripId={trip.id} tripTimezone={trip.timezone} initial={editingActivity} days={days}
