@@ -327,6 +327,9 @@ const api = {
   deletePhotobook: (id) => apiFetch(`/api/photobooks/${id}`, { method: "DELETE" }),
   savePhotobookPages: (id, pages) => apiFetch(`/api/photobooks/${id}/pages`, { method: "PUT", body: JSON.stringify({ pages }) }),
   getPhotobookPrintQuote: (id) => _guestMode ? Promise.resolve({ available: false }) : apiFetch(`/api/photobooks/${id}/print-quote`),
+  getHighlights: (tripId, dayId) => _guestMode
+    ? Promise.reject(new Error("Log in om hoogtepunten op te halen"))
+    : apiFetch(`/api/trips/${tripId}/highlights`, { method: "POST", body: JSON.stringify({ day_id: dayId }) }),
   getAdminTrips: () => _guestMode ? guestApi.getAdminTrips() : apiFetch("/api/admin/trips"),
   getAdminUsers: () => _guestMode ? guestApi.getAdminUsers() : apiFetch("/api/admin/users"),
   getAdminUserReizen: (userId) => _guestMode ? Promise.resolve([]) : apiFetch(`/api/admin/users/${userId}/reizen`),
