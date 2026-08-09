@@ -233,6 +233,8 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
   const [tipsLocation, setTipsLocation] = useState(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [hoogtepuntenDag, setHoogtepuntenDag] = useState(null);
+  // Weer nodig sinds de "Vandaag"-knop de omslagkleur van de reis draagt.
+  const accent = trip.cover_color || PALETTE.primary;
   const didAutoScroll = useRef(false);
 
   const loadJournal = useCallback(async () => {
@@ -296,8 +298,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           )}
         </div>
         {todayDay && (
+          // Grijze tekst met een speldje ernaast leest als een bijschrift, niet
+          // als iets waarop je kunt tikken — en juist op een reis van drie weken
+          // is dit de knop die je het vaakst nodig hebt. Nu een echte knop: rand,
+          // vulling en accentkleur, net als de andere acties op deze pagina.
           <button type="button" onClick={scrollToToday}
-            className="rp-press shrink-0 text-[13px] font-medium text-gray-500 hover:text-gray-800 inline-flex items-center gap-1.5 px-3 h-10 rounded-xl hover:bg-gray-100 transition-colors">
+            className="rp-press shrink-0 inline-flex items-center gap-1.5 h-10 px-4 rounded-full border text-[13px] font-semibold transition-colors"
+            style={{ background: accent + "26", borderColor: accent, color: legibleOn(accent) }}>
             <Icon name="pin" size={14} />Vandaag
           </button>
         )}
@@ -336,6 +343,18 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
             </Button>
           )}
         </div>
+      )}
+
+      {/* Hetzelfde overzichtskaartje als in het dagboek: de hele reis in één
+          blik, met een strook etappes eronder. In het dagboek beantwoordt het
+          "waar zijn we geweest"; hier "waar gaan we heen" — dezelfde vraag,
+          dezelfde kaart, en het scheelt dat je er niet voor naar een ander
+          tabblad hoeft. */}
+      {/* Geen foto's mee: de route komt van de verblijven en het vervoer, en dat
+          is precies wat een planning heeft. Foto-stippen horen bij het dagboek,
+          waar ze laten zien waar je écht geweest bent. */}
+      {days.length > 0 && (
+        <JournalOverviewMap trip={trip} days={days} photos={[]} accommodations={accommodations} transports={transports} />
       )}
 
       {/* Timeline */}

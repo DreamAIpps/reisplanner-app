@@ -1,5 +1,5 @@
 // ---------- Trip detail ----------
-function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
+function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId, onKopInfo }) {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [accommodations, setAccommodations] = useState([]);
@@ -18,9 +18,6 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   // aan de reis toegevoegd, en landt daarna op tab=quiz — die hoort hem juist
   // wél te zien, anders is de QR-code een doodlopende weg.
   const [magQuiz, setMagQuiz] = useState(false);
-  // Budgetbalk op planning is standaard ingeklapt (klein) — de uitsplitsing per
-  // categorie komt pas als je 'm openklapt.
-  const [budgetExpanded, setBudgetExpanded] = useState(false);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -28,6 +25,21 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [showMoreMenu]);
+
+  // De kop van de app toont de reisnaam en, voor de eigenaar, het menu om te
+  // bewerken of te verwijderen. Die dingen wonen hier (trip, setEditing,
+  // handleDelete), dus ze worden naar boven gemeld in plaats van dat App ze
+  // nog eens zelf gaat uitzoeken.
+  useEffect(() => {
+    if (!onKopInfo) return;
+    onKopInfo(trip ? {
+      naam: trip.name,
+      gedeeld: trip.is_owner === false ? (trip.role === "viewer" ? "Alleen-lezen" : "Gedeeld") : null,
+      onEdit: trip.is_owner && !previewViewer ? () => setEditing(true) : null,
+      onDelete: trip.is_owner && !previewViewer ? handleDelete : null,
+    } : null);
+    return () => onKopInfo(null);
+  }, [onKopInfo, trip?.id, trip?.name, trip?.is_owner, trip?.role, previewViewer]);
 
   // Alleen voor alleen-lezen bezoekers opvragen: voor een eigenaar of reisgenoot
   // staat de quiz toch al in het menu, en dan is dit een verzoek om niets.
@@ -178,23 +190,15 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
   const moreMenuItems = moreMenuGroups.flatMap((g) => g.items);
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
-  // Hero: de bestemming is waar je heen gaat en hoort dus het grootst; de
-  // reisnaam blijft er als klein regeltje boven staan. "Kyoto, Japan" wordt
-  // gesplitst op de laatste komma, zodat het land eronder komt — staat er geen
-  // komma in, dan is de hele tekst de plaats en blijft het land weg.
-  const heroOnPhoto = !!trip.cover_image;
-  const heroInk = heroOnPhoto ? "#FFFFFF" : textOn(accent);
-  const heroDest = trip.destination || "";
-  const heroComma = heroDest.lastIndexOf(",");
-  const heroCity = heroComma > 0 ? heroDest.slice(0, heroComma).trim() : heroDest;
-  const heroCountry = heroComma > 0 ? heroDest.slice(heroComma + 1).trim() : null;
-  const heroDuration = tripDuration(trip.start_date, trip.end_date);
-  const heroShowBudget = viewTrip.budget && tab !== "journal";
-  const heroShowActions = isOwnerActions && tab !== "journal";
-  // Op de twee werk-tabs (planning en dagboek) is de grote fto-hero te fors — daar
-  // volstaat een slanke balk van één regel met de reisnaam, zonder omslagfoto.
-  const heroCompact = tab === "days" || tab === "journal";
-  const heroCompactInk = textOn(accent);
+  // De grote foto-hero en de budgetbalk zijn overal weg. Ze stonden op elk
+  // scherm boven de inhoud waar je voor kwam: samen ruim een derde van een
+  // telefoonscherm, elke keer opnieuw, met informatie die je na de eerste blik
+  // al kende. Het dagboek deed het al zonder en dat las beter; nu doen alle
+  // schermen dat.
+  //
+  // Wat blijft is één slanke balk met de reisnaam — genoeg om te weten in welke
+  // reis je zit. Het budget staat nog gewoon op de budgettab, waar je het
+  // opzoekt als je het wilt weten.
 
   return (
     <div className="pb-2">
@@ -223,66 +227,11 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
           zonder omslagfoto — de grote hero neemt daar te veel ruimte in weg van
           de dagen/verhalen zelf. De datums staan er muted achteraan; op smal
           krimpt de naam (truncate) en blijven de datums heel. */}
-      {heroCompact ? (
-        <div className="mb-6 rp-rise">
-          <div className="rounded-2xl shadow-sm px-5 h-14 flex items-center gap-3" style={{ background: accent, color: heroCompactInk }}>
-            {/* De reisnaam krijgt de volle regel; datums stonden hier eerst ook,
-                maar die duwden een langere naam in een afgekapt "Zomer i…". */}
-            <h2 className="font-display text-[19px] font-semibold truncate flex-1 min-w-0">{trip.name}</h2>
-            {trip.is_owner === false && (
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/90 text-gray-700 shrink-0">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>
-            )}
-            {isOwnerActions && tab === "days" && (
-              <div className="shrink-0"><TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} /></div>
-            )}
-          </div>
-          {trip.notes && <div className="text-[15px] text-gray-500 leading-relaxed mt-2 px-1">{trip.notes}</div>}
-        </div>
-      ) : (
-      <div className="rounded-3xl overflow-hidden shadow-md mb-8 rp-rise">
-        <div className="relative flex flex-col justify-end" style={{ height: 220 }}>
-          {heroOnPhoto
-            ? <img src={trip.cover_image} alt={heroDest || trip.name} className="absolute inset-0 w-full h-full object-cover" />
-            : <div className="absolute inset-0" style={{ background: `linear-gradient(150deg, ${accent}, ${accent}cc)` }} />}
-          {heroOnPhoto && <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />}
-
-          <div className="relative px-6 pb-6" style={{ color: heroInk }}>
-            <div className="flex items-center gap-2 flex-wrap mb-1.5">
-              <span className="text-[13px] font-medium" style={{ opacity: 0.85 }}>{trip.name}</span>
-              {trip.is_owner === false && (
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/90 text-gray-700">{readOnly ? "Alleen-lezen" : "Gedeeld"}</span>
-              )}
-              {!readOnly && tab !== "journal" && (
-                <button onClick={() => setTab("days")} className="sm:hidden text-[13px] font-medium hover:opacity-100 transition-opacity" style={{ opacity: 0.75 }}>
-                  · Dagplanning
-                </button>
-              )}
-            </div>
-            <h2 className="font-display text-[32px] font-semibold leading-tight">{heroCity || trip.name}</h2>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2.5 text-[13px] font-medium" style={{ opacity: 0.85 }}>
-              {heroCountry && <span>{heroCountry}</span>}
-              {trip.start_date && (
-                <span className="flex items-center gap-1.5">
-                  <Icon name="calendar" size={13} /><span className="tnum">{fmt(trip.start_date)} — {fmt(trip.end_date)}</span>
-                </span>
-              )}
-              {heroDuration && <span>{heroDuration}</span>}
-              {heroShowBudget && (
-                <span className="flex items-center gap-1.5">
-                  <Icon name="wallet" size={13} /><span className="tnum">{fmtMoney(viewTrip.budget, trip.currency)}</span>
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-        {(trip.notes || heroShowActions) && (
-          <div className="bg-white px-6 py-4 flex items-center gap-4">
-            {trip.notes && <div className="text-[15px] text-gray-500 leading-relaxed min-w-0 flex-1">{trip.notes}</div>}
-            {heroShowActions && <div className="shrink-0 ml-auto"><TripActionsMenu onEdit={() => setEditing(true)} onDelete={handleDelete} /></div>}
-          </div>
-        )}
-      </div>
-      )}
+      {/* De reisnaam stond hier als eigen balk. Die is naar de kop van de app
+          verhuisd, naast het logo: daar was al een regel, en zo scheelt het weer
+          tachtig pixels op elk scherm. Wat hier overblijft zijn de notities, en
+          alleen als je ze hebt. */}
+      {trip.notes && <div className="text-[15px] text-gray-500 leading-relaxed mb-6 px-1">{trip.notes}</div>}
 
       {/* Desktop tabs — op mobiel navigeert de onderste balk al, en "· Dagplanning"
           naast de reisnaam hierboven is de subtiele snelkoppeling daar terug. */}
@@ -292,67 +241,6 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId }) {
         </div>
       )}
 
-      {/* Budget balk */}
-      {viewTrip.budget && tab !== "journal" && (() => {
-        const transportTotal = viewTransports.reduce((s, t) => s + Number(t.cost || 0), 0);
-        const accommodationTotal = viewAccommodations.reduce((s, a) => s + Number(a.cost || 0), 0);
-        const activityTotal = viewDays.reduce((s, d) => s + (d.activities || []).reduce((s2, a) => s2 + Number(a.cost || 0), 0), 0);
-        const expenseTotal = viewExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
-        const total = Number(viewTrip.budget);
-        const spent = transportTotal + accommodationTotal + activityTotal + expenseTotal;
-        const pct = (v) => Math.min((v / total) * 100, 100);
-        const tPct = pct(transportTotal);
-        const aPct = pct(accommodationTotal);
-        const acPct = pct(activityTotal);
-        const ePct = pct(expenseTotal);
-        const overBudget = spent > total;
-        // Compacte balk: label + bedrag + een dunne balk op één regel, plus een
-        // chevron die de uitsplitsing per categorie in-/uitklapt. Het bedrag-deel
-        // blijft een knop naar het volledige budgetscherm; de chevron klapt alleen
-        // open, dus die twee bijten elkaar niet.
-        return (
-          <div className="w-full mb-8 bg-white rounded-2xl shadow-sm px-5 py-3.5">
-            <div className="flex items-center gap-3">
-              <button onClick={() => setTab("budget")} className="rp-press flex-1 min-w-0 text-left">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-[13px] font-semibold text-gray-400 uppercase tracking-[0.1em]">Budget</span>
-                  <span className="text-[15px] font-semibold text-gray-800 tnum">
-                    {fmtMoney(spent, trip.currency)}
-                    <span className="text-[13px] font-medium text-gray-400"> / {fmtMoney(total, trip.currency)}</span>
-                  </span>
-                </div>
-                {/* Dunne, afgeronde balk met een haardun wit naadje tussen de vakken. */}
-                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden flex gap-px mt-2">
-                  <div style={{ width: `${tPct}%`, background: PALETTE.coralDeep }} className="h-full transition-all" title={`Vervoer: ${fmtMoney(transportTotal, trip.currency)}`} />
-                  <div style={{ width: `${aPct}%`, background: PALETTE.coral }} className="h-full transition-all" title={`Verblijf: ${fmtMoney(accommodationTotal, trip.currency)}`} />
-                  <div style={{ width: `${acPct}%`, background: PALETTE.success }} className="h-full transition-all" title={`Activiteiten: ${fmtMoney(activityTotal, trip.currency)}`} />
-                  <div style={{ width: `${ePct}%`, background: PALETTE.info }} className="h-full transition-all" title={`Overig: ${fmtMoney(expenseTotal, trip.currency)}`} />
-                </div>
-              </button>
-              <button onClick={() => setBudgetExpanded((v) => !v)} aria-label={budgetExpanded ? "Uitsplitsing inklappen" : "Uitsplitsing tonen"}
-                className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors self-center">
-                <Icon name="chevronDown" size={16} style={{ transform: budgetExpanded ? "rotate(180deg)" : "none" }} />
-              </button>
-            </div>
-            {overBudget && <div className="text-[13px] font-medium text-red-600 mt-2">Boven budget</div>}
-            {budgetExpanded && (
-              <div className="flex gap-x-5 gap-y-2 mt-3 flex-wrap">
-                {[
-                  [transportTotal, PALETTE.coralDeep, "Vervoer"],
-                  [accommodationTotal, PALETTE.coral, "Verblijf"],
-                  [activityTotal, PALETTE.success, "Activiteiten"],
-                  [expenseTotal, PALETTE.info, "Overig"],
-                ].filter(([v]) => v > 0).map(([value, color, label]) => (
-                  <span key={label} className="text-[13px] font-medium text-gray-500 flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ background: color }} />
-                    {label} <span className="tnum text-gray-400">{fmtMoney(value, trip.currency)}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       {readOnly ? (
         <>
@@ -729,63 +617,7 @@ function AdminView({ onBack, currentUserId }) {
   const [tab, setTab] = useState("trips");
   const [openStats, setOpenStats] = useState(null); // welke reis zijn kijkcijfers open heeft staan
   const [openReizen, setOpenReizen] = useState(null); // welke gebruiker zijn reizen open heeft staan
-  const [backfillBusy, setBackfillBusy] = useState(false);
-  const [backfillResult, setBackfillResult] = useState(null);
   const [storage, setStorage] = useState(null);
-  const [shrinkBusy, setShrinkBusy] = useState(false);
-  const [shrinkResult, setShrinkResult] = useState(null);
-
-  async function handleBackfillGps() {
-    setBackfillBusy(true);
-    setBackfillResult(null);
-    try {
-      const r = await api.backfillPhotoGps();
-      setBackfillResult({ ok: true, text: `${r.updated} van ${r.checked} foto's zonder locatie kregen alsnog GPS.` });
-    } catch (err) {
-      setBackfillResult({ ok: false, text: err.message || "Nabewerking mislukt" });
-    } finally {
-      setBackfillBusy(false);
-    }
-  }
-
-  async function handleShrinkPhotos() {
-    setShrinkBusy(true);
-    setShrinkResult(null);
-    // In batches: bij een paar honderd foto's duurt één herschrijf-slag per
-    // foto lang genoeg dat één groot verzoek Railway's eigen proxy-timeout kan
-    // raken — de browser meldt dat dan als een kale "Load failed", niet als
-    // een bruikbare foutmelding. Zo blijft elk verzoek klein, en zie je de
-    // voortgang terwijl het loopt in plaats van pas (of nooit) aan het eind.
-    let afterId = 0, totalChecked = 0, totalResized = 0, bytesBefore = 0, bytesAfter = 0;
-    try {
-      for (;;) {
-        const r = await api.shrinkPhotos(afterId);
-        totalChecked += r.checked;
-        totalResized += r.resized;
-        bytesBefore += r.bytesBefore;
-        bytesAfter += r.bytesAfter;
-        afterId = r.lastId;
-        setShrinkResult({
-          ok: true,
-          text: totalResized > 0
-            ? `Bezig... ${totalResized} van ${totalChecked} gecontroleerde foto's verkleind, ${fmtBytes(bytesBefore - bytesAfter)} bespaard tot nu toe.`
-            : `Bezig... ${totalChecked} foto's gecontroleerd, nog niets te verkleinen.`,
-        });
-        if (!r.hasMore) break;
-      }
-      setShrinkResult({
-        ok: true,
-        text: totalResized > 0
-          ? `Klaar: ${totalResized} van ${totalChecked} foto's verkleind, ${fmtBytes(bytesBefore - bytesAfter)} bespaard (was ${fmtBytes(bytesBefore)}, nu ${fmtBytes(bytesAfter)}).`
-          : `Klaar — niets te verkleinen, alle ${totalChecked} foto's waren al klein genoeg.`,
-      });
-      api.getStorageInfo().then(setStorage).catch(() => {});
-    } catch (err) {
-      setShrinkResult({ ok: false, text: (err.message || "Verkleinen mislukt") + ` (tot hier: ${totalResized} van ${totalChecked} verkleind)` });
-    } finally {
-      setShrinkBusy(false);
-    }
-  }
 
   // Bij een fout viel de spinner wel weg, maar zonder catch bleef het scherm
   // achter met lege lijsten — niet te onderscheiden van "er zijn geen reizen".
@@ -880,43 +712,6 @@ function AdminView({ onBack, currentUserId }) {
           </div>
         </div>
       )}
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <div className="text-sm font-semibold text-gray-700">Locatie nalopen bij bestaande foto's</div>
-            <div className="text-xs text-gray-400 mt-0.5 max-w-md">
-              Zoekt in alle foto's zonder locatie of er alsnog GPS uit de opgeslagen bytes te halen is. Werkt
-              alleen als die bytes nog de originele Exif hebben — een HEIC-foto die al is omgezet naar JPEG is
-              die kwijt en blijft zonder locatie.
-            </div>
-          </div>
-          <Button variant="secondary" onClick={handleBackfillGps} disabled={backfillBusy} className="shrink-0">
-            {backfillBusy ? "Bezig..." : "Nalopen"}
-          </Button>
-        </div>
-        {backfillResult && (
-          <div className={`text-xs mt-2 ${backfillResult.ok ? "text-green-600" : "text-red-500"}`}>{backfillResult.text}</div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <div className="text-sm font-semibold text-gray-700">Bestaande foto's verkleinen</div>
-            <div className="text-xs text-gray-400 mt-0.5 max-w-md">
-              Herschrijft elke foto die groter is dan de nieuwe 2000px-grens naar dat formaat — hetzelfde wat
-              nieuwe uploads nu al krijgen, met terugwerkende kracht. Kan even duren bij veel foto's.
-            </div>
-          </div>
-          <Button variant="secondary" onClick={handleShrinkPhotos} disabled={shrinkBusy} className="shrink-0">
-            {shrinkBusy ? "Bezig..." : "Verkleinen"}
-          </Button>
-        </div>
-        {shrinkResult && (
-          <div className={`text-xs mt-2 ${shrinkResult.ok ? "text-green-600" : "text-red-500"}`}>{shrinkResult.text}</div>
-        )}
-      </div>
 
       {loading ? <div className="text-center py-16 text-gray-400">Laden...</div> : tab === "trips" ? (
         <div className="space-y-8">
@@ -1169,6 +964,9 @@ function App() {
   // tabblad, dan begint het weer bij de lopende reis.
   const LAATSTE_REIS = "rp_laatste_reis";
   const onthoudReis = (id) => { try { id ? sessionStorage.setItem(LAATSTE_REIS, String(id)) : sessionStorage.removeItem(LAATSTE_REIS); } catch {} };
+  // Wat de kop over de geopende reis moet weten. TripDetail meldt dit; App
+  // tekent het, want de kop hoort bij de app en niet bij één scherm.
+  const [kopInfo, setKopInfo] = useState(null);
   const [view, _setView] = useState({ name: "list" });
   const setView = useCallback((v) => {
     onthoudReis(v?.name === "detail" ? v.id : null);
@@ -1263,9 +1061,20 @@ function App() {
             <span className="w-8 h-8 rounded-lg bg-sky-300 text-gray-800 flex items-center justify-center shrink-0">
               <Icon name="plane" size={16} />
             </span>
-            <span className="truncate font-display text-[19px] font-semibold text-gray-800">Reisplanner</span>
+            {/* In een reis staat de reisnaam hier, in plaats van "Reisplanner"
+                en in plaats van een eigen balk eronder. Het logo blijft de weg
+                terug naar alle reizen. */}
+            <span className="truncate font-display text-[19px] font-semibold text-gray-800">
+              {kopInfo?.naam || "Reisplanner"}
+            </span>
+            {kopInfo?.gedeeld && (
+              <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">{kopInfo.gedeeld}</span>
+            )}
           </button>
           <div className="flex items-center gap-2 shrink-0">
+            {kopInfo?.onEdit && (
+              <TripActionsMenu onEdit={kopInfo.onEdit} onDelete={kopInfo.onDelete} />
+            )}
             {user ? (
               <>
                 {user.is_admin && view.name !== "admin" && (
@@ -1347,7 +1156,7 @@ function App() {
         ) : view.name === "admin" ? (
           <AdminView onBack={() => setView({ name: "list" })} currentUserId={user?.id} />
         ) : (
-          <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} />
+          <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} onKopInfo={setKopInfo} />
         )}
       </main>
 
