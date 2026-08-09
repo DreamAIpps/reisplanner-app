@@ -689,6 +689,54 @@ async function initDb() {
   await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS photos_trip_hash_unique ON photos(trip_id, content_hash) WHERE content_hash IS NOT NULL;
   `);
+
+  // Een reis hoort per datum één dagkaart te hebben. Dat was nergens
+  // afgedwongen, en een oudere versie kon er twee maken: de reeks dagen werd
+  // toen met setDate() opgebouwd, wat over een zomertijdovergang 23 uur
+  // vooruit stapt en dezelfde datum een tweede keer oplevert. Die dubbele
+  // kaarten staan nog in bestaande reizen. Eerst samenvoegen, dan vastzetten
+  // met een index — in die volgorde, anders faalt de index en start de app niet.
+  await mergeDuplicateDays();
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS days_trip_date_unique ON days(trip_id, date);
+  `);
+}
+
+// Voegt dubbele dagkaarten (zelfde reis, zelfde datum) samen op de oudste. Wat
+// eraan hangt — activiteiten, foto's, verhalen, reacties, duimpjes — verhuist
+// mee, zodat er niets verdwijnt. Bij de verhalen en duimpjes staat één rij per
+// dag per gebruiker vast; komt dezelfde gebruiker op beide kaarten voor, dan
+// blijft die van de oudste kaart staan en vervalt de andere.
+async function mergeDuplicateDays() {
+  const { rows: groups } = await query(`
+    SELECT trip_id, date, array_agg(id ORDER BY id ASC) AS ids
+    FROM days
+    GROUP BY trip_id, date
+    HAVING COUNT(*) > 1
+  `);
+  for (const group of groups) {
+    const [keepId, ...dupIds] = group.ids;
+    for (const dupId of dupIds) {
+      for (const tabel of ["journal_entries", "journal_likes"]) {
+        await query(
+          `DELETE FROM ${tabel} WHERE day_id = $2
+             AND user_id IN (SELECT user_id FROM ${tabel} WHERE day_id = $1)`,
+          [keepId, dupId]
+        );
+      }
+      for (const tabel of ["activities", "photos", "journal_entries", "journal_comments", "journal_likes"]) {
+        await query(`UPDATE ${tabel} SET day_id = $1 WHERE day_id = $2`, [keepId, dupId]);
+      }
+      // De titel en notities van de bewaarde kaart winnen; alleen wat daar leeg
+      // is wordt uit de dubbele overgenomen, zodat aantekeningen niet weglekken.
+      await query(
+        `UPDATE days k SET title = COALESCE(k.title, v.title), notes = COALESCE(k.notes, v.notes)
+         FROM (SELECT * FROM days WHERE id = $2) v WHERE k.id = $1`,
+        [keepId, dupId]
+      );
+      await query("DELETE FROM days WHERE id = $1", [dupId]);
+    }
+  }
 }
 
 async function mergeDuplicatePhotos() {

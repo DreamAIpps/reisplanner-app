@@ -1404,12 +1404,44 @@ route("POST", "/api/trips", async (req, res, params, body) => {
   if (start_date && end_date) {
     await query(
       `INSERT INTO days (trip_id, date)
-       SELECT $1, gs::date FROM generate_series($2::date, $3::date, interval '1 day') gs`,
+       SELECT $1, gs::date FROM generate_series($2::date, $3::date, interval '1 day') gs
+       ON CONFLICT (trip_id, date) DO NOTHING`,
       [rows[0].id, start_date, end_date]
     );
   }
   sendJson(res, 201, rows[0]);
 });
+
+// Houdt de dagkaarten gelijk aan de reisperiode. Bij het aanmaken gebeurde dat
+// al, bij het aanpassen niet: verschoof je de reis een week, dan bleven de oude
+// dagen staan en kwamen de nieuwe er niet bij — de planning liep dan niet meer
+// gelijk met de reis.
+//
+// Toevoegen kan altijd; de unieke index (trip_id, date) zorgt dat een datum die
+// er al is niet nog een keer verschijnt. Weghalen gebeurt alleen bij dagen
+// buiten de nieuwe periode die helemaal leeg zijn. Een dag met een activiteit,
+// een foto of een verhaal blijft staan, ook al valt hij buiten de periode: die
+// stilletjes weggooien zou echt werk van iemand wissen. Wie zo'n dag kwijt wil,
+// haalt hem zelf weg.
+async function synchroniseerDagen(tripId, startDate, endDate) {
+  if (!startDate || !endDate) return;
+  await query(
+    `INSERT INTO days (trip_id, date)
+     SELECT $1, gs::date FROM generate_series($2::date, $3::date, interval '1 day') gs
+     ON CONFLICT (trip_id, date) DO NOTHING`,
+    [tripId, startDate, endDate]
+  );
+  await query(
+    `DELETE FROM days d
+      WHERE d.trip_id = $1
+        AND (d.date < $2::date OR d.date > $3::date)
+        AND d.title IS NULL AND d.notes IS NULL
+        AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.day_id = d.id)
+        AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.day_id = d.id)
+        AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j.day_id = d.id)`,
+    [tripId, startDate, endDate]
+  );
+}
 
 route("PUT", "/api/trips/:id", async (req, res, params, body) => {
   const { name, destination, start_date, end_date, budget, currency, status, notes, cover_color, cover_image, timezone } = body;
@@ -1421,6 +1453,7 @@ route("PUT", "/api/trips/:id", async (req, res, params, body) => {
     [name, destination||null, start_date||null, end_date||null, budget||null, currency||"EUR", status||"planning", notes||null, cover_color||PALETTE.primary, cover_image||null, timezone||null, params.id, req.user.id]
   );
   if (!rows.length) return sendError(res, 404, "Trip not found");
+  await synchroniseerDagen(params.id, start_date, end_date);
   sendJson(res, 200, rows[0]);
 }, { tripScope: "param" });
 

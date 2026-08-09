@@ -77,7 +77,23 @@ const guestApi = {
   },
   updateTrip(id, data) {
     const d = _gr(); let found;
-    d.trips = (d.trips || []).map(t => t.id === id ? (found = { ...t, ...data }) : t); _gw(d); return Promise.resolve(found);
+    d.trips = (d.trips || []).map(t => t.id === id ? (found = { ...t, ...data }) : t);
+    // Dezelfde regel als op de server (synchroniseerDagen): de dagkaarten
+    // volgen de reisperiode. Ontbrekende datums komen erbij, datums die er al
+    // zijn blijven één kaart, en dagen buiten de nieuwe periode gaan alleen weg
+    // als er niets aan hangt.
+    if (data.start_date && data.end_date) {
+      const binnen = dateRange(data.start_date, data.end_date);
+      const bestaand = new Set((d.days || []).filter(x => x.trip_id === id).map(x => x.date));
+      const erbij = binnen.filter((date) => !bestaand.has(date)).map((date) => ({ id: _gid(), trip_id: id, date }));
+      const acts = d.activities || [], fotos = d.photos || [], verhalen = d.journal_entries || [];
+      const heeftInhoud = (dag) => !!(dag.title || dag.notes)
+        || acts.some((a) => a.day_id === dag.id)
+        || fotos.some((p) => p.day_id === dag.id)
+        || verhalen.some((e) => e.day_id === dag.id);
+      d.days = [...(d.days || []).filter((dag) => dag.trip_id !== id || binnen.includes(dag.date) || heeftInhoud(dag)), ...erbij];
+    }
+    _gw(d); return Promise.resolve(found);
   },
   deleteTrip(id) {
     const d = _gr();
