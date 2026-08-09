@@ -622,6 +622,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [viewingIndex, setViewingIndex] = useState(null);
+  // Verhouding van foto's die hem niet in de database hebben staan, gemeten
+  // zodra de browser ze geladen heeft. Zie beeldVerhouding hieronder.
+  const [gemetenRatio, setGemetenRatio] = useState({});
   // Los in het dagverhaal geüploade foto (nog aan geen activiteit gekoppeld)
   // krijgt meteen de vraag of hij tot een activiteit gepromoveerd moet worden.
   // Alleen zinvol op dat dagniveau — een foto die al bij een activiteit hoort
@@ -732,7 +735,33 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   // "pagina" van de veeg-beweging, wat ook het vastklikken (snap-center) rond
   // maakt. De hoogte volgt via aspect-square de breedte, in plaats van los van
   // elkaar op dezelfde vw-waarde te leunen.
-  const thumbClass = large ? "w-full h-auto aspect-square" : "w-24 h-24";
+  // In het dagboek zijn de foto's de hoofdzaak, dus krijgen ze hun eigen
+  // verhouding in plaats van een vierkant. Een staande foto werd door dat
+  // vierkant boven- en onderaan weggesneden én bleef klein; met de echte
+  // verhouding is hij hoger, dus groter, en zie je hem helemaal.
+  //
+  // Wel geklemd: een panorama van 3:1 zou een velletje worden en een extreem
+  // staande foto zou het hele scherm vullen en de rest van de dag wegduwen.
+  // De ondergrens ligt op 0,7 en niet op 0,8, omdat 3:4 (0,75) de gewone stand
+  // van een telefoonfoto is — die hoort er juist helemaal op te staan. Een
+  // filmische 9:16 wordt wél iets bijgesneden.
+  const thumbClass = large ? "w-full h-auto" : "w-24 h-24";
+  const beeldVerhouding = (p) => {
+    if (!large) return undefined;
+    // De kolommen width/height zijn er pas later bij gekomen, dus foto's van
+    // vóór die tijd hebben ze niet. Voor die groep meten we de verhouding aan
+    // de foto zelf zodra de browser hem geladen heeft.
+    const w = Number(p.width) || 0, h = Number(p.height) || 0;
+    const ratio = w && h ? w / h : gemetenRatio[p.id];
+    if (!ratio) return 1;
+    return Math.min(Math.max(ratio, 0.7), 1.5);
+  };
+  function onthoudRatio(p, img) {
+    if (!large || Number(p.width) > 0 || gemetenRatio[p.id]) return;
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return;
+    setGemetenRatio((vorige) => ({ ...vorige, [p.id]: w / h }));
+  }
   // De beschrijving en de reacties eronder horen even breed te zijn als het
   // fotoblok waar ze bij staan — dat is nu gewoon "de volle breedte".
   const largeMaxWidth = "100%";
@@ -746,9 +775,15 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
             zelf rekent 100% met de strook eromheen, en dat is wél een vaste
             maat. Op een breed scherm zou één foto anders de hele strook vullen,
             vandaar de bovengrens. */}
+        {/* De bovengrens van 420 pixels was er voor brede schermen, zodat één
+            foto niet de hele strook opslokt. Op een telefoon zat hij in de weg:
+            daar is de strook zelf al smaller dan dat. Nu 560, wat op een telefoon
+            niets afknijpt en op een breed scherm nog steeds remt. */}
         {photos.map((p, i) => (
-          <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center w-full max-w-[420px]" : ""}`}>
+          <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center w-full max-w-[560px]" : ""}`}>
             <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
+              onLoad={(e) => onthoudRatio(p, e.currentTarget)}
+              style={large ? { aspectRatio: beeldVerhouding(p) } : undefined}
               className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
             {large && (
               <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
