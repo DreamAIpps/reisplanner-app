@@ -1967,7 +1967,7 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
      LEFT JOIN accommodations ac ON ac.id = p.accommodation_id
      LEFT JOIN days d ON d.id = p.day_id
      WHERE p.trip_id = $1
-     ORDER BY p.taken_at ASC NULLS LAST, p.created_at ASC`,
+     ORDER BY p.sort_key ASC, p.taken_at ASC NULLS LAST, p.created_at ASC`,
     [params.id]
   );
   sendJson(res, 200, rows.map((r) => ({
@@ -1981,6 +1981,33 @@ route("GET", "/api/trips/:id/photos", async (req, res, params) => {
     url: `/api/photos/${r.id}/raw`, thumb_url: `/api/photos/${r.id}/thumb`,
   })));
 }, { tripScope: "param" });
+
+// Eén foto vooraan zetten binnen zijn eigen groepje (dezelfde dag, activiteit,
+// vervoer of verblijf). Geen volledige herordening: dit is de vraag die mensen
+// stellen — "die ene moet vooraan" — en daar hoort één tik bij, geen sleepwerk.
+//
+// De gekozen foto krijgt één minder dan de laagste sleutel in zijn groepje. Zo
+// verandert er aan de andere foto's niets, en werkt het ook als je het een paar
+// keer achter elkaar doet.
+route("PUT", "/api/photos/:id/voorop", async (req, res, params) => {
+  const { rows } = await query("SELECT * FROM photos WHERE id = $1", [params.id]);
+  if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
+  const foto = rows[0];
+  // Hetzelfde groepje: precies dezelfde koppeling, inclusief de lege velden.
+  // Anders zou "vooraan" bij een dagfoto ook de activiteitfoto's meenemen.
+  const { rows: laagste } = await query(
+    `SELECT MIN(sort_key) AS laagste FROM photos
+      WHERE trip_id = $1
+        AND day_id IS NOT DISTINCT FROM $2
+        AND activity_id IS NOT DISTINCT FROM $3
+        AND transport_id IS NOT DISTINCT FROM $4
+        AND accommodation_id IS NOT DISTINCT FROM $5`,
+    [foto.trip_id, foto.day_id, foto.activity_id, foto.transport_id, foto.accommodation_id]
+  );
+  const nieuw = (Number(laagste[0]?.laagste) || 0) - 1;
+  await query("UPDATE photos SET sort_key = $1 WHERE id = $2", [nieuw, params.id]);
+  sendJson(res, 200, { ok: true, sort_key: nieuw });
+}, { tripScope: "photos" });
 
 route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const { day_id, activity_id, transport_id, accommodation_id, image, caption, taken_at, latitude, longitude } = body;
