@@ -167,6 +167,23 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS trip_pings_lookup ON trip_pings(trip_id, user_id, minute);
 
+    -- Eén rij per AI-verzoek. De rekening van Anthropic komt per maand en per
+    -- account binnen; wie hem veroorzaakt heeft stond nergens. Hiermee is dat
+    -- terug te zien in het beheerscherm: wie, waarvoor, welk model, hoeveel
+    -- tokens. De reis mag NULL zijn (niet elk verzoek hoort bij een reis) en
+    -- blijft bestaan als de reis verdwijnt — het verbruik was er wel.
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+      doel TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ai_usage_user_idx ON ai_usage(user_id, created_at);
+
     CREATE TABLE IF NOT EXISTS days (
       id SERIAL PRIMARY KEY,
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
