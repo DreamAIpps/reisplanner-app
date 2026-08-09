@@ -1904,6 +1904,12 @@ function JournalOverviewMap({ trip, days, photos, accommodations, transports }) 
     };
   })();
 
+  // Niets gevonden en niets meer aan het zoeken: dan is dit een leeg vak van 280
+  // pixels dat alleen maar in de weg staat. Zonder verblijven of vervoer met een
+  // vindbaar adres valt er domweg geen route te tekenen; dan hoort de kaart er
+  // gewoon niet te zijn.
+  if (!zoekVoortgang && route.length === 0) return null;
+
   return (
     <div className="mb-6">
       <div className="rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0" style={{ height: 280 }}>
