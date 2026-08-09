@@ -573,7 +573,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     <div className="text-xs font-semibold text-gray-500 mb-1.5">
                       De locaties van {isToday ? "vandaag" : "gisteren"}:
                     </div>
-                    <DayMiniMap places={dayPlaces} accommodation={nightAccommodation} />
+                    {/* Vast, zonder zoomen en slepen: in het dagboek hoort dit
+                        bij het verhaal en scroll je er verticaal langs. Wie de
+                        kaart écht wil gebruiken tikt op de vergrootknop; daar
+                        kan alles wel. In de planning blijft het kaartje los. */}
+                    <DayMiniMap places={dayPlaces} accommodation={nightAccommodation} vast />
                   </div>
                 )}
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Hoe was deze dag?"

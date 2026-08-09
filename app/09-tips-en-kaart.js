@@ -826,7 +826,7 @@ const TOOLTIP_OPTIES = {
   className: "leaflet-reisplanner-tooltip", interactive: true,
 };
 
-function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
+function DayMiniMap({ places, accommodation, vol = false, vast = false, onSluiten }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [viewing, setViewing] = useState(null);
@@ -990,8 +990,18 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
       // wel, en schuiven erbij — zoomen zonder kunnen schuiven is een halve
       // functie. Alleen het scrollwiel blijft uit: op een kaartje midden in een
       // scrollende pagina hoort het wiel de pagina te bewegen, niet de kaart.
+      //
+      // Met `vast` gaat dat allemaal weer op slot. Dat is voor het dagboek: daar
+      // is de kaart een plaatje bij het verhaal, geen gereedschap, en tussen
+      // foto's en tekst die je verticaal doorbladert vangt een sleepbare kaart
+      // je vinger af terwijl je gewoon verder wilde scrollen. Wie er tóch in
+      // wil, tikt op de vergrootknop: die kaart zoomt en sleept wel.
       const map = L.map(mapRef.current, {
         scrollWheelZoom: false, attributionControl: false, tap: false,
+        ...(vast ? {
+          dragging: false, touchZoom: false, doubleClickZoom: false,
+          boxZoom: false, keyboard: false, zoomControl: false,
+        } : {}),
       });
       mapInstanceRef.current = map;
       addBaseLayer(L, map, cfg);
@@ -1132,7 +1142,7 @@ function DayMiniMap({ places, accommodation, vol = false, onSluiten }) {
     })();
 
     return () => { cancelled = true; };
-  }, [places, accommodation]);
+  }, [places, accommodation, vast]);
 
   useEffect(() => () => {
     if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
