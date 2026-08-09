@@ -254,8 +254,44 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
   // zien was dat de rij nog doorliep. Als lijst kosten ze samen twee plekken,
   // staat de grootte vooraan, en laat het bovendien zien wat er nú staat.
   const CONTROL = "h-8 rounded-lg border border-gray-300 bg-white text-xs text-gray-700 hover:border-gray-400 transition-colors px-1.5";
+
+  // De rij schuift horizontaal — dat moest wel, want alles naast elkaar past
+  // niet op een telefoon en over twee regels werd het zwevende paneel zo hoog
+  // dat het over de tekst viel. Maar schuiven zonder dat je het ziet is net zo
+  // erg als niet passen: op iOS is er geen schuifbalk, dus het leek gewoon of
+  // dit alles was en de uitlijnknoppen half achter de prullenbak hoorden.
+  // Vandaar een pijltje aan de kant waar nog meer staat. Bewust een knop en geen
+  // vervaging alleen: het paneel is wit, een witte vervaging op wit valt niet op,
+  // en op een telefoon is er geen muisaanwijzer die het per ongeluk ontdekt.
+  // Tikken schuift een stuk op, zodat je er ook zonder vegen bij komt.
+  const rijRef = useRef(null);
+  const [meerLinks, setMeerLinks] = useState(false);
+  const [meerRechts, setMeerRechts] = useState(false);
+  useEffect(() => {
+    const el = rijRef.current;
+    if (!el) return;
+    const meet = () => {
+      setMeerLinks(el.scrollLeft > 2);
+      setMeerRechts(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+    };
+    meet();
+    el.addEventListener("scroll", meet, { passive: true });
+    // Ook meten als het paneel van breedte verandert (draaien, toetsenbord),
+    // anders blijft er een vervaging staan waar niets meer achter zit.
+    const ro = new ResizeObserver(meet);
+    ro.observe(el);
+    return () => { el.removeEventListener("scroll", meet); ro.disconnect(); };
+  }, []);
+  // Ruim een half venster per tik: genoeg om verder te komen, weinig genoeg om
+  // te zien wat er langsschuift.
+  function schuif(richting) {
+    const el = rijRef.current;
+    if (el) el.scrollBy({ left: richting * Math.max(120, el.clientWidth * 0.6), behavior: "smooth" });
+  }
+
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 overflow-x-auto [&>*]:shrink-0">
+    <div className="relative flex-1 min-w-0 mb-1.5">
+    <div ref={rijRef} className="flex items-center gap-1.5 overflow-x-auto [&>*]:shrink-0">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Vet"
         className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center font-bold text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors">B</button>
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Cursief"
@@ -288,6 +324,21 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
         <button key={c} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => run("foreColor", c)} title="Tekstkleur"
           className="w-6 h-6 rounded-full border border-gray-300 shrink-0" style={{ background: c }} />
       ))}
+    </div>
+    {meerLinks && (
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => schuif(-1)}
+        title="Meer opmaakopties" aria-label="Meer opmaakopties naar links"
+        className="absolute inset-y-0 left-0 w-8 flex items-center justify-start bg-gradient-to-r from-white via-white to-transparent text-gray-500 hover:text-gray-800 transition-colors">
+        <Icon name="chevronRight" size={16} style={{ transform: "rotate(180deg)" }} />
+      </button>
+    )}
+    {meerRechts && (
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => schuif(1)}
+        title="Meer opmaakopties" aria-label="Meer opmaakopties naar rechts"
+        className="absolute inset-y-0 right-0 w-8 flex items-center justify-end bg-gradient-to-l from-white via-white to-transparent text-gray-500 hover:text-gray-800 transition-colors">
+        <Icon name="chevronRight" size={16} />
+      </button>
+    )}
     </div>
   );
 }
