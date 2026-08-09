@@ -223,7 +223,7 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
       {/* Hier stond "← Alle reizen". Weg: het logo in de kop doet hetzelfde en
           staat altijd in beeld, ook voor een meekijker zonder onderbalk. Twee
           knoppen voor dezelfde stap kostten alleen een regel hoogte boven de
-          dagen. In het meer-menu staat "Terug" nog voor wie hem daar zoekt. */}
+          dagen. Ook de "Terug" in het meer-menu is om die reden weg. */}
 
       {/* Op planning en dagboek: een slanke balk van één regel met de reisnaam,
           zonder omslagfoto — de grote hero neemt daar te veel ruimte in weg van
@@ -309,11 +309,9 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
           <div className="sm:hidden fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
           <div className="sm:hidden fixed z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden py-1"
             style={{ right: 12, bottom: "calc(68px + env(safe-area-inset-bottom) + 10px)", minWidth: 180 }}>
-            <button onClick={() => { setShowMoreMenu(false); onBack(); }}
-              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors text-left text-gray-700 border-b border-gray-100">
-              <Icon name="arrowLeft" size={17} />
-              Terug
-            </button>
+            {/* Hier stond "Terug". Weg: het logo in de kop van de app brengt je
+                ook naar alle reizen en staat altijd in beeld. Dit menu gaat over
+                wat je in deze reis kunt doen, niet over hoe je hem verlaat. */}
             {moreMenuGroups.map((groep) => (
               <React.Fragment key={groep.titel}>
                 <div className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">{groep.titel}</div>
