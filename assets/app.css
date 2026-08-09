@@ -138,6 +138,31 @@
   padding-right: var(--rp-foto-inzet-r, 0px);
 }
 
+/* Een foto die nog onderweg is. Op een trage verbinding — en dat is precies
+   waar dit voor is, midden op reis met twee streepjes bereik — stond er een
+   leeg vlak waar een foto hoorde te komen. Dat leest als "kapot", niet als
+   "even geduld".
+   De truc zit in de vertraging: dit blok begint onzichtbaar en fade't pas na
+   450 ms in. Laadt de foto sneller, dan is het element allang weer weg en heb
+   je nooit een balkje zien flitsen. Alleen als het écht langzaam gaat, zie je
+   iets — wat ook precies is wat er gevraagd werd. */
+@keyframes rp-lader-in { to { opacity: 1; } }
+.rp-lader {
+  opacity: 0;
+  animation: rp-lader-in .25s ease-out .45s forwards;
+}
+/* Onbepaalde voortgang: hoeveel procent van een foto binnen is, vertelt de
+   browser niet, dus doet de balk geen alsof. Hij loopt heen en weer om te
+   zeggen "er gebeurt iets", zonder een percentage te verzinnen. */
+@keyframes rp-lader-balk {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+.rp-lader-balk { animation: rp-lader-balk 1.3s cubic-bezier(.5,0,.5,1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .rp-lader-balk { animation: none; opacity: .55; transform: translateX(60%); }
+}
+
 /* Dubbeltik-waardering in de fotoviewer — hetzelfde duimpje als de like-knop
    elders, alleen groot en even opvallend in beeld. */
 @keyframes rp-heartpop {

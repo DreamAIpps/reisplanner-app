@@ -237,6 +237,11 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
   const [replyText, setReplyText] = useState("");
   const [postingReply, setPostingReply] = useState(false);
   const [heartBurst, setHeartBurst] = useState(0);
+  // Staat van de foto op ware grootte: null = onderweg, "ok" = binnen,
+  // "fout" = niet gelukt. Bij het doorvegen naar de volgende foto hoort dit
+  // weer op null, anders zou de nieuwe foto de lader van zijn voorganger erven.
+  const [volStaat, setVolStaat] = useState(null);
+  const meldVolBinnen = (gelukt) => setVolStaat((v) => (v === (gelukt ? "ok" : "fout") ? v : (gelukt ? "ok" : "fout")));
   const touchStart = useRef(null);
   const tapTimer = useRef(null);
   const lastSwipeAt = useRef(0);
@@ -253,6 +258,10 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
   // verkeerde foto belandt als die intussen (via de pijltjestoetsen hieronder,
   // of anders) is doorgeschoven naar de volgende/vorige foto.
   useEffect(() => { setEditingCaption(false); setCaptionText(""); setReplyText(""); }, [viewing?.id]);
+
+  // Veeg je door naar de volgende foto, dan begint die weer bij nul — anders
+  // erft hij de "binnen"-stand van zijn voorganger en zie je nooit een lader.
+  useEffect(() => { setVolStaat(null); }, [viewing?.id]);
 
   useEffect(() => {
     function handleKey(e) {
@@ -363,9 +372,41 @@ function PhotoLightbox({ photos, index, onClose, onIndexChange, assign, onDelete
       onClick={handleTap} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchCancel}>
 
+      {/* De miniatuur uit het dagboek, wazig, zolang de foto op ware grootte nog
+          onderweg is. Die staat toch al in de cache van de browser — het kost
+          dus niets — en het scheelt het verschil tussen wachten voor een zwart
+          scherm en wachten terwijl je al ziet wélke foto eraan komt. Geen
+          vertraging hier: hij is er meteen of hij is er niet. */}
+      {volStaat !== "ok" && viewing.thumb_url && viewing.thumb_url !== viewing.url && (
+        <img src={viewing.thumb_url} alt="" draggable={false} aria-hidden="true"
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          style={{ filter: "blur(18px)", transform: `translateX(${dragX}px) scale(1.04)`, transition: dragging ? "none" : "transform 200ms ease-out" }} />
+      )}
+
       <img src={`${viewing.url}${rotated ? (viewing.url.includes("?") ? "&" : "?") + "r=" + rotated : ""}`} alt="" draggable={false}
+        ref={(el) => { if (el && el.complete && el.naturalWidth) meldVolBinnen(true); }}
+        onLoad={() => meldVolBinnen(true)} onError={() => meldVolBinnen(false)}
         className="absolute inset-0 w-full h-full object-contain"
         style={{ transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 200ms ease-out", touchAction: "manipulation" }} />
+
+      {/* Hier is een lader het hardst nodig: dit is de foto op ware grootte, niet
+          de miniatuur uit het dagboek. Op een trage verbinding staar je anders
+          naar een zwart scherm en denk je dat de app hangt. Zelfde vertraging van
+          450 ms, dus op wifi zie je nog steeds niets. */}
+      {volStaat !== "ok" && (
+        <div className={`absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none ${volStaat === "fout" ? "" : "rp-lader"}`}>
+          {volStaat === "fout" ? (
+            <>
+              <Icon name="alert" size={26} strokeWidth={1.4} className="text-white/60" />
+              <span className="text-sm text-white/70">Foto kon niet geladen worden</span>
+            </>
+          ) : (
+            <div className="relative w-32 h-1 rounded-full bg-white/20 overflow-hidden" role="status" aria-label="Foto wordt geladen">
+              <div className="rp-lader-balk absolute inset-y-0 left-0 w-1/3 rounded-full bg-white/80" />
+            </div>
+          )}
+        </div>
+      )}
 
       {heartBurst > 0 && (
         <div key={heartBurst} className="rp-heartpop absolute left-1/2 top-1/2 pointer-events-none z-[60] text-white">
@@ -617,6 +658,34 @@ function VerwerkVoortgang({ done, total, className = "" }) {
   );
 }
 
+// Het vlak waar een foto komt te staan zolang hij nog onderweg is. Op wifi zie
+// je dit nooit: het fade't pas na 450 ms in (zie .rp-lader in app.css) en tegen
+// die tijd is de foto er meestal al. Op een trage verbinding — hotelwifi,
+// buitenland, twee streepjes bereik — is het het verschil tussen "de app is
+// stuk" en "even geduld".
+//
+// De balk toont geen percentage. De browser vertelt bij een <img> niet hoeveel
+// er binnen is, dus een cijfer zou verzonnen zijn; hij loopt heen en weer om te
+// zeggen dát er iets gebeurt.
+function FotoLader({ mislukt }) {
+  if (mislukt) {
+    return (
+      <div className="absolute inset-0 rounded-2xl bg-gray-50 border border-gray-100 flex flex-col items-center justify-center gap-1.5 text-gray-400 pointer-events-none">
+        <Icon name="alert" size={20} strokeWidth={1.4} />
+        <span className="text-xs font-medium">Foto kon niet geladen worden</span>
+      </div>
+    );
+  }
+  return (
+    <div className="rp-lader absolute inset-0 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center pointer-events-none"
+      role="status" aria-label="Foto wordt geladen">
+      <div className="relative w-1/3 h-1 rounded-full bg-gray-200 overflow-hidden">
+        <div className="rp-lader-balk absolute inset-y-0 left-0 w-1/3 rounded-full bg-gray-400" />
+      </div>
+    </div>
+  );
+}
+
 function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -625,6 +694,9 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   // Verhouding van foto's die hem niet in de database hebben staan, gemeten
   // zodra de browser ze geladen heeft. Zie beeldVerhouding hieronder.
   const [gemetenRatio, setGemetenRatio] = useState({});
+  // Welke foto's binnen zijn, en welke het niet gehaald hebben. Beide nodig:
+  // zonder de tweede zou een kapotte foto voor altijd blijven "laden".
+  const [binnen, setBinnen] = useState({});
   // Los in het dagverhaal geüploade foto (nog aan geen activiteit gekoppeld)
   // krijgt meteen de vraag of hij tot een activiteit gepromoveerd moet worden.
   // Alleen zinvol op dat dagniveau — een foto die al bij een activiteit hoort
@@ -762,6 +834,13 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     if (!w || !h) return;
     setGemetenRatio((vorige) => ({ ...vorige, [p.id]: w / h }));
   }
+  // Een foto die al in de cache van de browser zit is bij het aanhaken meteen
+  // compleet en vuurt geen load meer af. Zonder deze controle bleef de lader
+  // daar eeuwig over een foto staan die er gewoon al is.
+  function meldBinnen(p, img, gelukt) {
+    if (img && img.complete && gelukt && binnen[p.id] === "ok") return;
+    setBinnen((vorige) => (vorige[p.id] === (gelukt ? "ok" : "fout") ? vorige : { ...vorige, [p.id]: gelukt ? "ok" : "fout" }));
+  }
   // De beschrijving en de reacties eronder horen even breed te zijn als het
   // fotoblok waar ze bij staan — dat is nu gewoon "de volle breedte".
   const largeMaxWidth = "100%";
@@ -787,9 +866,15 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
         {photos.map((p, i) => (
           <div key={p.id} className={`relative shrink-0 group ${large ? "snap-center w-full max-w-[560px]" : ""}`}>
             <img src={p.thumb_url || p.url} alt={p.caption || ""} loading="lazy" decoding="async" onClick={() => setViewingIndex(i)}
-              onLoad={(e) => onthoudRatio(p, e.currentTarget)}
+              ref={(el) => { if (el && el.complete && el.naturalWidth) { onthoudRatio(p, el); meldBinnen(p, el, true); } }}
+              onLoad={(e) => { onthoudRatio(p, e.currentTarget); meldBinnen(p, e.currentTarget, true); }}
+              onError={() => meldBinnen(p, null, false)}
               style={large ? { aspectRatio: beeldVerhouding(p) } : undefined}
               className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
+            {/* Bovenop de foto in plaats van ervoor: het kader staat er al op de
+                juiste verhouding, dus er springt niets als de foto binnenkomt. */}
+            {large && !binnen[p.id] && <FotoLader />}
+            {large && binnen[p.id] === "fout" && <FotoLader mislukt />}
             {large && (
               <div className="rp-fototekst">
                 <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
