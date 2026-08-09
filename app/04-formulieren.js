@@ -257,6 +257,51 @@ function TripCard({ trip, onClick }) {
   const onPhoto = !!trip.cover_image;
   const coverInk = onPhoto ? "#FFFFFF" : textOn(accent);
 
+  // Zonder omslagfoto is die 190 pixels hoge kop een gekleurd vlak en verder
+  // niets: hij kost een half scherm per reis zonder iets te laten zien. Met een
+  // foto is het juist het enige waaraan je de reis herkent, en dan mag hij groot
+  // blijven. Vandaar twee vormen in plaats van één compromis.
+  if (!onPhoto) {
+    const status = until === 0 ? "Vandaag vertrek!"
+      : until !== null && until > 0 ? `Nog ${until} dag${until === 1 ? "" : "en"}`
+      : until !== null && until < 0 && trip.end_date && new Date(trip.end_date) >= new Date() ? `Onderweg — dag ${Math.abs(until) + 1}`
+      : null;
+    return (
+      <div onClick={onClick}
+        className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-200 flex items-stretch overflow-hidden"
+        style={{ WebkitTapHighlightColor: "transparent" }}>
+        {/* De omslagkleur blijft, als streep. Zo houdt elke reis zijn eigen kleur
+            om aan te herkennen zonder dat het een vlak van een half scherm wordt. */}
+        <div className="w-1.5 shrink-0" style={{ background: accent }} />
+        <div className="flex-1 min-w-0 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-[17px] leading-tight text-gray-800 truncate">{trip.name}</h3>
+              {trip.destination && (
+                <div className="text-[13px] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+                  <Icon name="pin" size={12} className="shrink-0" />{trip.destination}
+                </div>
+              )}
+            </div>
+            {trip.is_owner === false && (
+              <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                {trip.role === "viewer" ? "Alleen-lezen" : "Gedeeld"}
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 flex items-center gap-3 text-[12px] text-gray-500 flex-wrap">
+            <span className="font-medium">{trip.start_date ? `${fmt(trip.start_date)}${dur ? ` · ${dur}` : ""}` : "Datum onbekend"}</span>
+            {trip.activity_count > 0 && <span className="flex items-center gap-1"><Icon name="route" size={12} /><span className="tnum">{trip.activity_count}</span></span>}
+            {trip.budget && <span className="flex items-center gap-1"><Icon name="wallet" size={12} /><span className="tnum">{fmtMoney(trip.budget, trip.currency)}</span></span>}
+            {status && (
+              <span className="font-semibold px-2 py-0.5 rounded-full" style={{ background: accent + "26", color: legibleOn(accent) }}>{status}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div onClick={onClick} className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden border border-gray-200 group" style={{ WebkitTapHighlightColor: "transparent" }}>
       {/* Cover */}
