@@ -482,16 +482,22 @@ function ApiStatusPanel() {
           {data.checks.map((c) => {
             const k = KLEUR[c.staat] || KLEUR.uit;
             return (
+              // Naam en oordeel op één regel, de uitleg eronder over de volle
+              // breedte. Eerder stonden uitleg en detail náást elkaar in twee
+              // kolommen; op een telefoon duwde een lange detailtekst ("alleen
+              // te testen bij een echte inlogpoging") de linkerkolom zo smal
+              // dat "Meldingen naar de telefoon" woord voor woord onder elkaar
+              // kwam te staan en achter de tekst rechts verdween.
               <div key={c.naam} className="py-2.5 flex items-start gap-3">
                 <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${k.stip}`} />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-gray-800">{c.naam}</div>
-                  <div className="text-xs text-gray-400">{c.waarvoor}</div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-sm font-medium text-gray-800 truncate">{c.naam}</span>
+                    <span className={`text-xs font-semibold shrink-0 ${k.tekst}`}>{k.label}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">{c.waarvoor}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">{c.detail}</div>
                   {c.waarschuwing && <div className="text-xs text-amber-600 mt-0.5">{c.waarschuwing}</div>}
-                </div>
-                <div className="text-right shrink-0">
-                  <div className={`text-xs font-semibold ${k.tekst}`}>{k.label}</div>
-                  <div className="text-[11px] text-gray-400">{c.detail}</div>
                 </div>
               </div>
             );
@@ -548,21 +554,26 @@ function AiVerbruikPanel() {
                 <thead>
                   <tr className="text-xs text-gray-400 text-left">
                     <th className="font-medium pb-2">Gebruiker</th>
-                    <th className="font-medium pb-2 text-right">Verzoeken</th>
-                    <th className="font-medium pb-2 text-right">Erin</th>
-                    <th className="font-medium pb-2 text-right">Eruit</th>
+                    {/* "Aantal" in plaats van "Verzoeken": dat woord bepaalde in zijn eentje
+                        de kolombreedte en at dertig pixels van de naam ernaast op. */}
+                    <th className="font-medium pb-2 text-right pl-4">Aantal</th>
+                    <th className="font-medium pb-2 text-right pl-4">Erin</th>
+                    <th className="font-medium pb-2 text-right pl-4">Eruit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {data.gebruikers.map((g) => (
+                    // Zonder ruimte tussen de kolommen liepen "2", "168" en "14"
+                    // in elkaar over tot iets dat las als een getal van zes
+                    // cijfers. De naam mag krimpen, de cijfers niet.
                     <tr key={g.id || "onbekend"}>
-                      <td className="py-2 pr-3">
+                      <td className="py-2 pr-3 max-w-0 w-full">
                         <div className="font-medium text-gray-800 truncate">{g.naam}</div>
                         {g.email && g.email !== g.naam && <div className="text-xs text-gray-400 truncate">{g.email}</div>}
                       </td>
-                      <td className="py-2 text-right tnum text-gray-700">{g.verzoeken}</td>
-                      <td className="py-2 text-right tnum text-gray-700">{kort(g.inputTokens)}</td>
-                      <td className="py-2 text-right tnum text-gray-700">{kort(g.outputTokens)}</td>
+                      <td className="py-2 pl-4 text-right tnum text-gray-700 whitespace-nowrap">{g.verzoeken}</td>
+                      <td className="py-2 pl-4 text-right tnum text-gray-700 whitespace-nowrap">{kort(g.inputTokens)}</td>
+                      <td className="py-2 pl-4 text-right tnum text-gray-700 whitespace-nowrap">{kort(g.outputTokens)}</td>
                     </tr>
                   ))}
                 </tbody>
