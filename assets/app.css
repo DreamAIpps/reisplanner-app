@@ -121,6 +121,23 @@
   contain-intrinsic-size: auto 3000px;
 }
 
+/* Foto's in het dagboek pakken de volle breedte van de dagkaart. Ze stonden
+   binnen de binnenmarge van de kaart (16px) en, bij een activiteit, ook nog
+   binnen het inspringen van het activiteitenblok (12px plus de streep) —
+   samen ruim tachtig pixels van de 390 die een telefoon breed is. Foto's zijn
+   de kern van deze pagina, dus die marge halen we er bij de foto weer af.
+   De tekst eronder krijgt hem via .rp-fototekst terug: een beschrijving of
+   een reactie die tegen de rand van de kaart begint leest niet prettig.
+   Buiten het dagboek staan de variabelen op nul, dus daar verandert niets. */
+.rp-fotobreed {
+  margin-left: calc(-1 * var(--rp-foto-inzet-l, 0px));
+  margin-right: calc(-1 * var(--rp-foto-inzet-r, 0px));
+}
+.rp-fotobreed .rp-fototekst {
+  padding-left: var(--rp-foto-inzet-l, 0px);
+  padding-right: var(--rp-foto-inzet-r, 0px);
+}
+
 /* Dubbeltik-waardering in de fotoviewer — hetzelfde duimpje als de like-knop
    elders, alleen groot en even opvallend in beeld. */
 @keyframes rp-heartpop {
