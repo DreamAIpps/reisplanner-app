@@ -1161,7 +1161,19 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState({ name: "list" });
+  // Welke reis je het laatst open had. Bij het opstarten koos de app anders de
+  // lópende reis, en na een herlaad — wat een foutmelding nogal eens veroorzaakt —
+  // stond je daardoor ineens in een andere reis dan die je aan het bekijken was.
+  // In sessionStorage en niet in localStorage: dit gaat over "ik was hier net
+  // nog", niet over een voorkeur die dagen later nog moet gelden. Sluit je het
+  // tabblad, dan begint het weer bij de lopende reis.
+  const LAATSTE_REIS = "rp_laatste_reis";
+  const onthoudReis = (id) => { try { id ? sessionStorage.setItem(LAATSTE_REIS, String(id)) : sessionStorage.removeItem(LAATSTE_REIS); } catch {} };
+  const [view, _setView] = useState({ name: "list" });
+  const setView = useCallback((v) => {
+    onthoudReis(v?.name === "detail" ? v.id : null);
+    _setView(v);
+  }, []);
   const [showTripForm, setShowTripForm] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
 
@@ -1206,6 +1218,15 @@ function App() {
       }
       if (autoGeopend.current) return;
       autoGeopend.current = true;
+      // Eerst waar je was, dan pas de lopende reis. Alleen als die reis er nog
+      // is: een verwijderde of niet meer gedeelde reis moet je niet opnieuw
+      // voorgeschoteld krijgen met een foutmelding erbij.
+      let vorige = null;
+      try { vorige = sessionStorage.getItem(LAATSTE_REIS); } catch {}
+      if (vorige && (geladen || []).some((t) => String(t.id) === String(vorige))) {
+        setView({ name: "detail", id: vorige });
+        return;
+      }
       const lopend = (geladen || []).find((t) => tripCategory(t.start_date, t.end_date) === 0);
       if (lopend) setView({ name: "detail", id: lopend.id });
     })();
