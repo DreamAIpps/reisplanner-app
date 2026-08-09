@@ -1,5 +1,5 @@
 // ---------- Trip detail ----------
-function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId, onKopInfo }) {
+function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, currentUserId, onKopInfo }) {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [accommodations, setAccommodations] = useState([]);
@@ -7,7 +7,9 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId, onKo
   const [expenses, setExpenses] = useState([]);
   const [tab, setTab] = useState(initialTab || "days");
   const [editing, setEditing] = useState(false);
-  const [importing, setImporting] = useState(false);
+  // Bij een net aangemaakte reis waar "ik heb al boekingen" is gekozen staat
+  // het importvenster meteen open — dat is waar die keuze om vroeg.
+  const [importing, setImporting] = useState(!!startImport);
   const [sharing, setSharing] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -358,7 +360,7 @@ function TripDetail({ tripId, initialTab, onBack, onChanged, currentUserId, onKo
       )}
 
       {editing && <TripForm initial={trip} onSaved={() => { setEditing(false); load(); onChanged(); }} onClose={() => setEditing(false)} />}
-      {importing && <ImportModal tripId={tripId} onImported={load} onClose={() => setImporting(false)} />}
+      {importing && <ImportModal tripId={tripId} onImported={() => { setImporting(false); load(); }} onClose={() => setImporting(false)} />}
       {sharing && (
         <ShareModal tripId={tripId} role={sharing} onClose={() => setSharing(null)} />
       )}
@@ -972,7 +974,9 @@ function App() {
     onthoudReis(v?.name === "detail" ? v.id : null);
     _setView(v);
   }, []);
-  const [showTripForm, setShowTripForm] = useState(false);
+  // Een nieuwe reis loopt in twee stappen: eerst de vraag hoe je wilt beginnen
+  // (boekingen importeren of blanco), dan het formulier. null = dicht.
+  const [nieuweReis, setNieuweReis] = useState(null); // null | "keuze" | "import" | "blanco"
   const [showAccount, setShowAccount] = useState(false);
 
   const loadUser = useCallback(async () => {
@@ -1146,7 +1150,7 @@ function App() {
             )}
             {/* FAB */}
             <button
-              onClick={() => setShowTripForm(true)}
+              onClick={() => setNieuweReis("keuze")}
               className="fixed bottom-6 right-4 z-50 flex items-center gap-2 px-6 py-4 rounded-xl font-semibold text-base transition-colors hover:brightness-95"
               style={{ background: PALETTE.primary, color: PALETTE.textPrimary, boxShadow: "0 8px 24px rgba(233,171,155,0.45)", paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
             >
@@ -1156,7 +1160,7 @@ function App() {
         ) : view.name === "admin" ? (
           <AdminView onBack={() => setView({ name: "list" })} currentUserId={user?.id} />
         ) : (
-          <TripDetail tripId={view.id} initialTab={view.tab} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} onKopInfo={setKopInfo} />
+          <TripDetail tripId={view.id} initialTab={view.tab} startImport={view.importeren} onBack={() => setView({ name: "list" })} onChanged={loadTrips} currentUserId={user?.id} onKopInfo={setKopInfo} />
         )}
       </main>
 
@@ -1167,10 +1171,18 @@ function App() {
       {showAccount && user && (
         <AccountModal user={user} onClose={() => setShowAccount(false)} onChanged={loadUser} onLogout={handleLogout} />
       )}
-      {showTripForm && (
+      {nieuweReis === "keuze" && (
+        <NieuweReisStart onKies={setNieuweReis} onClose={() => setNieuweReis(null)} />
+      )}
+      {(nieuweReis === "import" || nieuweReis === "blanco") && (
         <TripForm
-          onSaved={(trip) => { setShowTripForm(false); loadTrips(); setView({ name: "detail", id: trip.id }); }}
-          onClose={() => setShowTripForm(false)}
+          onSaved={(trip) => {
+            const metImport = nieuweReis === "import";
+            setNieuweReis(null);
+            loadTrips();
+            setView({ name: "detail", id: trip.id, importeren: metImport });
+          }}
+          onClose={() => setNieuweReis(null)}
         />
       )}
     </div>
