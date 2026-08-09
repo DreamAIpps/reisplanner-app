@@ -768,7 +768,12 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
 
   return (
     <div onClick={(e) => e.stopPropagation()}>
-      <div className={`flex ${large ? "gap-4 snap-x snap-mandatory" : "gap-2"} overflow-x-auto pb-1`}>
+      {/* rp-fotobreed haalt de foto's uit de binnenmarge van de dagkaart, zodat
+          ze de volle breedte pakken. De tekst eronder — beschrijving, duimpje,
+          reacties — krijgt die marge via rp-fototekst weer terug, want een zin
+          die tegen de rand van de kaart begint leest niet. Buiten het dagboek
+          staan de variabelen op nul en verandert er dus niets. */}
+      <div className={`flex ${large ? "gap-4 snap-x snap-mandatory rp-fotobreed" : "gap-2"} overflow-x-auto pb-1`}>
         {/* De breedte hoort op het blok hieronder (het flex-item) en niet op de
             <img>: een percentage op de foto zou zich richten naar zijn ouder, en
             die is juist zo breed als zijn inhoud — een kringetje. Op het item
@@ -786,10 +791,12 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
               style={large ? { aspectRatio: beeldVerhouding(p) } : undefined}
               className={`${thumbClass} ${large ? "rounded-2xl" : "rounded-lg"} object-cover cursor-pointer border border-gray-100`} />
             {large && (
-              <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
+              <div className="rp-fototekst">
+                <PhotoCaption photo={p} readOnly={readOnly} onChanged={onChange} maxWidth={largeMaxWidth} />
+              </div>
             )}
             {large && comments && (
-              <div className="mt-1.5" style={{ maxWidth: largeMaxWidth }} onClick={(e) => e.stopPropagation()}>
+              <div className="mt-1.5 rp-fototekst" style={{ maxWidth: largeMaxWidth }} onClick={(e) => e.stopPropagation()}>
                 <JournalComments slot={{ photo_id: p.id }}
                   comments={comments.filter((c) => c.photo_id === p.id)}
                   like={(slotLikes && slotLikes[`photo_id:${p.id}`]) || { like_count: 0, liked_by_me: false }}

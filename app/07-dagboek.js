@@ -561,7 +561,10 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                 )}
               </div>
 
-              <div className="p-4 space-y-4">
+              {/* Hoeveel de fotostrook naar buiten mag om de volle breedte van
+                  de kaart te pakken — precies de binnenmarge hier (p-4). Zie
+                  .rp-fotobreed in app.css. */}
+              <div className="p-4 space-y-4" style={{ "--rp-foto-inzet-l": "1rem", "--rp-foto-inzet-r": "1rem" }}>
                 {nightAccommodation && (
                   <AccommodationTransition current={nightAccommodation} previous={prevNightAccommodation} date={dayStr} />
                 )}
@@ -587,7 +590,8 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {day.activities.map((act) => {
                       const actEntries = entries.filter((e) => e.activity_id === act.id);
                       return (
-                        <div key={"act" + act.id} id={`journal-activity-${act.id}`} className="pl-3 border-l border-gray-200" style={{ scrollMarginTop: "5rem" }}>
+                        <div key={"act" + act.id} id={`journal-activity-${act.id}`} className="pl-3 border-l border-gray-200"
+                          style={{ scrollMarginTop: "5rem", "--rp-foto-inzet-l": "1.8125rem" }}>
                           <div className="text-sm font-bold text-gray-600 mb-1.5 flex items-center gap-1.5">
                             <Icon name={categoryIcon(act.category)} size={13} className="text-gray-400 shrink-0" />
                             <JournalActivityTitle act={act} readOnly={readOnly}
