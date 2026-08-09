@@ -627,7 +627,10 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   // Alleen zinvol op dat dagniveau — een foto die al bij een activiteit hoort
   // is al "van" iets, en buiten het dagboek (large=false, bijv. de foto's-tab)
   // is er geen losse dag-context om dit aan te bieden.
-  const [activityPromptPhoto, setActivityPromptPhoto] = useState(null);
+  // De hele upload, niet één foto: maak je er een activiteit van, dan horen ze
+  // er allemaal onder te komen. Wie acht foto's van dezelfde tempel uploadt
+  // bedoelt één activiteit met acht foto's, niet één met één en zeven zwervers.
+  const [activityPromptPhotos, setActivityPromptPhotos] = useState([]);
   const [showActivityForm, setShowActivityForm] = useState(false);
   const canAssign = !readOnly && !!days;
   const canOfferActivity = large && !readOnly && !!dayId && !activityId && !transportId && !accommodationId && !!days;
@@ -674,9 +677,8 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     });
     setUploading(false);
     onChange();
-    // Bij meerdere foto's tegelijk maar één keer aanbieden, voor de eerst
-    // geüploade — anders volgt er een hele stapel prompts achter elkaar.
-    if (canOfferActivity && uploaded.length) setActivityPromptPhoto(uploaded[0]);
+    // Eén vraag voor de hele stapel — niet één per foto.
+    if (canOfferActivity && uploaded.length) setActivityPromptPhotos(uploaded);
     if (failed.length) {
       alert(`${files.length - failed.length} van ${files.length} foto's geüpload.\n\nNiet gelukt:\n${failed.join("\n")}`);
     }
@@ -686,11 +688,17 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
   // niet bestond — na het aanmaken hoeft dus alleen de koppeling verlegd te
   // worden, niet opnieuw geüpload.
   async function handleActivityCreated(activity) {
-    if (activityPromptPhoto) {
-      await api.updatePhoto(activityPromptPhoto.id, { day_id: activity.day_id, activity_id: activity.id, transport_id: null, accommodation_id: null });
+    // Achter elkaar en niet tegelijk: het gaat om een handvol foto's, en een
+    // stortvloed parallelle verzoeken vlak na een upload is precies waar de
+    // verbinding onderweg op stukloopt. Mislukt er één, dan blijft die gewoon
+    // los in de dag staan — beter dan de hele koppeling laten klappen.
+    for (const foto of activityPromptPhotos) {
+      try {
+        await api.updatePhoto(foto.id, { day_id: activity.day_id, activity_id: activity.id, transport_id: null, accommodation_id: null });
+      } catch {}
     }
     setShowActivityForm(false);
-    setActivityPromptPhoto(null);
+    setActivityPromptPhotos([]);
     onChange();
   }
 
@@ -800,18 +808,33 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
           was niet duidelijk dat je hier iets kon kiezen. Nu een echte kaart met
           de foto erbij (zodat zichtbaar is wélke foto het betreft) en twee
           even grote knoppen met een duidelijk ja en nee. */}
-      {canOfferActivity && activityPromptPhoto && (
+      {canOfferActivity && activityPromptPhotos.length > 0 && (
         <div className="rp-rise mt-3 p-3 rounded-2xl border border-sky-200 bg-sky-50 shadow-sm" style={{ maxWidth: largeMaxWidth }}>
           <div className="flex items-center gap-3">
-            <img src={activityPromptPhoto.thumb_url || activityPromptPhoto.url} alt=""
-              className="w-14 h-14 rounded-xl object-cover shrink-0" />
+            {/* Een stapeltje in plaats van één foto, zodat je vóór het antwoorden
+                al ziet dat het over de hele upload gaat en niet over die ene. */}
+            <div className="relative w-14 h-14 shrink-0">
+              {activityPromptPhotos.slice(0, 3).reverse().map((f, i, rij) => (
+                <img key={f.id} src={f.thumb_url || f.url} alt=""
+                  className="absolute w-14 h-14 rounded-xl object-cover border-2 border-sky-50"
+                  style={{ left: (rij.length - 1 - i) * 4, top: (rij.length - 1 - i) * -2, zIndex: i }} />
+              ))}
+            </div>
             <div className="min-w-0">
-              <div className="font-display text-[17px] text-gray-800 leading-snug">Activiteit van deze foto maken?</div>
-              <div className="text-xs text-gray-500 mt-0.5">Dan komt hij op de planning te staan met een naam en tijd.</div>
+              <div className="font-display text-[17px] text-gray-800 leading-snug">
+                {activityPromptPhotos.length === 1
+                  ? "Activiteit van deze foto maken?"
+                  : `Activiteit van deze ${activityPromptPhotos.length} foto's maken?`}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                {activityPromptPhotos.length === 1
+                  ? "Dan komt hij op de planning te staan met een naam en tijd."
+                  : "Dan komen ze samen op de planning te staan, met een naam en tijd."}
+              </div>
             </div>
           </div>
           <div className="flex gap-2 mt-3">
-            <button type="button" onClick={() => setActivityPromptPhoto(null)}
+            <button type="button" onClick={() => setActivityPromptPhotos([])}
               className="rp-press flex-1 h-11 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-600 hover:border-gray-300 transition-colors">
               Nee
             </button>
@@ -825,7 +848,7 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
       {showActivityForm && (
         <ActivityForm dayId={dayId} tripId={tripId} days={days}
           onSaved={handleActivityCreated}
-          onClose={() => { setShowActivityForm(false); setActivityPromptPhoto(null); }} />
+          onClose={() => { setShowActivityForm(false); setActivityPromptPhotos([]); }} />
       )}
       {viewingIndex != null && (
         <PhotoLightbox photos={photos} index={viewingIndex}
