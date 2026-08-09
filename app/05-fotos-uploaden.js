@@ -768,6 +768,16 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
                 vastklikken per foto net niet rond maakte. In de compacte grid is
                 er wél ruimte naast de tegel, dus daar blijft hij staan waar hij
                 stond. */}
+            {/* Welke foto vooraan staat. Alleen zinvol bij meer dan één foto, en
+                niet op de eerste: die stáát al vooraan. De volgorde is verder de
+                opnametijd; dit zet er één bovenop zonder de rest te verschuiven. */}
+            {!readOnly && large && photos.length > 1 && i > 0 && (
+              <button type="button" onClick={async () => { await api.zetFotoVoorop(p.id); await onChange(); }}
+                title="Deze foto vooraan zetten" aria-label="Deze foto vooraan zetten"
+                className="absolute top-1.5 left-1.5 h-8 px-2.5 rounded-full bg-white/95 backdrop-blur shadow text-[11px] font-semibold text-gray-600 hover:text-sky-700 flex items-center gap-1 transition-colors">
+                <Icon name="arrowLeft" size={13} />Vooraan
+              </button>
+            )}
             {!readOnly && (
               <button type="button" onClick={() => handleDelete(p.id)}
                 className={`absolute rounded-full bg-white shadow text-red-500 leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center ${large ? "top-1.5 right-1.5 w-8 h-8 text-base" : "-top-1.5 -right-1.5 w-6 h-6 text-sm"}`}>

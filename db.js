@@ -276,6 +276,11 @@ async function initDb() {
     -- Bestaande foto's blijven NULL tot ze opnieuw geüpload worden.
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS width INTEGER;
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS height INTEGER;
+    -- Sorteersleutel binnen een dag of activiteit. Standaard 0, waarna de
+    -- opnametijd de volgorde bepaalt zoals altijd. Wie een foto vooraan zet
+    -- krijgt een negatief getal — zo hoeft de rest niet hernummerd te worden en
+    -- blijft de bestaande volgorde intact.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS sort_key INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS photos_trip_idx ON photos(trip_id);
     CREATE INDEX IF NOT EXISTS days_trip_idx ON days(trip_id);
     CREATE INDEX IF NOT EXISTS activities_trip_idx ON activities(trip_id);
