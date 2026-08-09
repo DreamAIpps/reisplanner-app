@@ -146,6 +146,47 @@ function DateRangePicker({ startDate, endDate, onChange }) {
   );
 }
 
+// Eerste stap van een nieuwe reis: kom je met boekingen die er al zijn, of
+// begin je met een leeg vel? Dat scheelt de helft van de gebruikers een
+// zoektocht. Wie zijn vlucht en hotel al geboekt heeft, tikte tot nu toe alles
+// zelf over en ontdekte de importfunctie pas veel later, weggestopt achter het
+// plusmenu of een formulier. Andersom wil wie nog niets heeft niet eerst langs
+// een uploadscherm.
+//
+// De reis zelf moet hoe dan ook eerst bestaan — importeren gaat per reis — dus
+// dit is een keuze vooraf die pas ná het opslaan van de reis iets doet.
+function NieuweReisStart({ onKies, onClose }) {
+  const keuzes = [
+    { key: "import", icon: "mail", titel: "Ik heb al boekingen",
+      uitleg: "Upload je bevestigingen of maak er een foto van. Vluchten, hotels en tijden worden er zelf uitgehaald." },
+    { key: "blanco", icon: "calendar", titel: "Blanco beginnen",
+      uitleg: "Een lege planning voor je reisdagen. Je vult zelf aan wat je wilt, wanneer je wilt." },
+  ];
+  return (
+    <Modal title="Nieuwe reis" onClose={onClose}>
+      <div className="text-sm text-gray-500 mb-4">Hoe wil je beginnen?</div>
+      <div className="space-y-3">
+        {keuzes.map((k) => (
+          <button key={k.key} type="button" onClick={() => onKies(k.key)}
+            className="w-full text-left flex items-start gap-3 p-4 rounded-xl border border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 transition-colors">
+            <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: PALETTE.primarySoft }}>
+              <Icon name={k.icon} size={19} className="text-gray-600" />
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold text-gray-800">{k.titel}</span>
+              <span className="block text-xs text-gray-500 mt-0.5 leading-snug">{k.uitleg}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="text-xs text-gray-400 mt-4">
+        Je kunt later altijd nog boekingen importeren — dit bepaalt alleen waar je nu begint.
+      </div>
+    </Modal>
+  );
+}
+
 function TripForm({ initial, onSaved, onClose }) {
   const [form, setForm] = useState(initial ? { ...EMPTY_TRIP, ...initial, start_date: initial.start_date ? initial.start_date.slice(0,10) : "", end_date: initial.end_date ? initial.end_date.slice(0,10) : "", cover_image: initial.cover_image || "", timezone: initial.timezone || "" } : { ...EMPTY_TRIP });
   // Alleen uitklappen voor wie de tijdzone echt zelf wil zetten.
