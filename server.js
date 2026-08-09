@@ -20,6 +20,28 @@ const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
 const anthropicClient = new Anthropic();
 
+// Elk AI-verzoek loopt hierlangs, zodat het tokenverbruik geteld wordt. De
+// rekening komt per maand op één account binnen; zonder dit was niet te zien
+// wie hem veroorzaakte of waaraan. Het wegschrijven gebeurt bewust náást het
+// antwoord en niet ervoor: mislukt het loggen (tabel nog niet gemigreerd,
+// database even weg), dan mag dat een reisplanner niet in de weg zitten.
+async function aiVerzoek(opties, herkomst) {
+  const msg = await anthropicClient.messages.create(opties);
+  query(
+    `INSERT INTO ai_usage (user_id, trip_id, doel, model, input_tokens, output_tokens)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      herkomst?.userId || null,
+      herkomst?.tripId ? Number(herkomst.tripId) || null : null,
+      herkomst?.doel || "onbekend",
+      opties.model || null,
+      msg.usage?.input_tokens || 0,
+      msg.usage?.output_tokens || 0,
+    ]
+  ).catch((err) => console.error("AI-verbruik loggen mislukt:", err.message));
+  return msg;
+}
+
 // Dezelfde ontwerp-tokens als PALETTE in app/01-tokens-en-iconen.js — hier alleen de paar
 // waarden die de server nodig heeft (PDF-tekst en de standaard reiskleur),
 // zodat een PDF er niet anders uitziet dan het scherm waar hij van komt.
@@ -1248,6 +1270,155 @@ route("GET", "/api/admin/storage", async (req, res) => {
     photosBytes: Number(rows[0].photos_bytes),
     thumbsBytes: Number(rows[0].thumbs_bytes),
     databaseBytes,
+  });
+});
+
+// Staan de koppelingen met de buitenwereld goed? "Ingesteld" is te weinig om
+// op te vertrouwen — een token kan verlopen of ingetrokken zijn en dan blijft
+// de variabele gewoon gevuld. Daarom wordt elke koppeling waar dat kan ook
+// echt even aangeklopt, met een korte time-out zodat een trage dienst dit
+// scherm niet ophoudt. Wat alleen bij een echte gebruikershandeling te testen
+// is (inloggen via Google of Apple) blijft bij "ingesteld ja/nee".
+const API_TIJDSLIMIET_MS = 6000;
+
+async function klopAan(url, opties = {}) {
+  const afbreken = new AbortController();
+  const klok = setTimeout(() => afbreken.abort(), API_TIJDSLIMIET_MS);
+  const begin = Date.now();
+  try {
+    const r = await fetch(url, { ...opties, signal: afbreken.signal });
+    return { ok: r.ok, status: r.status, ms: Date.now() - begin };
+  } catch (err) {
+    return { ok: false, status: null, ms: Date.now() - begin, fout: err.name === "AbortError" ? "geen antwoord binnen 6 seconden" : err.message };
+  } finally {
+    clearTimeout(klok);
+  }
+}
+
+route("GET", "/api/admin/api-status", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+
+  const mailDienst = mailProvider();
+  const checks = [
+    {
+      naam: "Anthropic (AI)",
+      waarvoor: "Tips, hoogtepunten, boekingen inlezen, quizvragen",
+      ingesteld: !!process.env.ANTHROPIC_API_KEY,
+      test: () => klopAan("https://api.anthropic.com/v1/models?limit=1", {
+        headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      }),
+    },
+    {
+      naam: "Mapbox",
+      waarvoor: "Kaarttegels en het opzoeken van adressen",
+      ingesteld: !!MAPBOX_TOKEN,
+      waarschuwing: MAPBOX_TOKEN_IS_SECRET ? "Dit is een geheim token (sk.). Gebruik een publiek token (pk.)." : null,
+      test: () => klopAan(`https://api.mapbox.com/tokens/v2?access_token=${encodeURIComponent(MAPBOX_TOKEN)}`),
+    },
+    {
+      naam: "Nominatim (OpenStreetMap)",
+      waarvoor: "Adressen opzoeken als Mapbox niets vindt",
+      ingesteld: true,
+      // Open dienst zonder sleutel — een 403 betekent hier "geweigerd", niet
+      // "verkeerde sleutel", en dat verschil hoort in de tekst terug te komen.
+      zonderSleutel: true,
+      test: () => klopAan("https://nominatim.openstreetmap.org/search?q=Amsterdam&format=json&limit=1", {
+        headers: { "User-Agent": "Reisplanner/1.0" },
+      }),
+    },
+    {
+      naam: "Print API",
+      waarvoor: "Fotoboek laten drukken en de prijsopgave",
+      ingesteld: printapi.isConfigured(),
+      test: () => klopAan(printapi.BASE_URL),
+    },
+    {
+      naam: `E-mail (${mailDienst || "niet ingesteld"})`,
+      waarvoor: "Uitnodigingen en meldingen versturen",
+      ingesteld: !!mailDienst,
+      test: () => klopAan(mailDienst === "resend" ? "https://api.resend.com/domains" : "https://api.postmarkapp.com/server", {
+        headers: mailDienst === "resend"
+          ? { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+          : { "X-Postmark-Server-Token": process.env.POSTMARK_TOKEN, Accept: "application/json" },
+      }),
+    },
+    { naam: "Google-inloggen", waarvoor: "Inloggen met een Google-account", ingesteld: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
+    { naam: "Apple-inloggen", waarvoor: "Inloggen met een Apple-account", ingesteld: !!(process.env.APPLE_CLIENT_ID && process.env.APPLE_TEAM_ID && process.env.APPLE_KEY_ID && process.env.APPLE_PRIVATE_KEY) },
+    { naam: "Pushmeldingen", waarvoor: "Meldingen naar de telefoon", ingesteld: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) },
+  ];
+
+  const uitkomsten = await Promise.all(checks.map(async (c) => {
+    const basis = { naam: c.naam, waarvoor: c.waarvoor, ingesteld: c.ingesteld, waarschuwing: c.waarschuwing || null };
+    const geweigerd = c.zonderSleutel ? "Bereikbaar, maar het verzoek wordt geweigerd" : "Bereikbaar, maar de sleutel wordt geweigerd";
+    if (!c.ingesteld) return { ...basis, staat: "uit", detail: "Niet ingesteld" };
+    if (!c.test) return { ...basis, staat: "ingesteld", detail: "Ingesteld — alleen te testen bij een echte inlogpoging" };
+    const r = await c.test();
+    // 401/403 betekent dat de dienst bereikbaar is maar de sleutel niet
+    // accepteert. Dat is een ander probleem dan "de dienst ligt eruit", dus
+    // dat onderscheid blijft staan.
+    if (r.ok) return { ...basis, staat: "goed", detail: `Antwoord in ${r.ms} ms`, ms: r.ms };
+    if (r.status === 401 || r.status === 403) return { ...basis, staat: "fout", detail: `${geweigerd} (${r.status})`, ms: r.ms };
+    if (r.status) return { ...basis, staat: "fout", detail: `HTTP ${r.status}`, ms: r.ms };
+    return { ...basis, staat: "fout", detail: r.fout || "Geen verbinding" };
+  }));
+
+  sendJson(res, 200, { checks: uitkomsten, database: { staat: "goed", detail: "In gebruik" } });
+});
+
+// Wie heeft hoeveel AI verbruikt? De rekening komt per maand op één account
+// binnen; dit maakt zichtbaar waar hij vandaan komt. Aantallen tokens, geen
+// bedragen: de prijs per token hoort niet in de code te staan waar hij stil
+// veroudert zodra Anthropic zijn tarieven aanpast.
+route("GET", "/api/admin/ai-verbruik", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const dagen = Math.min(Math.max(Number(new URL(req.url, "http://x").searchParams.get("dagen")) || 30, 1), 365);
+  const sinds = `${dagen} days`;
+
+  const { rows: perGebruiker } = await query(
+    `SELECT u.id, u.name, u.email,
+            COUNT(*)::int AS verzoeken,
+            COALESCE(SUM(a.input_tokens), 0)::bigint AS input_tokens,
+            COALESCE(SUM(a.output_tokens), 0)::bigint AS output_tokens,
+            MAX(a.created_at) AS laatst
+       FROM ai_usage a LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.created_at > NOW() - $1::interval
+      GROUP BY u.id, u.name, u.email
+      ORDER BY SUM(a.input_tokens + a.output_tokens) DESC`,
+    [sinds]
+  );
+  const { rows: perDoel } = await query(
+    `SELECT doel, COUNT(*)::int AS verzoeken,
+            COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens
+       FROM ai_usage
+      WHERE created_at > NOW() - $1::interval
+      GROUP BY doel ORDER BY SUM(input_tokens + output_tokens) DESC`,
+    [sinds]
+  );
+  const { rows: totaal } = await query(
+    `SELECT COUNT(*)::int AS verzoeken,
+            COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+            COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens
+       FROM ai_usage WHERE created_at > NOW() - $1::interval`,
+    [sinds]
+  );
+
+  sendJson(res, 200, {
+    dagen,
+    totaal: {
+      verzoeken: totaal[0].verzoeken,
+      inputTokens: Number(totaal[0].input_tokens),
+      outputTokens: Number(totaal[0].output_tokens),
+    },
+    gebruikers: perGebruiker.map((r) => ({
+      id: r.id,
+      naam: r.name || r.email || "Verwijderde gebruiker",
+      email: r.email || null,
+      verzoeken: r.verzoeken,
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      laatst: r.laatst,
+    })),
+    doelen: perDoel.map((r) => ({ doel: r.doel, verzoeken: r.verzoeken, tokens: Number(r.tokens) })),
   });
 });
 
@@ -2935,8 +3106,6 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
 
   const category = urlObj.searchParams.get("category");
 
-  const client = anthropicClient;
-
   if (category) {
     const isEvents = category === "Evenementen & agenda";
     const itemCount = isEvents ? 3 : 2;
@@ -2945,11 +3114,11 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
       ? `Geef ${itemCount} specifieke festivals, evenementen of markten in de buurt van "${destination}"${dateRange ? ` die plaatsvinden${dateRange}` : periodHint}. Als het een hotelnaam is, gebruik de stad/regio. Voeg per item een relevante website-URL toe (officiële site, ticketsite of informatiesite). Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate},${itemTemplate}]}`
       : `Geef ${itemCount} praktische reisTips over "${category.toLowerCase()}" voor een bezoeker van "${destination}" in het Nederlands.${periodHint} Als het een hotelnaam is, geef tips voor die stad/regio. Voeg per tip een relevante website-URL toe (app-store, boekingssite, informatiesite, etc.) indien beschikbaar, anders null. Return ONLY valid JSON, no markdown: {"items":[${itemTemplate},${itemTemplate}]}`;
 
-    const msg = await client.messages.create({
+    const msg = await aiVerzoek({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 600,
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { userId: req.user?.id, tripId: params.id, doel: "tips" });
     const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
     try {
       const parsed = JSON.parse(raw);
@@ -2959,11 +3128,11 @@ route("GET", "/api/trips/:id/tips", async (req, res, params) => {
   }
 
   // No category — return only did_you_know (shown immediately on mount)
-  const msg = await client.messages.create({
+  const msg = await aiVerzoek({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 150,
     messages: [{ role: "user", content: `Geef één verrassend en weinig bekend feitje over "${destination}" in het Nederlands. Return ONLY valid JSON, no markdown: {"did_you_know":"feitje"}` }],
-  });
+  }, { userId: req.user?.id, tripId: params.id, doel: "wist-je-datje" });
   const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   try { sendJson(res, 200, JSON.parse(raw)); }
   catch { sendError(res, 500, "Kon tips niet verwerken"); }
@@ -3019,11 +3188,11 @@ route("POST", "/api/trips/:id/highlights", async (req, res, params, body) => {
     `Return ONLY valid JSON, no markdown: {"items":[{"title":"","category":"","location":"","time":"","notes":""}]}`,
   ].filter(Boolean).join(" ");
 
-  const msg = await anthropicClient.messages.create({
+  const msg = await aiVerzoek({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 900,
     messages: [{ role: "user", content: prompt }],
-  });
+  }, { userId: req.user?.id, tripId: params.id, doel: "hoogtepunten" });
   const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   let parsed;
   try { parsed = JSON.parse(raw); }
@@ -3062,7 +3231,6 @@ route("POST", "/api/trips/:id/import", async (req, res, params, body) => {
   const tripYear = tripStartStr ? tripStartStr.slice(0, 4) : null;
   const tripYearHint = tripYear ? `\nIMPORTANT: This trip takes place from ${tripStartStr} to ${tripEndStr} (year: ${tripYear}). Any date without a year MUST use year ${tripYear}. Never use any other year.` : "";
 
-  const client = anthropicClient;
   const prompt = `Parse this travel confirmation and extract structured data. Return ONLY valid JSON with this exact structure, no markdown, no explanation:
 {
   "transports": [{"type": "Vliegtuig|Trein|Bus|Huurauto|Taxi|Boot|Anders", "from_location": "", "to_location": "", "departure_time": "ISO 8601 datetime or null", "arrival_time": "ISO 8601 datetime or null", "booking_ref": "", "cost": null, "notes": ""}],
@@ -3075,11 +3243,11 @@ Only include items actually present. Use null for missing values. Return empty a
     ? [{ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }, { type: "text", text: prompt }]
     : [{ type: "text", text: `${prompt}\n\nEmail text:\n${text}` }];
 
-  const message = await client.messages.create({
+  const message = await aiVerzoek({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
     messages: [{ role: "user", content }],
-  });
+  }, { userId: req.user?.id, tripId: params.id, doel: "boeking importeren" });
 
   const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   try {
@@ -3127,11 +3295,11 @@ route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
   if (!q?.trim()) return sendError(res, 400, "Geen zoekterm opgegeven");
   if (!process.env.ANTHROPIC_API_KEY) return sendError(res, 500, "ANTHROPIC_API_KEY niet geconfigureerd");
 
-  const msg = await anthropicClient.messages.create({
+  const msg = await aiVerzoek({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 20,
     messages: [{ role: "user", content: `Wat is de plaatsnaam (stad/dorp) waar dit verblijf zich bevindt: "${q}"? Antwoord met alleen de gangbare Nederlandse of internationaal gebruikelijke naam van die plaats, zonder aanhalingstekens, uitleg of extra tekst.` }],
-  });
+  }, { userId: req.user?.id, doel: "plaatsnaam opzoeken" });
   const city = msg.content[0].text.trim().replace(/^["']|["']$/g, "");
   sendJson(res, 200, { city: city || null });
 });
@@ -3198,7 +3366,7 @@ const TEXT_QUESTION_EVERY = 4;
 // Vraag 5 (0-indexed dus index 4) telt dubbele punten.
 const QUIZ_DOUBLER_INDEX = 4;
 
-async function generateQuizQuestions(tripId, count) {
+async function generateQuizQuestions(tripId, count, userId) {
   const textCount = Math.floor(count / TEXT_QUESTION_EVERY);
   const photoCount = count - textCount;
 
@@ -3281,11 +3449,11 @@ Juiste antwoorden, in deze volgorde:
 ${needsFiller.map((p, i) => `${i + 1}. ${p.answer}`).join("\n")}
 Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."]}, ...]} — exact ${needsFiller.length} items, in dezelfde volgorde.`;
 
-    const msg = await anthropicClient.messages.create({
+    const msg = await aiVerzoek({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { userId, tripId, doel: "quiz: foutantwoorden" });
     const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
     let parsed;
     try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
@@ -3316,7 +3484,7 @@ Return ONLY valid JSON, no markdown: {"items":[{"distractors":["...","...","..."
     };
   });
 
-  const textQuestions = textCount > 0 ? await generateQuizTextQuestions(tripId, textCount) : [];
+  const textQuestions = textCount > 0 ? await generateQuizTextQuestions(tripId, textCount, userId) : [];
 
   // Elke 4e vraag (positie 4, 8, 12, ...) is een tekstvraag, de rest blijft
   // fotovragen in hun eigen volgorde.
@@ -3353,7 +3521,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function generateQuizTextQuestions(tripId, textCount) {
+async function generateQuizTextQuestions(tripId, textCount, userId) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY niet geconfigureerd");
 
   const [{ rows: tripRows }, { rows: days }, { rows: activities }, { rows: transports }, { rows: accommodations }, { rows: entries }, { rows: comments }, { rows: geoPhotos }] = await Promise.all([
@@ -3423,11 +3591,11 @@ ${context}
 Bedenk ${textCount} verschillende meerkeuzevragen over deze reis, gebaseerd op bovenstaande informatie (data, volgorde van activiteiten, locaties, wie iets schreef, wat er gebeurde) — geen vragen over foto's. Gebruik, als er afstanden hierboven staan, af en toe (niet elke vraag) ook zo'n afstand — bijvoorbeeld welke twee plekken het dichtst bij elkaar lagen, of hoeveel kilometer ergens ongeveer tussen zat. Voor elke vraag: een kort, ondubbelzinnig juist antwoord dat rechtstreeks uit de informatie hierboven volgt, plus 3 geloofwaardige maar foute opties in dezelfde stijl, allemaal kort (max ~6 woorden). In het Nederlands.
 Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"...","distractors":["...","...","..."]}, ...]} — exact ${textCount} items.`;
 
-  const msg = await anthropicClient.messages.create({
+  const msg = await aiVerzoek({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1200,
     messages: [{ role: "user", content: prompt }],
-  });
+  }, { userId, tripId, doel: "quiz: vragen" });
   const raw = msg.content[0].text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   let parsed;
   try { parsed = JSON.parse(raw); } catch { throw new Error("Kon quizvragen niet genereren"); }
@@ -3542,7 +3710,7 @@ route("POST", "/api/trips/:id/quiz/sessions", async (req, res, params, body) => 
   const questionCount = Math.min(QUIZ_QUESTION_COUNT_MAX, Math.max(QUIZ_QUESTION_COUNT_MIN, Number(body?.questionCount) || QUIZ_QUESTION_COUNT_DEFAULT));
 
   let questions;
-  try { questions = await generateQuizQuestions(params.id, questionCount); }
+  try { questions = await generateQuizQuestions(params.id, questionCount, req.user?.id); }
   catch (err) { return sendError(res, 500, err.message); }
   if (!questions.length) return sendError(res, 400, "Nog niet genoeg foto's gekoppeld aan een activiteit, vervoer of verblijf om een quiz van te maken.");
 

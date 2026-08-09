@@ -359,6 +359,8 @@ const api = {
   backfillPhotoGps: () => apiFetch("/api/admin/backfill-photo-gps", { method: "POST", body: "{}" }),
   getStorageInfo: () => apiFetch("/api/admin/storage"),
   getCockpitMetrics: () => apiFetch("/api/admin/metrics"),
+  getApiStatus: () => apiFetch("/api/admin/api-status"),
+  getAiVerbruik: (dagen = 30) => apiFetch(`/api/admin/ai-verbruik?dagen=${dagen}`),
   shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),

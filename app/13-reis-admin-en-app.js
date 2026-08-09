@@ -220,10 +220,10 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
           </button>
         </div>
       )}
-      {/* Back button — only on desktop, except for read-only viewers who have no bottom nav */}
-      <button onClick={onBack} className={`${readOnly ? "inline-flex" : "hidden sm:inline-flex"} mb-4 items-center gap-1 text-sm font-medium hover:opacity-70 transition-opacity`} style={{ color: legibleOn(accent) }}>
-        ← Alle reizen
-      </button>
+      {/* Hier stond "← Alle reizen". Weg: het logo in de kop doet hetzelfde en
+          staat altijd in beeld, ook voor een meekijker zonder onderbalk. Twee
+          knoppen voor dezelfde stap kostten alleen een regel hoogte boven de
+          dagen. In het meer-menu staat "Terug" nog voor wie hem daar zoekt. */}
 
       {/* Op planning en dagboek: een slanke balk van één regel met de reisnaam,
           zonder omslagfoto — de grote hero neemt daar te veel ruimte in weg van
@@ -446,6 +446,149 @@ function CockpitSparkline({ timeline }) {
 // heeft gezien (in-memory, zie METRICS_* op de server) — geen historie over
 // een herstart heen, en geen aparte tijdreeksdatabase nodig voor een simpel
 // beheerscherm.
+// Staan de koppelingen naar buiten nog overeind? "Ingesteld" zegt weinig — een
+// sleutel kan ingetrokken zijn zonder dat de omgevingsvariabele verandert, en
+// dan merk je het pas als een gebruiker klaagt dat de tips leeg blijven. De
+// server klopt daarom echt even aan; hier staat alleen de uitslag.
+function ApiStatusPanel() {
+  const [data, setData] = useState(null);
+  const [fout, setFout] = useState(null);
+  const [bezig, setBezig] = useState(false);
+
+  const laad = useCallback(() => {
+    setBezig(true);
+    api.getApiStatus().then(setData).catch((e) => setFout(e.message || "Laden mislukt")).finally(() => setBezig(false));
+  }, []);
+  useEffect(() => { laad(); }, [laad]);
+
+  const KLEUR = {
+    goed: { stip: "bg-green-500", tekst: "text-green-700", label: "Werkt" },
+    fout: { stip: "bg-red-500", tekst: "text-red-700", label: "Probleem" },
+    ingesteld: { stip: "bg-sky-400", tekst: "text-sky-700", label: "Ingesteld" },
+    uit: { stip: "bg-gray-300", tekst: "text-gray-400", label: "Uit" },
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="text-sm font-semibold text-gray-700">API-verbindingen</div>
+        <button type="button" onClick={laad} disabled={bezig}
+          className="text-xs font-medium text-sky-600 hover:text-sky-800 disabled:opacity-50">
+          {bezig ? "Testen…" : "Opnieuw testen"}
+        </button>
+      </div>
+      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-3">{fout}</div>}
+      {!data && !fout && <div className="text-sm text-gray-400 py-4">Verbindingen testen…</div>}
+      {data && (
+        <div className="divide-y divide-gray-50">
+          {data.checks.map((c) => {
+            const k = KLEUR[c.staat] || KLEUR.uit;
+            return (
+              <div key={c.naam} className="py-2.5 flex items-start gap-3">
+                <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${k.stip}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-800">{c.naam}</div>
+                  <div className="text-xs text-gray-400">{c.waarvoor}</div>
+                  {c.waarschuwing && <div className="text-xs text-amber-600 mt-0.5">{c.waarschuwing}</div>}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className={`text-xs font-semibold ${k.tekst}`}>{k.label}</div>
+                  <div className="text-[11px] text-gray-400">{c.detail}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Wie verbruikt hoeveel AI? De rekening komt per maand op één account binnen,
+// dus zonder dit is niet te zien waar hij vandaan komt. Tokens, geen euro's:
+// een tarief in de code veroudert stil zodra Anthropic het aanpast, en dan
+// staat er een bedrag op het scherm dat niemand meer controleert.
+function AiVerbruikPanel() {
+  const [dagen, setDagen] = useState(30);
+  const [data, setData] = useState(null);
+  const [fout, setFout] = useState(null);
+
+  useEffect(() => {
+    setData(null);
+    api.getAiVerbruik(dagen).then(setData).catch((e) => setFout(e.message || "Laden mislukt"));
+  }, [dagen]);
+
+  const kort = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <div className="text-sm font-semibold text-gray-700">AI-verbruik per gebruiker</div>
+        <div className="flex gap-1 bg-gray-100 rounded-full p-1">
+          {[7, 30, 90].map((d) => (
+            <button key={d} type="button" onClick={() => setDagen(d)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${dagen === d ? "bg-white shadow-sm text-gray-800 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
+              {d} dagen
+            </button>
+          ))}
+        </div>
+      </div>
+      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
+      {!data && !fout && <div className="text-sm text-gray-400 py-4">Laden…</div>}
+      {data && (
+        <>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <StatTile label="Verzoeken" value={data.totaal.verzoeken} />
+            <StatTile label="Tokens erin" value={kort(data.totaal.inputTokens)} />
+            <StatTile label="Tokens eruit" value={kort(data.totaal.outputTokens)} />
+          </div>
+          {data.gebruikers.length === 0 ? (
+            <div className="text-sm text-gray-400 py-6 text-center">Nog geen AI-verbruik in deze periode.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-gray-400 text-left">
+                    <th className="font-medium pb-2">Gebruiker</th>
+                    <th className="font-medium pb-2 text-right">Verzoeken</th>
+                    <th className="font-medium pb-2 text-right">Erin</th>
+                    <th className="font-medium pb-2 text-right">Eruit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {data.gebruikers.map((g) => (
+                    <tr key={g.id || "onbekend"}>
+                      <td className="py-2 pr-3">
+                        <div className="font-medium text-gray-800 truncate">{g.naam}</div>
+                        {g.email && g.email !== g.naam && <div className="text-xs text-gray-400 truncate">{g.email}</div>}
+                      </td>
+                      <td className="py-2 text-right tnum text-gray-700">{g.verzoeken}</td>
+                      <td className="py-2 text-right tnum text-gray-700">{kort(g.inputTokens)}</td>
+                      <td className="py-2 text-right tnum text-gray-700">{kort(g.outputTokens)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data.doelen.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-gray-50">
+              <div className="text-xs font-semibold text-gray-500 mb-2">Waar gaat het heen</div>
+              <div className="flex flex-wrap gap-2">
+                {data.doelen.map((d) => (
+                  <span key={d.doel} className="text-xs px-2.5 py-1 rounded-full bg-gray-50 text-gray-600">
+                    {d.doel} · <span className="tnum font-semibold">{kort(d.tokens)}</span> ({d.verzoeken}×)
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function CockpitPanel() {
   const [metrics, setMetrics] = useState(null);
   const [error, setError] = useState(null);
@@ -824,7 +967,11 @@ function AdminView({ onBack, currentUserId }) {
           {users.length === 0 && <div className="text-center py-12 text-gray-400">Geen gebruikers gevonden</div>}
         </div>
       ) : (
-        <CockpitPanel />
+        <div className="space-y-6">
+          <CockpitPanel />
+          <ApiStatusPanel />
+          <AiVerbruikPanel />
+        </div>
       )}
     </div>
   );
