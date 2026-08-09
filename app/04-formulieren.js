@@ -446,14 +446,59 @@ function ActivityForm({ dayId, tripId, tripTimezone, initial, days, onSaved, onC
 }
 
 // ---------- Accommodation form ----------
-function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
+// Waar een lege datumkiezer moet openen. Een leeg veld opent bij vandaag, en
+// dat is voor een reis in oktober het enige moment dat zeker fout is: je bent
+// dan een half jaar aan het terugbladeren. Vandaar dat een nieuw vervoer of
+// verblijf begint op de dag waarop de reis begint — en, staat er al iets
+// gepland, ná wat er al staat, zodat de terugreis niet vóór de heenreis
+// aangeboden wordt.
+//
+// De grenzen (min/max) staan op de reis zelf. Dat houdt de kiezer binnen de
+// reis en scheelt het soort typefout waarbij een vlucht een jaar verkeerd komt
+// te staan zonder dat iemand het merkt.
+function reisDagIso(waarde) {
+  return waarde ? String(waarde).slice(0, 10) : "";
+}
+function laatsteMoment(items, velden) {
+  const momenten = asList(items)
+    .flatMap((it) => velden.map((v) => it[v]))
+    .filter(Boolean)
+    .map((d) => new Date(d))
+    .filter((d) => !isNaN(d));
+  if (!momenten.length) return null;
+  return new Date(Math.max(...momenten.map((d) => d.getTime())));
+}
+// Lokale tijd, niet UTC: een datetime-local-veld toont wat er staat zonder
+// omrekenen, dus met toISOString zou een vertrek om 09:00 in Nederland als
+// 07:00 in het veld belanden.
+function lokaalIsoMinuut(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// Standaard 09:00 op de eerste reisdag. Een tijd moet er staan (het veld vraagt
+// erom), en negen uur 's ochtends is de minst verkeerde gok voor een vertrek.
+function beginVoorVervoer(trip, transports) {
+  const na = laatsteMoment(transports, ["arrival_time", "departure_time"]);
+  if (na) return lokaalIsoMinuut(new Date(na.getTime() + 60 * 60 * 1000));
+  const start = reisDagIso(trip?.start_date);
+  return start ? `${start}T09:00` : "";
+}
+function beginVoorVerblijf(trip, accommodations) {
+  const na = laatsteMoment(accommodations, ["check_out"]);
+  if (na) return reisDagIso(na.toISOString());
+  return reisDagIso(trip?.start_date);
+}
+
+function AccommodationForm({ tripId, trip, accommodations, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
   // `initial` is the raw DB row, where empty columns are null. Feeding null
   // into a controlled <Input> makes React flip it to uncontrolled on typing.
   const [form, setForm] = useState(initial ? {
     ...initial,
     check_in: initial.check_in ? String(initial.check_in).slice(0,10) : "", check_out: initial.check_out ? String(initial.check_out).slice(0,10) : "",
     address: initial.address ?? "", booking_ref: initial.booking_ref ?? "", cost: initial.cost ?? "", notes: initial.notes ?? "",
-  } : { name: "", check_in: "", check_out: "", address: "", booking_ref: "", cost: "", notes: "", is_private: false });
+  } : { name: "", check_in: beginVoorVerblijf(trip, accommodations), check_out: "", address: "", booking_ref: "", cost: "", notes: "", is_private: false });
+  const reisVan = reisDagIso(trip?.start_date);
+  const reisTot = reisDagIso(trip?.end_date);
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -480,8 +525,10 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Naam"><Input required value={form.name} onChange={set("name")} placeholder="bijv. Hotel Roma Centrale" disabled={readOnly} /></Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Check-in"><Input type="date" value={form.check_in} onChange={set("check_in")} disabled={readOnly} /></Field>
-          <Field label="Check-out"><Input type="date" value={form.check_out} onChange={set("check_out")} disabled={readOnly} /></Field>
+          <Field label="Check-in"><Input type="date" value={form.check_in} onChange={set("check_in")} min={reisVan || undefined} max={reisTot || undefined} disabled={readOnly} /></Field>
+          {/* Check-out kan niet vóór check-in: die grens schuift mee met wat er
+              hierboven staat. */}
+          <Field label="Check-out"><Input type="date" value={form.check_out} onChange={set("check_out")} min={form.check_in || reisVan || undefined} max={reisTot || undefined} disabled={readOnly} /></Field>
         </div>
         <Field label="Adres"><Input value={form.address} onChange={set("address")} placeholder="Straat, stad" disabled={readOnly} /></Field>
         <div className="grid grid-cols-2 gap-4">
@@ -513,7 +560,7 @@ function AccommodationForm({ tripId, initial, onSaved, onClose, onImport, journa
 }
 
 // ---------- Transport form ----------
-function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
+function TransportForm({ tripId, trip, transports, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
   // `initial` is the raw DB row, where empty columns are null. Feeding null
   // into a controlled <Input> makes React flip it to uncontrolled on typing.
   const [form, setForm] = useState(initial ? {
@@ -525,7 +572,13 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
     booking_ref: initial.booking_ref ?? "",
     notes: initial.notes ?? "",
     baggage_allowance: initial.baggage_allowance ?? "",
-  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: "", arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "", is_private: false });
+  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: beginVoorVervoer(trip, transports), arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "", is_private: false });
+  // Een reis loopt tot en met de einddatum, dus de grens is die dag om 23:59 en
+  // niet om middernacht — anders valt een avondvlucht op de laatste dag erbuiten.
+  const reisVan = reisDagIso(trip?.start_date);
+  const reisTot = reisDagIso(trip?.end_date);
+  const vanMinuut = reisVan ? `${reisVan}T00:00` : undefined;
+  const totMinuut = reisTot ? `${reisTot}T23:59` : undefined;
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   async function handleSubmit(e) {
@@ -560,8 +613,10 @@ function TransportForm({ tripId, initial, onSaved, onClose, onImport, journalEnt
           <Field label="Naar"><Input value={form.to_location} onChange={set("to_location")} placeholder="Bestemming" disabled={readOnly} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Vertrek"><Input type="datetime-local" value={form.departure_time} onChange={set("departure_time")} disabled={readOnly} /></Field>
-          <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} disabled={readOnly} /></Field>
+          <Field label="Vertrek"><Input type="datetime-local" value={form.departure_time} onChange={set("departure_time")} min={vanMinuut} max={totMinuut} disabled={readOnly} /></Field>
+          {/* Aankomen vóór je vertrekt kan niet; die ondergrens volgt het
+              vertrekveld hierboven. */}
+          <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} min={form.departure_time || vanMinuut} max={totMinuut} disabled={readOnly} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} disabled={readOnly} /></Field>

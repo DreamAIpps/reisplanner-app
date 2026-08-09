@@ -83,9 +83,9 @@ function AccommodationTab({ trip, accommodations, onRefresh, readOnly, currentUs
         </div>
       )}
 
-      {showForm && <AccommodationForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
+      {showForm && <AccommodationForm tripId={trip.id} trip={trip} accommodations={accommodations} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && (
-        <AccommodationForm tripId={trip.id} initial={editing}
+        <AccommodationForm tripId={trip.id} trip={trip} accommodations={accommodations} initial={editing}
           journalEntries={journal.filter((e) => e.accommodation_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly} showPhotos
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />
@@ -171,9 +171,9 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
         </div>
       )}
 
-      {showForm && <TransportForm tripId={trip.id} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
+      {showForm && <TransportForm tripId={trip.id} trip={trip} transports={transports} onSaved={() => { setShowForm(false); onRefresh(); }} onClose={() => setShowForm(false)} onImport={() => { setShowForm(false); setImporting(true); }} />}
       {editing && (
-        <TransportForm tripId={trip.id} initial={editing}
+        <TransportForm tripId={trip.id} trip={trip} transports={transports} initial={editing}
           journalEntries={journal.filter((e) => e.transport_id === editing.id)} onJournalChange={loadJournal} currentUserId={currentUserId}
           photos={tripPhotos} onPhotosChange={loadPhotos} readOnly={readOnly} showPhotos
           onSaved={() => { setEditing(null); onRefresh(); }} onClose={() => setEditing(null)} />

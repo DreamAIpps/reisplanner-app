@@ -560,13 +560,13 @@ function DayPlanningTab({ trip, days, transports, accommodations, onRefresh, rea
           onDelete={async () => { const act = editingActivity; setEditingActivity(null); await handleDeleteActivity(act); }} />
       )}
       {(editingTransport || addingTransport) && (
-        <TransportForm tripId={trip.id} initial={editingTransport || undefined}
+        <TransportForm tripId={trip.id} trip={trip} transports={transports} initial={editingTransport || undefined}
           onSaved={() => { setEditingTransport(null); setAddingTransport(false); onRefresh(); }}
           onClose={() => { setEditingTransport(null); setAddingTransport(false); }}
           onImport={() => { setEditingTransport(null); setAddingTransport(false); setImporting(true); }} />
       )}
       {(editingAccommodation || addingAccommodation) && (
-        <AccommodationForm tripId={trip.id} initial={editingAccommodation || undefined}
+        <AccommodationForm tripId={trip.id} trip={trip} accommodations={accommodations} initial={editingAccommodation || undefined}
           onSaved={() => { setEditingAccommodation(null); setAddingAccommodation(false); onRefresh(); }}
           onClose={() => { setEditingAccommodation(null); setAddingAccommodation(false); }}
           onImport={() => { setEditingAccommodation(null); setAddingAccommodation(false); setImporting(true); }} />
