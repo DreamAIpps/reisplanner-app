@@ -261,7 +261,18 @@ function parseCookies(req) {
 const SESSION_TTL_DAYS = 30;
 
 async function getSession(req) {
-  const { session } = parseCookies(req);
+  // Twee manieren om te zeggen wie je bent, allebei met hetzelfde token uit
+  // dezelfde sessions-tabel — er komt dus geen tweede soort inloggen bij.
+  //
+  // De webapp gebruikt de cookie: die is HttpOnly, dus JavaScript kan er niet
+  // bij en een cross-site scripting-gat evenmin. Een app-schil kan dat niet
+  // gebruiken, want daar is de pagina een lokaal bestand en is de cookie van
+  // de server een third-party cookie — geblokkeerd op iOS. Die stuurt daarom
+  // een Authorization-header.
+  const koekje = parseCookies(req).session;
+  const kop = req.headers.authorization || "";
+  const uitKop = kop.startsWith("Bearer ") ? kop.slice(7).trim() : null;
+  const session = koekje || uitKop;
   if (!session) return null;
   const { rows } = await query(
     `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
@@ -4847,6 +4858,34 @@ route("DELETE", "/api/packing/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 }, { tripScope: "packing_items" });
 
+// Cross-origin toegang, alleen voor herkomsten die hier expliciet genoemd zijn.
+// Dit stond bewust helemaal dicht toen app en API op dezelfde herkomst draaiden.
+// Een app-schil draait dat niet: daar is de pagina een lokaal bestand met een
+// eigen herkomst (capacitor://localhost op iOS, https://localhost op Android),
+// en zonder deze headers weigert de webview elk verzoek naar de server.
+//
+// Nog steeds geen "*": met credentials verbiedt de browser dat sowieso, maar
+// belangrijker is dat een lijst iets anders is dan een deur die openstaat. Wat
+// er niet in APP_HERKOMSTEN staat, komt er niet in. Zonder die variabele
+// verandert er niets aan de huidige situatie.
+const APP_HERKOMSTEN = new Set(
+  String(process.env.APP_HERKOMSTEN || process.env.APP_ORIGINS || "")
+    .split(",").map((h) => h.trim()).filter(Boolean)
+);
+
+function zetHerkomstHeaders(req, res) {
+  const herkomst = req.headers.origin;
+  if (!herkomst || !APP_HERKOMSTEN.has(herkomst)) return;
+  res.setHeader("Access-Control-Allow-Origin", herkomst);
+  // Zonder Vary zou een cache het antwoord voor de ene herkomst aan de andere
+  // kunnen geven.
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "600");
+}
+
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
   // Geen Access-Control-Allow-Origin meer: de app en de API draaien op
@@ -4854,6 +4893,7 @@ const server = http.createServer(async (req, res) => {
   // "*" stond er breed open; zonder credentials viel er weinig mee te
   // halen, maar niets openzetten is nog altijd minder dan alles.
   setSecurityHeaders(res);
+  zetHerkomstHeaders(req, res);
   const url = new URL(req.url, `http://localhost`);
   const pathname = url.pathname;
 
@@ -4869,6 +4909,8 @@ const server = http.createServer(async (req, res) => {
     recordMetric({ method: req.method, route: req._routePattern || pathname, status: res.statusCode, durationMs });
   });
 
+  // De voorvraag die de browser stelt voordat hij een cross-origin verzoek met
+  // sessie mag sturen. De headers zijn er hierboven al opgezet.
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/") || pathname.startsWith("/quiz/")) {

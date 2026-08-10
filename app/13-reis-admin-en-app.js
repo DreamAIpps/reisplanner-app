@@ -1137,7 +1137,7 @@ function App() {
 
   const loadUser = useCallback(async () => {
     try {
-      const r = await fetch("/auth/me");
+      const r = await appFetch("/auth/me");
       setUser(r.ok ? await r.json() : null);
     } catch { setUser(null); }
     finally { setAuthLoading(false); }
@@ -1191,7 +1191,7 @@ function App() {
   }, [user, authLoading, loadTrips]);
 
   async function handleLogout() {
-    await fetch("/auth/logout", { method: "POST" });
+    await appFetch("/auth/logout", { method: "POST" });
     // De service worker bewaart je reisgegevens zodat ze onderweg zonder bereik
     // beschikbaar zijn. Bij uitloggen moeten die weg: anders blijft op een
     // gedeeld of geleend toestel na het uitloggen alsnog je reis te zien.
