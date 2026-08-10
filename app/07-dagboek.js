@@ -57,7 +57,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, isOwner,
             <p className="text-gray-700 whitespace-pre-wrap leading-snug break-words">{c.body}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-[11px] text-gray-400">
-                {c.author || "Iemand"}{c.created_at ? ` · ${fmtDatetime(c.created_at)}` : ""}
+                {c.author || "Iemand"}{c.created_at ? ` · ${fmtMoment(c.created_at)}` : ""}
               </span>
               {currentUserId && (
                 <LikeButton tripId={tripId} target={{ comment_id: c.id }}
@@ -329,7 +329,7 @@ function RecenteReacties({ tripId, onNaarInhoud, onSluiten }) {
                   </p>
                 )}
                 <div className="text-[11px] text-gray-400 mt-1">
-                  {fmtDatetime(it.wanneer)}{it.dagDatum ? ` · ${fmt(it.dagDatum)}` : ""}
+                  {fmtMoment(it.wanneer)}{it.dagDatum ? ` · ${fmt(it.dagDatum)}` : ""}
                 </div>
               </div>
             </div>

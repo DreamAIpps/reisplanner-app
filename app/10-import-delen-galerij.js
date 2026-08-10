@@ -401,7 +401,7 @@ function KijkStatistieken({ tripId }) {
                         {m.role === "viewer" ? "Alleen-lezen" : "Bewerker"}
                         {m.visits > 0 && ` · ${m.visits}x langsgeweest`}
                         {m.minutes > 0 && ` · ${fmtDuration(m.minutes)} gelezen`}
-                        {m.last_active_at && ` · laatst ${fmtDatetime(m.last_active_at)}`}
+                        {m.last_active_at && ` · laatst ${fmtMoment(m.last_active_at)}`}
                       </div>
                     </div>
                     {hasDetail && <span className="text-gray-300 text-xs shrink-0">{open ? "▲" : "▼"}</span>}
@@ -420,7 +420,7 @@ function KijkStatistieken({ tripId }) {
                       </div>
                       <div className="text-xs text-gray-500">
                         <Icon name="chat" size={12} className="mr-1" />{m.comments} reactie{m.comments === 1 ? "" : "s"} · <Icon name="thumb" size={12} className="mx-1" />{m.likes} duimpje{m.likes === 1 ? "" : "s"}
-                        {m.first_active_at && ` · volgt sinds ${fmtDatetime(m.first_active_at)}`}
+                        {m.first_active_at && ` · volgt sinds ${fmtMoment(m.first_active_at)}`}
                       </div>
                       {m.recent.length > 0 && (
                         <div className="space-y-1">
@@ -434,7 +434,7 @@ function KijkStatistieken({ tripId }) {
                               <div className="flex-1 min-w-0">
                                 <div className="truncate">{a.kind === "comment" ? a.detail : "gaf een duimpje"}</div>
                               </div>
-                              <span className="shrink-0 text-gray-300">{fmtDatetime(a.at)}</span>
+                              <span className="shrink-0 text-gray-300">{fmtMoment(a.at)}</span>
                             </div>
                           ))}
                         </div>

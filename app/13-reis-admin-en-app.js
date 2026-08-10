@@ -750,7 +750,7 @@ function GebruikerReizen({ userId }) {
             <div className="shrink-0 text-right">
               {gezien ? (
                 <>
-                  <div className="text-xs font-medium text-gray-600">{fmtDatetime(gezien)}</div>
+                  <div className="text-xs font-medium text-gray-600">{fmtMoment(gezien)}</div>
                   <div className="text-[10px] text-gray-400 uppercase tracking-wide">laatst gekeken</div>
                 </>
               ) : (
