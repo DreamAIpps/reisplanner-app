@@ -2828,6 +2828,67 @@ route("POST", "/auth/apple/link", async (req, res, params, body) => {
   sendJson(res, 200, { ok: true, linked: { google: !!user.google_id, apple: true } });
 });
 
+// Wat gaat er weg als ik mijn account verwijder? Zonder dit zou de bevestiging
+// moeten zeggen "al je gegevens", en dat is precies het soort zin waar niemand
+// iets aan heeft. Nu staan de aantallen er: zoveel eigen reizen, zoveel foto's.
+route("GET", "/auth/me/verwijderoverzicht", async (req, res) => {
+  // Routes onder /auth/ lopen buiten de sessiecontrole die /api/ wel heeft, dus
+  // die halen we hier zelf op — net als GET /auth/me hierboven.
+  const gebruiker = await getSession(req);
+  if (!gebruiker) return sendError(res, 401, "Niet ingelogd");
+  const { rows } = await query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM trips WHERE user_id = $1) AS eigen_reizen,
+       (SELECT COUNT(*)::int FROM photos p JOIN trips t ON t.id = p.trip_id WHERE t.user_id = $1) AS eigen_fotos,
+       (SELECT COUNT(*)::int FROM trip_members m JOIN trips t ON t.id = m.trip_id
+         WHERE m.user_id = $1 AND t.user_id IS DISTINCT FROM $1) AS gedeelde_reizen,
+       (SELECT COUNT(*)::int FROM journal_entries e JOIN trips t ON t.id = e.trip_id
+         WHERE e.user_id = $1 AND t.user_id IS DISTINCT FROM $1) AS verhalen_elders`,
+    [gebruiker.id]
+  );
+  sendJson(res, 200, {
+    eigenReizen: rows[0].eigen_reizen,
+    eigenFotos: rows[0].eigen_fotos,
+    gedeeldeReizen: rows[0].gedeelde_reizen,
+    verhalenElders: rows[0].verhalen_elders,
+  });
+});
+
+// Je eigen account opheffen. Apple eist dit voor elke app waarin je een account
+// kunt aanmaken (richtlijn 5.1.1(v)), en de AVG vraagt hetzelfde — maar het is
+// ook gewoon fatsoenlijk dat je eruit kunt zonder een beheerder te moeten
+// mailen.
+//
+// Wat er gebeurt, en waarom:
+//
+// - Reizen die van jou zijn gaan écht weg, met alles eraan: dagen,
+//   activiteiten, foto's, verhalen, fotoboeken. De foreign keys staan op
+//   cascade vanaf trips, dus één DELETE volstaat. Dit moet expliciet, want de
+//   verwijzing van trips naar users staat op SET NULL: zonder deze regel
+//   bleven je reizen als eigenaarloze wezen in de database achter.
+//
+// - Reizen van iemand anders waar je in meekeek raak je alleen kwijt als
+//   deelnemer. Die zijn niet van jou om weg te gooien.
+//
+// - Wat je in andermans dagboek schreef blijft staan, maar zonder je naam
+//   eronder (user_id gaat op NULL, zoals het schema al deed). Iemands
+//   vakantieherinneringen uit zijn dagboek trekken omdat jij vertrekt is een
+//   te grote bijwerking; anoniem maken haalt de koppeling met jou weg, en dat
+//   is waar het om gaat.
+//
+// Alles in één transactie: half verwijderd is erger dan niet verwijderd.
+route("DELETE", "/auth/me", async (req, res) => {
+  const gebruiker = await getSession(req);
+  if (!gebruiker) return sendError(res, 401, "Niet ingelogd");
+  const userId = gebruiker.id;
+  await transaction(async (client) => {
+    await client.query("DELETE FROM trips WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM users WHERE id = $1", [userId]);
+  });
+  res.setHeader("Set-Cookie", "session=; HttpOnly; Path=/; Max-Age=0");
+  sendJson(res, 200, { ok: true });
+});
+
 route("POST", "/auth/logout", async (req, res) => {
   const { session } = parseCookies(req);
   if (session) await query("DELETE FROM sessions WHERE token = $1", [session]);

@@ -750,6 +750,7 @@ function AccountModal({ user, onClose, onChanged, onLogout }) {
   const [mailResult, setMailResult] = useState(null);
   const [notify, setNotify] = useState(user.notify_email !== false);
   const [notifyBusy, setNotifyBusy] = useState(false);
+  const [verwijderen, setVerwijderen] = useState(false);
   const linked = user.linked || {};
 
   async function linkApple() {
@@ -869,6 +870,95 @@ function AccountModal({ user, onClose, onChanged, onLogout }) {
           <div className="flex-1" />
           <Button variant="secondary" onClick={onClose}>Sluiten</Button>
         </div>
+
+        {/* Onderaan, klein, en met een tussenstap ervoor. Weggaan moet kunnen —
+            zonder een beheerder te hoeven mailen — maar het is geen knop waar je
+            per ongeluk op tikt naast "Uitloggen". */}
+        <div className="pt-3 mt-1 border-t border-gray-100">
+          <button type="button" onClick={() => setVerwijderen(true)}
+            className="text-xs text-gray-400 hover:text-red-600 transition-colors">
+            Account verwijderen
+          </button>
+        </div>
+      </div>
+      {verwijderen && <AccountVerwijderen onKlaar={onLogout} onAnnuleer={() => setVerwijderen(false)} />}
+    </Modal>
+  );
+}
+
+// De bevestiging. Hij haalt eerst op wát er precies weggaat, want "al je
+// gegevens worden verwijderd" is de soort zin waar je niets aan hebt als je
+// staat te twijfelen. Met "3 reizen en 412 foto's" weet je waar je ja op zegt.
+//
+// Twee stappen, en de tweede vraagt je het woord VERWIJDER te typen. Dat is
+// bewust onhandig: dit is het enige in de app dat niet ongedaan te maken is.
+function AccountVerwijderen({ onKlaar, onAnnuleer }) {
+  const [overzicht, setOverzicht] = useState(null);
+  const [bevestiging, setBevestiging] = useState("");
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState(null);
+
+  useEffect(() => {
+    api.verwijderOverzicht().then(setOverzicht).catch((e) => setFout(e.message || "Kon niet ophalen wat er weggaat"));
+  }, []);
+
+  const mag = bevestiging.trim().toUpperCase() === "VERWIJDER";
+
+  async function verwijder() {
+    setBezig(true); setFout(null);
+    try {
+      await api.verwijderAccount();
+      onKlaar();
+    } catch (e) {
+      setFout(e.message || "Verwijderen is niet gelukt");
+      setBezig(false);
+    }
+  }
+
+  const telt = (n, enkel, meer) => `${n} ${n === 1 ? enkel : meer}`;
+
+  return (
+    <Modal title="Account verwijderen" onClose={bezig ? () => {} : onAnnuleer}>
+      <div className="space-y-4">
+        {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
+        {!overzicht && !fout && <div className="text-sm text-gray-400">Even kijken wat er weggaat…</div>}
+        {overzicht && (
+          <>
+            <div className="rounded-xl bg-red-50 border border-red-100 p-3.5">
+              <div className="text-sm font-semibold text-red-800 mb-2">Dit gaat definitief weg</div>
+              <ul className="text-sm text-red-900 space-y-1 list-disc pl-4">
+                <li>{telt(overzicht.eigenReizen, "reis", "reizen")} die van jou {overzicht.eigenReizen === 1 ? "is" : "zijn"}, met alles erin</li>
+                <li>{telt(overzicht.eigenFotos, "foto", "foto's")} in die reizen</li>
+                <li>Je account, je inloggegevens en je meldingen</li>
+              </ul>
+            </div>
+            {(overzicht.gedeeldeReizen > 0 || overzicht.verhalenElders > 0) && (
+              <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+                <div className="text-sm font-semibold text-gray-700 mb-2">Dit blijft bestaan</div>
+                <ul className="text-sm text-gray-600 space-y-1 list-disc pl-4">
+                  {overzicht.gedeeldeReizen > 0 && (
+                    <li>{telt(overzicht.gedeeldeReizen, "reis", "reizen")} van iemand anders waar je in meekijkt — die {overzicht.gedeeldeReizen === 1 ? "blijft" : "blijven"} van de eigenaar, jij verdwijnt er alleen uit</li>
+                  )}
+                  {overzicht.verhalenElders > 0 && (
+                    <li>{telt(overzicht.verhalenElders, "verhaal", "verhalen")} die je in het dagboek van iemand anders schreef, maar dan zonder je naam erbij</li>
+                  )}
+                </ul>
+              </div>
+            )}
+            <Field label={'Typ VERWIJDER om te bevestigen'}>
+              <Input value={bevestiging} onChange={(e) => setBevestiging(e.target.value)}
+                placeholder="VERWIJDER" autoComplete="off" disabled={bezig} />
+            </Field>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={onAnnuleer} disabled={bezig}>Annuleren</Button>
+              <div className="flex-1" />
+              <button type="button" onClick={verwijder} disabled={!mag || bezig}
+                className="rp-press h-11 px-4 rounded-xl text-[15px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                {bezig ? "Bezig…" : "Definitief verwijderen"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );
