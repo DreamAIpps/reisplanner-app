@@ -438,9 +438,30 @@ function fmt(date) {
   if (isNaN(d)) return "—";
   return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
+// Er staan twee verschillende soorten tijd in deze app, en die moeten anders
+// getoond worden. Ze door elkaar halen levert precies de klachten op waar dit
+// commentaar voor bedoeld is, dus: lees dit voordat je er een verandert.
+//
+// 1. Klokstanden zonder tijdzone. De opnametijd uit een foto (EXIF kent geen
+//    zone) en de vertrek- en aankomsttijd van vervoer, die je zelf intikt. Die
+//    worden bewust als UTC weggeschreven en horen er precies zo weer uit te
+//    komen: typ je 09:00 voor je vlucht, dan staat er 09:00 — waar je ook bent
+//    als je het teruglees. Daar is fmtDatetime voor.
 function fmtDatetime(dt) {
   if (!dt) return "—";
   return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+}
+
+// 2. Echte momenten. Wanneer iemand een reactie plaatste, wanneer hij voor het
+//    laatst keek. Die komen van NOW() op de server en zijn dus een punt op de
+//    wereldklok. Die hoor je te tonen in de tijd van wie het leest.
+//
+//    Dit ging mis: ze liepen door fmtDatetime en werden dus in UTC getoond. Een
+//    reactie van 16:46 Nederlandse tijd stond er in de zomer als 14:46 — twee
+//    uur te vroeg, en in de winter een uur.
+function fmtMoment(dt) {
+  if (!dt) return "—";
+  return new Date(dt).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 // Voor de handjevol plekken die Leaflet-popups/tooltips als kant-en-klare
 // HTML-string opbouwen (Leaflet accepteert daar geen JSX) — vrij ingevulde
