@@ -101,7 +101,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, isOwner,
 }
 
 
-function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true, comments, slotLikes }) {
+function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true, comments, slotLikes, opActiviteitVoorstel }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -109,6 +109,10 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(myEntry?.body || "");
   const [saving, setSaving] = useState(false);
+  // Net opgeslagen verhaal waarover de vraag nog openstaat. Alleen op dagniveau,
+  // en alleen bij een nieuw verhaal — bij het bijwerken van een bestaand verhaal
+  // is de vraag al eens gesteld.
+  const [voorstelTekst, setVoorstelTekst] = useState(null);
 
   useEffect(() => { if (!editing) setText(myEntry?.body || ""); }, [myEntry?.body, editing]);
 
@@ -118,7 +122,13 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
     // finally zonder catch: het opslaan faalde, het invoerveld bleef netjes
     // openstaan met de tekst er nog in — maar niemand kreeg te horen dát het
     // mislukt was, dus het las als opgeslagen.
-    try { await onSave(text.trim()); setEditing(false); }
+    const wasNieuw = !myEntry;
+    const bewaard = text.trim();
+    try {
+      await onSave(bewaard);
+      setEditing(false);
+      if (wasNieuw && opActiviteitVoorstel) setVoorstelTekst(bewaard);
+    }
     catch (err) { toonMelding(err.message || "Opslaan is niet gelukt"); }
     finally { setSaving(false); }
   }
@@ -178,6 +188,28 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
       {reactions && tripId != null && (
         <JournalComments slot={reactions.slot} comments={reactions.comments} like={reactions.like}
           tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} onChanged={onCommentsChange} />
+      )}
+
+      {/* Dezelfde vraag als na een foto-upload, nu na een verhaal. De volgorde
+          in het dagboek is: eerst vertellen wat je meemaakte, dan pas bepalen of
+          het een activiteit op de planning wordt. */}
+      {voorstelTekst && (
+        <div className="rp-rise mt-3 p-3 rounded-2xl border border-sky-200 bg-sky-50 shadow-sm">
+          <div className="font-display text-[17px] text-gray-800 leading-snug">Activiteit van dit verhaal maken?</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            Dan komt het op de planning te staan met een naam en tijd, en verhuist je verhaal mee.
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button type="button" onClick={() => setVoorstelTekst(null)}
+              className="rp-press flex-1 h-11 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-600 hover:border-gray-300 transition-colors">
+              Nee
+            </button>
+            <button type="button" onClick={() => { opActiviteitVoorstel(voorstelTekst, myEntry?.id); setVoorstelTekst(null); }}
+              className="rp-press flex-1 h-11 rounded-xl bg-sky-300 text-sm font-semibold text-gray-800 hover:bg-sky-400 transition-colors">
+              Ja
+            </button>
+          </div>
+        </div>
       )}
 
       {showPhotos && tripId != null && (photos?.length > 0 || !readOnly) && (
@@ -313,7 +345,9 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
   const [comments, setComments] = useState([]);
   const [slotLikes, setSlotLikes] = useState({});
   const [tripPhotos, setTripPhotos] = useState([]);
-  const [addingActivity, setAddingActivity] = useState(null);
+  // Een net geschreven dagverhaal waarvan gevraagd wordt of het een activiteit
+  // moet worden: { dayId, tekst, entryId }.
+  const [verhaalActiviteit, setVerhaalActiviteit] = useState(null);
   const [toonReacties, setToonReacties] = useState(false);
   const [bulkUploaden, setBulkUploaden] = useState(false);
   const [entriesLoaded, setEntriesLoaded] = useState(false);
@@ -584,12 +618,11 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                     {day.title && <div className="font-display text-gray-800 text-[17px] truncate">{day.title}</div>}
                   </div>
                 </div>
-                {!readOnly && (
-                  <button onClick={() => setAddingActivity({ dayId: day.id })}
-                    className="ml-auto shrink-0 text-xs font-semibold px-3 py-2 rounded-full border border-gray-200 text-gray-600 hover:border-sky-300 hover:text-sky-700 active:scale-95 transition-all inline-flex items-center gap-1">
-                    <Icon name="plus" size={13} />Activiteit
-                  </button>
-                )}
+                {/* Hier stond "+ Activiteit". Weg: in het dagboek begin je met
+                    wat je meemaakte — een foto of een verhaal — en pas dáárna
+                    komt de vraag of er een activiteit van gemaakt moet worden.
+                    Een lege activiteit vooraf aanmaken draait die volgorde om.
+                    Plannen vooraf doe je in de planning. */}
               </div>
 
               {/* Hoeveel de fotostrook naar buiten mag om de volle breedte van
@@ -612,6 +645,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   </div>
                 )}
                 <JournalEntryBox entries={dayEntries} currentUserId={currentUserId} isOwner={trip.is_owner} placeholder="Hoe was deze dag?"
+                  opActiviteitVoorstel={readOnly ? null : (tekst, entryId) => setVerhaalActiviteit({ dayId: day.id, tekst, entryId })}
                   onSave={(text) => saveEntry({ day_id: day.id }, text)}
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
@@ -680,14 +714,22 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           onClose={() => setBulkUploaden(false)}
           onUploaded={() => { loadPhotos(); onRefresh?.(); }} />
       )}
-      {addingActivity && (
-        <ActivityForm dayId={addingActivity.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days} showPhotos
-          stayOpenAfterCreate
-          onCreated={onRefresh}
-          photos={tripPhotos} onPhotosChange={loadPhotos}
-          journalEntries={entries} onJournalChange={loadEntries} currentUserId={currentUserId}
-          onSaved={() => { setAddingActivity(null); onRefresh?.(); }}
-          onClose={() => setAddingActivity(null)} />
+      {/* "Ja" op de vraag onder een net geschreven dagverhaal. Het verhaal
+          verhuist mee naar de nieuwe activiteit: eerst schrijven op de nieuwe
+          plek, dan de oude weghalen. Andersom zou het verhaal even nergens
+          staan als het aanmaken halverwege misgaat. */}
+      {verhaalActiviteit && (
+        <ActivityForm dayId={verhaalActiviteit.dayId} tripId={trip.id} tripTimezone={trip.timezone} days={days}
+          onSaved={async (activity) => {
+            try {
+              await api.saveJournalEntry(trip.id, { activity_id: activity.id, body: verhaalActiviteit.tekst });
+              if (verhaalActiviteit.entryId) await api.deleteJournalEntry(verhaalActiviteit.entryId);
+            } catch (err) { toonMelding(err.message || "Het verhaal verplaatsen is niet gelukt"); }
+            setVerhaalActiviteit(null);
+            await loadEntries();
+            onRefresh?.();
+          }}
+          onClose={() => setVerhaalActiviteit(null)} />
       )}
 
       <ScrollTopButton />
