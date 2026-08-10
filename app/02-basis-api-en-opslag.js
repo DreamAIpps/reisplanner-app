@@ -12,9 +12,70 @@ const COVER_COLORS = [
   PALETTE.info, PALETTE.coralDeep, PALETTE.textSecondary, PALETTE.textPrimary,
 ];
 
+// ---------- Waar staat de API? ----------
+// In de browser: op dezelfde herkomst als de pagina zelf. Dan blijft dit een
+// leeg voorvoegsel en is "/api/trips" gewoon "/api/trips" — er verandert
+// niets aan hoe de app nu werkt.
+//
+// In een app-schil (Capacitor) ligt de pagina als bestand op de telefoon en is
+// de herkomst zoiets als capacitor://localhost. Een pad dat met / begint wijst
+// daar naar de telefoon zelf, niet naar de server. De schil zet daarom vóór
+// het laden window.RP_API_BASIS op het echte serveradres.
+const API_BASIS = String(window.RP_API_BASIS || "").replace(/\/+$/, "");
+function apiUrl(pad) { return API_BASIS + pad; }
+// Draaien app en API op verschillende herkomsten, dan moet je de browser
+// expliciet vragen de sessie mee te sturen.
+const ANDERE_HERKOMST = API_BASIS !== "";
+
+// ---------- Wie ben ik? ----------
+// Op het web blijft dit een HttpOnly-cookie: die kan JavaScript niet lezen, en
+// dat is precies de bedoeling — een cross-site scripting-gat kan er dan ook
+// niet bij. Daar verandert niets aan.
+//
+// Een app-schil kan dat niet gebruiken: een cookie van een ander domein dan de
+// pagina is daar een third-party cookie, en die worden op iOS geblokkeerd.
+// Alleen die schil zet daarom een token, dat in de afgeschermde opslag van de
+// app staat en niet in een browser die met andere sites gedeeld wordt. De
+// server accepteert allebei; de webapp bewandelt nog steeds het cookiepad.
+const API_TOKEN_SLEUTEL = "rp_api_token";
+function apiToken() {
+  try { return ANDERE_HERKOMST ? localStorage.getItem(API_TOKEN_SLEUTEL) : null; }
+  catch { return null; }
+}
+function zetApiToken(token) {
+  try { token ? localStorage.setItem(API_TOKEN_SLEUTEL, token) : localStorage.removeItem(API_TOKEN_SLEUTEL); }
+  catch {}
+}
+// De app-schil staat buiten deze bundel en moet er dus bij kunnen: na het
+// inloggen (dat in een systeembrowser gebeurt) geeft hij het token hier af, en
+// bij uitloggen roept hij het met null aan. In een gewone browser roept niemand
+// dit aan en blijft alles bij de cookie.
+window.rpZetApiToken = zetApiToken;
+
+// De opties die elk verzoek naar de server nodig heeft, ongeacht of het via
+// apiFetch loopt of via een losse fetch (zoals het ophalen van een PDF).
+function apiOpties(options = {}) {
+  const token = apiToken();
+  return {
+    ...options,
+    ...(ANDERE_HERKOMST ? { credentials: "include" } : {}),
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  };
+}
+
+// Een kale fetch naar de eigen server: wel het juiste adres en de juiste
+// sessie, maar zonder het JSON-uitpakken van apiFetch. Voor de handvol plekken
+// die zelf iets met het antwoord doen (een blob, een redirect, een 401).
+function appFetch(pad, options = {}) {
+  return fetch(apiUrl(pad), apiOpties(options));
+}
+
 // ---------- API ----------
 async function apiFetch(url, options = {}) {
-  const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
+  const res = await fetch(apiUrl(url), apiOpties({ headers: { "Content-Type": "application/json" }, ...options }));
   if (!res.ok) {
     let msg = `Fout ${res.status}`;
     try { const d = await res.json(); if (d.error) msg = d.error; } catch {}

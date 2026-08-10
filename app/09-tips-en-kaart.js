@@ -250,7 +250,7 @@ function labelPlaces(places, activities) {
 let _mapConfig = null;
 function mapConfig() {
   if (!_mapConfig) {
-    _mapConfig = fetch("/api/config/map")
+    _mapConfig = appFetch("/api/config/map")
       .then((r) => (r.ok ? r.json() : {}))
       .catch(() => ({}));
   }

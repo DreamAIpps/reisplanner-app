@@ -757,7 +757,7 @@ function AccountModal({ user, onClose, onChanged, onLogout }) {
     setBusy(true); setError(null);
     try {
       await loadAppleSdk();
-      const cfg = await fetch("/auth/apple/client-id").then((r) => r.json());
+      const cfg = await appFetch("/auth/apple/client-id").then((r) => r.json());
       if (!cfg.clientId) throw new Error("Apple Sign In is niet geconfigureerd op de server.");
       window.AppleID.auth.init({
         clientId: cfg.clientId, scope: "name email",
@@ -766,7 +766,7 @@ function AccountModal({ user, onClose, onChanged, onLogout }) {
       const response = await window.AppleID.auth.signIn();
       const idToken = response.authorization?.id_token;
       if (!idToken) throw new Error("Apple stuurde geen token.");
-      const res = await fetch("/auth/apple/link", {
+      const res = await appFetch("/auth/apple/link", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: idToken }),
       });

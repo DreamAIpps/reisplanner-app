@@ -1391,7 +1391,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     if (!confirm("Fotoboek als PDF downloaden?")) return;
     setPdfProgress({ phase: "generating", percent: null });
     try {
-      const resp = await fetch(`/api/photobooks/${bookId}/pdf`);
+      const resp = await appFetch(`/api/photobooks/${bookId}/pdf`);
       if (!resp.ok) throw new Error("Downloaden mislukt");
       const total = Number(resp.headers.get("Content-Length")) || 0;
       const reader = resp.body.getReader();
