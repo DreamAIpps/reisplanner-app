@@ -713,6 +713,24 @@ async function initDb() {
   // vooruit stapt en dezelfde datum een tweede keer oplevert. Die dubbele
   // kaarten staan nog in bestaande reizen. Eerst samenvoegen, dan vastzetten
   // met een index — in die volgorde, anders faalt de index en start de app niet.
+  // Twee verwijzingen naar users stonden zonder ON DELETE-regel, wat in
+  // Postgres neerkomt op "weigeren". Daardoor was een gebruiker die ooit een
+  // deel-link had gemaakt of een fotoquiz had gehost domweg niet te
+  // verwijderen: de database gooide een foreign key violation en de
+  // beheerdersknop gaf een 500. Nagespeeld op de testdatabase.
+  //
+  // Cascade is hier het goede antwoord. Een uitnodiging van iemand die er niet
+  // meer is hoort niet bruikbaar te blijven, en een quizsessie zonder host ook
+  // niet. De reis zelf staat er los van en blijft gewoon bestaan.
+  await query(`
+    ALTER TABLE trip_invites DROP CONSTRAINT IF EXISTS trip_invites_created_by_fkey;
+    ALTER TABLE trip_invites ADD CONSTRAINT trip_invites_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE quiz_sessions DROP CONSTRAINT IF EXISTS quiz_sessions_host_user_id_fkey;
+    ALTER TABLE quiz_sessions ADD CONSTRAINT quiz_sessions_host_user_id_fkey
+      FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE;
+  `);
+
   await mergeDuplicateDays();
   await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS days_trip_date_unique ON days(trip_id, date);
