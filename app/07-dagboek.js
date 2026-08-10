@@ -530,8 +530,39 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
           }
           const showDayMap = dayPlaces.length > 0;
 
+          // Hoe hoog wordt dit dagblok ongeveer? De browser slaat blokken buiten
+          // beeld over (content-visibility) en houdt zolang deze schatting aan.
+          // Eén vaste waarde van 3000 pixels voor élke dag was daarbij het
+          // probleem: een dag zonder verhalen of foto's is in werkelijkheid maar
+          // 111 pixels hoog, dus stond er tot je erlangs scrolde een scherm vol
+          // wit onder de laatste getekende dag. Vooral zichtbaar in een gedeelde
+          // reis, waar een meekijker ook geen "verhaal schrijven"-knoppen krijgt
+          // en de meeste dagen dus echt alleen een kopregel zijn.
+          //
+          // Nu telt de schatting wat er op déze dag staat. De getallen komen uit
+          // de harness: een kopregel is 111, een foto met bijschrift en reacties
+          // ruim 400, een verhaal een regel of vier. Te laag schatten laat de
+          // scrollbalk meegroeien, te hoog laat wit staan — vandaar dat het een
+          // schatting per dag is en geen vast getal voor alles.
+          // Tel fotostroken, geen foto's: acht foto's bij één activiteit staan
+          // náást elkaar in één veegstrook en maken het blok dus niet acht keer
+          // hoger. Per foto tellen schatte een drukke dag vijftig procent te
+          // hoog in.
+          const fotoStroken = new Set(
+            tripPhotos.filter((p) => p.day_id === day.id)
+              .map((p) => p.activity_id || p.transport_id || p.accommodation_id || "dag")
+          ).size;
+          const geschatteHoogte = Math.min(4000,
+            120
+            + dayEntries.length * 120
+            + fotoStroken * 700
+            + day.activities.length * 100
+            + (showDayMap ? 230 : 0)
+            + (nightAccommodation ? 60 : 0));
+
           return (
-            <div key={day.id} id={`journal-day-${day.id}`} className="rp-dagblok rp-dagblok-dagboek rounded-2xl border border-gray-100 shadow-sm bg-white" style={{ scrollMarginTop: "5rem" }}>
+            <div key={day.id} id={`journal-day-${day.id}`} className="rp-dagblok rp-dagblok-dagboek rounded-2xl border border-gray-100 shadow-sm bg-white"
+              style={{ scrollMarginTop: "5rem", containIntrinsicSize: `auto ${geschatteHoogte}px` }}>
               {/* Blijft bovenin staan zolang er nog entries van déze dag in
                   beeld zijn, en schuift dan weg zodra de volgende dag begint —
                   zo weet je bij veel verhalen per dag altijd welke dag je leest. */}
