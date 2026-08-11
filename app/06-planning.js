@@ -874,7 +874,11 @@ function AccountModal({ user, onClose, onChanged, onLogout }) {
         {/* Onderaan, klein, en met een tussenstap ervoor. Weggaan moet kunnen —
             zonder een beheerder te hoeven mailen — maar het is geen knop waar je
             per ongeluk op tikt naast "Uitloggen". */}
-        <div className="pt-3 mt-1 border-t border-gray-100">
+        <div className="pt-3 mt-1 border-t border-gray-100 flex items-center gap-4">
+          <a href="/privacy" target="_blank" rel="noopener"
+            className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+            Privacy
+          </a>
           <button type="button" onClick={() => setVerwijderen(true)}
             className="text-xs text-gray-400 hover:text-red-600 transition-colors">
             Account verwijderen

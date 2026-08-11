@@ -5132,6 +5132,10 @@ const server = http.createServer(async (req, res) => {
 
   // Static files
   if (pathname === "/login") { serveStatic(res, path.join(PUBLIC_DIR, "login.html")); return; }
+  // Zonder deze regel valt /privacy terug op de app-schil (geen bestandsextensie
+  // = onbekende route = index.html), en dan krijgt de App Store-reviewer die de
+  // privacylink aanklikt de inlogpagina te zien.
+  if (pathname === "/privacy") { serveStatic(res, path.join(PUBLIC_DIR, "privacy.html")); return; }
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end(); return; }
   if (!fs.existsSync(filePath)) {
