@@ -90,7 +90,7 @@ const _GK = "rp_guest";
 function _gr() { try { return JSON.parse(localStorage.getItem(_GK) || "{}"); } catch { return {}; } }
 function _gw(d) {
   try { localStorage.setItem(_GK, JSON.stringify(d)); }
-  catch (err) {
+  catch {
     // Quota exceeded. Swallowing this made writes look successful while the
     // data was thrown away, so a guest's photo just vanished with no message.
     throw new Error("Opslagruimte vol. Log in om je reis op de server te bewaren, of verwijder enkele foto's.");
