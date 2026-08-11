@@ -18,6 +18,7 @@ const printapi = require("./printapi");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
+const zlib = require("zlib");
 const anthropicClient = new Anthropic();
 
 // Elk AI-verzoek loopt hierlangs, zodat het tokenverbruik geteld wordt. De
@@ -130,19 +131,48 @@ async function buildAssets() {
   // nooit een oude versie kan blijven plakken.
   built.version = crypto.createHash("md5").update(built.js).update(built.css).digest("hex").slice(0, 12);
   built.sw = fs.readFileSync(path.join(PUBLIC_DIR, "sw.js"), "utf8").replace("__ASSET_VERSIE__", built.version);
-  console.log(`App-assets gebouwd in ${Date.now() - t0} ms — script ${Math.round(built.js.length / 1024)} KB, stylesheet ${Math.round(built.css.length / 1024)} KB, versie ${built.version}.`);
+
+  // Script en stylesheet worden hier één keer gebouwd en daarna duizenden keren
+  // uitgeserveerd. Dus ook één keer inpakken, en niet bij elk verzoek opnieuw:
+  // dat scheelt tientallen milliseconden rekenwerk per bezoeker. Omdat het
+  // eenmalig is, mag brotli hier op zijn hoogste stand — dat pakt strakker in
+  // dan de stand die we voor verzoeken onderweg gebruiken.
+  built.ingepakt = {};
+  for (const [naam, tekst] of [["js", built.js], ["css", built.css]]) {
+    const buf = Buffer.from(tekst);
+    built.ingepakt[naam] = {
+      br: zlib.brotliCompressSync(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } }),
+      gzip: zlib.gzipSync(buf, { level: 9 }),
+    };
+  }
+  const kb = (b) => Math.round(b.length / 1024);
+  console.log(`App-assets gebouwd in ${Date.now() - t0} ms — script ${Math.round(built.js.length / 1024)} KB (brotli ${kb(built.ingepakt.js.br)} KB), stylesheet ${Math.round(built.css.length / 1024)} KB (brotli ${kb(built.ingepakt.css.br)} KB), versie ${built.version}.`);
 }
 
-function sendBuilt(req, res, body, etag, type) {
-  if (req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
-  res.writeHead(200, {
+function sendBuilt(req, res, body, etag, type, soort) {
+  // Vary hoort er ook op een 304, anders kan een cache alsnog de verkeerde
+  // variant vasthouden.
+  const basis = {
     "Content-Type": type,
     // De inhoud zit in de ETag, dus de browser mag hard cachen zolang die klopt;
     // must-revalidate zorgt dat een nieuwe uitrol meteen wordt opgepikt.
     "Cache-Control": "public, max-age=0, must-revalidate",
     ETag: etag,
-    "Content-Length": Buffer.byteLength(body),
-  });
+    Vary: "Accept-Encoding",
+  };
+  if (req.headers["if-none-match"] === etag) {
+    res.writeHead(304, { ETag: etag, Vary: "Accept-Encoding" });
+    res.end();
+    return;
+  }
+  const klaar = soort && built.ingepakt && built.ingepakt[soort];
+  const wijze = klaar ? kiesCompressie(req, type, Buffer.byteLength(body)) : null;
+  if (wijze && klaar[wijze]) {
+    res.writeHead(200, { ...basis, "Content-Encoding": wijze, "Content-Length": klaar[wijze].length });
+    res.end(klaar[wijze]);
+    return;
+  }
+  res.writeHead(200, { ...basis, "Content-Length": Buffer.byteLength(body) });
   res.end(body);
 }
 
@@ -199,10 +229,68 @@ function setSecurityHeaders(res) {
 }
 
 // ---------- Helpers ----------
+// ---------- Antwoorden inpakken ----------
+// De app ging onverpakt over de lijn: 618 KB script waar 161 KB hetzelfde doet.
+// Dat telt op precies de verbindingen waar deze app voor is — hotelwifi,
+// buitenland, twee streepjes bereik.
+//
+// Alleen tekst wordt ingepakt. Foto's, PDF's en lettertypen zijn al
+// gecomprimeerd; die nog eens door gzip halen kost rekentijd en levert niets.
+// En alleen boven een kilobyte, want onder die grens is de winst kleiner dan de
+// paar bytes die de header zelf kost.
+const COMPRIMEERBAAR = /^(?:text\/|application\/(?:json|javascript|xml|manifest)|image\/svg)/;
+const COMPRESSIE_DREMPEL = 1024;
+
+function kiesCompressie(req, contentType, lengte) {
+  if (!req || lengte < COMPRESSIE_DREMPEL) return null;
+  if (!COMPRIMEERBAAR.test(String(contentType || ""))) return null;
+  const geaccepteerd = String(req.headers["accept-encoding"] || "");
+  // Brotli pakt beter in dan gzip en elke browser die dit ondersteunt is nieuw
+  // genoeg om er ook baat bij te hebben.
+  if (/\bbr\b/.test(geaccepteerd)) return "br";
+  if (/\bgzip\b/.test(geaccepteerd)) return "gzip";
+  return null;
+}
+
+function pakIn(buf, wijze, klaar) {
+  // Asynchroon, niet zlib.gzipSync: inpakken van een paar honderd kilobyte kost
+  // tientallen milliseconden, en die zou de hele server stilzetten omdat Node
+  // maar één draad heeft. Zo blijft hij intussen andere verzoeken afhandelen.
+  if (wijze === "br") {
+    zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }, (err, uit) => klaar(err ? null : uit));
+  } else {
+    zlib.gzip(buf, { level: 6 }, (err, uit) => klaar(err ? null : uit));
+  }
+}
+
+// Verstuurt een antwoord, ingepakt als dat zin heeft. Vary hoort er altijd op,
+// ook als er niets ingepakt is: zonder dat kan een cache een ingepakt antwoord
+// teruggeven aan iemand die het niet kan uitpakken.
+function verstuur(req, res, status, headers, body) {
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+  const uit = { ...headers };
+  uit.Vary = uit.Vary ? `${uit.Vary}, Accept-Encoding` : "Accept-Encoding";
+  const wijze = kiesCompressie(req, uit["Content-Type"], buf.length);
+  if (!wijze) {
+    uit["Content-Length"] = buf.length;
+    res.writeHead(status, uit);
+    res.end(buf);
+    return;
+  }
+  pakIn(buf, wijze, (ingepakt) => {
+    // Mislukt het inpakken, dan gaat het gewoon onverpakt de deur uit. Een
+    // reisplanner hoort niet stuk te gaan omdat zlib het even niet trok.
+    if (ingepakt) { uit["Content-Encoding"] = wijze; uit["Content-Length"] = ingepakt.length; }
+    else { uit["Content-Length"] = buf.length; }
+    res.writeHead(status, uit);
+    res.end(ingepakt || buf);
+  });
+}
+
 function sendJson(res, status, data) {
-  const body = JSON.stringify(data);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
-  res.end(body);
+  // res.req is het verzoek dat hierbij hoort. Dat scheelt het doorgeven van req
+  // aan alle honderd aanroepplekken van sendJson.
+  verstuur(res.req, res, status, { "Content-Type": "application/json; charset=utf-8" }, JSON.stringify(data));
 }
 
 function sendError(res, status, msg) {
@@ -920,12 +1008,11 @@ function serveStatic(res, filePath, { versioned = false } = {}) {
     const cacheControl = versioned
       ? "public, max-age=31536000, immutable"
       : "no-store, no-cache, must-revalidate";
-    res.writeHead(200, {
+    verstuur(res.req, res, 200, {
       "Content-Type": MIME[ext] || "application/octet-stream",
       "Cache-Control": cacheControl,
       ETag: etag,
-    });
-    res.end(data);
+    }, data);
   });
 }
 
@@ -5007,22 +5094,23 @@ const server = http.createServer(async (req, res) => {
 
   // Bij het opstarten gebouwde app-assets (zie buildAssets hierboven).
   if (pathname === "/app.js" && built.js) {
-    sendBuilt(req, res, built.js, built.jsEtag, "application/javascript; charset=utf-8");
+    sendBuilt(req, res, built.js, built.jsEtag, "application/javascript; charset=utf-8", "js");
     return;
   }
   if (pathname === "/app.css" && built.css) {
-    sendBuilt(req, res, built.css, built.cssEtag, "text/css; charset=utf-8");
+    sendBuilt(req, res, built.css, built.cssEtag, "text/css; charset=utf-8", "css");
     return;
   }
   // De service worker met de versie van deze uitrol erin. Nooit cachen: dit is
   // het bestand waarmee de browser mérkt dat er een nieuwe versie is.
   if (pathname === "/sw.js" && built.sw) {
-    res.writeHead(200, {
+    // Mag nooit gecacht worden — dit is het bestand dat bepaalt wat er verder
+    // wél gecacht wordt — maar inpakken mag wel, en het wordt bij elke start
+    // opgehaald.
+    verstuur(req, res, 200, {
       "Content-Type": "application/javascript; charset=utf-8",
       "Cache-Control": "no-store, no-cache, must-revalidate",
-      "Content-Length": Buffer.byteLength(built.sw),
-    });
-    res.end(built.sw);
+    }, built.sw);
     return;
   }
   // Bibliotheken uit node_modules. Alleen wat in VENDOR_FILES staat — de sleutel
@@ -5033,13 +5121,11 @@ const server = http.createServer(async (req, res) => {
     if (!doel) { res.writeHead(404); res.end("Not found"); return; }
     fs.readFile(path.join(__dirname, "node_modules", doel), (err, data) => {
       if (err) { res.writeHead(404); res.end("Not found"); return; }
-      res.writeHead(200, {
+      verstuur(req, res, 200, {
         "Content-Type": VENDOR_MIME[path.extname(naam)] || "application/octet-stream",
         // Vaste versies uit package.json, dus deze mogen lang gecacht worden.
         "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Length": data.length,
-      });
-      res.end(data);
+      }, data);
     });
     return;
   }
