@@ -344,6 +344,39 @@ function PartyStreamers({ count = 60 }) {
 // na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
 // GET .../state (zie computeQuizPhase in server.js) — deze component pollt
 // alleen, er wordt hier niets aan lokale timers of host-besturing gedaan.
+// De winnaar verschijnt pas als de ranglijst eronder van onderaf is
+// opgebouwd. Tot die tijd staat er een neutrale regel, zodat het scherm niet
+// leeg oogt maar ook nog niets verklapt.
+function WinnaarOnthulling({ winners, vertraging }) {
+  const [onthuld, setOnthuld] = useState(false);
+  useEffect(() => {
+    // Iets ná de laatste rij, zodat de lijst er echt staat.
+    const t = setTimeout(() => setOnthuld(true), Math.max(0, vertraging) * 1000 + 400);
+    return () => clearTimeout(t);
+  }, [vertraging]);
+
+  if (!onthuld) {
+    return (
+      <div className="py-2 mb-5">
+        <div className="text-sm font-semibold uppercase tracking-[0.14em] text-gray-400">De uitslag</div>
+        <div className="text-xs text-gray-400 mt-1">van onder naar boven…</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rp-rise">
+      <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
+      <h3 className="font-display text-[21px] text-gray-800 mb-1">
+        {winners.length > 1 ? "Gedeelde winst!" : winners.length === 1 ? `${winners[0].name} wint!` : "Quiz afgelopen"}
+      </h3>
+      <p className="text-sm text-gray-500 mb-5">Eindstand van de fotoquiz</p>
+    </div>
+  );
+}
+
+// Alleen als terugval zolang de server nog geen tel heeft doorgegeven.
+const QUIZ_INTRO_TELLER = 10;
+
 // De namen van wie deze vraag goed had. Niemand goed is óók een uitkomst en
 // hoort er te staan — anders lijkt het alsof de lijst niet geladen is.
 function GoedeAntwoorders({ lijst, totaal }) {
@@ -720,6 +753,28 @@ function PhotoQuizTab({ trip }) {
     );
   }
 
+  // Tien tellen voordat de eerste vraag komt. Zonder die pauze stond vraag één
+  // er al terwijl de halve tafel nog naar zijn telefoon zocht — en die vraag
+  // telt net zo zwaar als de rest.
+  if (phase === "intro") {
+    const nog = live?.remainingSeconds ?? QUIZ_INTRO_TELLER;
+    return (
+      <>
+      {stopControl}
+      <div className="max-w-md mx-auto text-center py-10">
+        <div className="text-sm font-semibold uppercase tracking-[0.14em] text-gray-400 mb-6">Maak je klaar</div>
+        <div key={nog} className="rp-aftellen font-display tabular-nums text-gray-800 mx-auto" style={{ fontSize: 96, lineHeight: 1 }}>
+          {nog}
+        </div>
+        <p className="text-sm text-gray-500 mt-6">
+          {totalQuestions} vragen · {live?.questionSeconds ?? "?"} seconden per vraag
+        </p>
+        <p className="text-xs text-gray-400 mt-1">Hoe sneller je antwoordt, hoe meer punten.</p>
+      </div>
+      </>
+    );
+  }
+
   if (phase === "lobby") {
     const count = participants.length || session.participantCount || 0;
     return (
@@ -925,11 +980,11 @@ function PhotoQuizTab({ trip }) {
       <div className="max-w-md mx-auto text-center">
         {isFinal ? (
           <>
-            <Icon name="sparkle" size={38} strokeWidth={1.2} className="mx-auto mb-3 text-sky-400" />
-            <h3 className="font-display text-[21px] text-gray-800 mb-1">
-              {winners.length > 1 ? "Gedeelde winst!" : winners.length === 1 ? `${winners[0].name} wint!` : "Quiz afgelopen"}
-            </h3>
-            <p className="text-sm text-gray-500 mb-5">Eindstand van de fotoquiz</p>
+            {/* De uitslag bouwt van onderaf op — zie de vertraging per rij
+                hieronder — dus de winnaar hoort er pas te staan als de lijst
+                daar is aangekomen. Anders lees je de afloop boven de opbouw en
+                is de spanning weg voordat hij begint. */}
+            <WinnaarOnthulling winners={winners} vertraging={sorted.length * 0.45} />
           </>
         ) : (
           <>
@@ -948,7 +1003,7 @@ function PhotoQuizTab({ trip }) {
               positie. */}
           {sorted.map((p, i) => (
             <div key={i} className={`rp-standings-row flex items-center justify-between px-4 py-2.5 text-sm ${p.isMe ? "bg-sky-50" : ""}`}
-              style={{ animationDelay: `${(sorted.length - 1 - i) * 0.3}s` }}>
+              style={{ animationDelay: `${(sorted.length - 1 - i) * (isFinal ? 0.45 : 0.3)}s` }}>
               <span className="flex items-center gap-2 font-medium text-gray-700">
                 <span className="tnum text-gray-400 w-4">{i + 1}</span>
                 {isFinal && i === 0 && p.score > 0 && <Icon name="sparkle" size={13} className="text-sky-500" />}
