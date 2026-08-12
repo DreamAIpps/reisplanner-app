@@ -990,11 +990,18 @@ function PhotoQuizTab({ trip }) {
           <>
             <div className="text-sm text-gray-500 mb-1">Tussenstand</div>
             {live?.question?.correct && (
-              <p className="text-xs text-gray-400 mb-4">
+              <p className="text-xs text-gray-400 mb-3">
                 Juiste antwoord: <span className="font-semibold text-gray-600">{live.question.correct}</span>
                 {live.remainingSeconds != null && <> · volgende vraag over {live.remainingSeconds}s</>}
               </p>
             )}
+            {/* Ook hier wie 'm goed had. Dit scherm komt elke vijfde vraag in
+                plaats van de korte onthulling, en zonder dit rijtje waren dat
+                precies de vragen waarbij niemand zag wie er goed zat — ook de
+                laatste vraag, want die valt altijd op een tussenstand. */}
+            <div className="mb-4">
+              <GoedeAntwoorders lijst={live?.goedeAntwoorden} totaal={live?.aantalGeantwoord} />
+            </div>
           </>
         )}
         <div className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-50 overflow-hidden">

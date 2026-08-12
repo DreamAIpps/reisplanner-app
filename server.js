@@ -3495,7 +3495,11 @@ const QUIZ_QUESTION_COUNT_MAX = 15;
 const QUIZ_OPENING_SCREEN_SECONDS = 6.5;
 // Korte "dit was het goede antwoord"-pauze ná iedere vraag, ook als het geen
 // tussenstand-ronde is (die krijgt de langere QUIZ_INTERVAL_SECONDS).
-const QUIZ_REVEAL_SECONDS = 3;
+// Vier tellen tussen twee vragen. Was drie, maar daar staat sinds kort meer:
+// het goede antwoord én de namen van wie het goed had. Drie seconden was net
+// te kort om dat rijtje namen te lezen en er nog iets van te vinden — en dat
+// laatste is precies waar je het voor doet.
+const QUIZ_REVEAL_SECONDS = 4;
 // Tien tellen tussen "start" en de eerste vraag. Zonder die pauze staat de
 // eerste vraag er al terwijl de helft van de tafel nog naar zijn telefoon zoekt
 // — en die eerste vraag telt net zo zwaar als de rest. Nu is er tijd om erbij
