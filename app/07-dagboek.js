@@ -601,7 +601,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   beeld zijn, en schuift dan weg zodra de volgende dag begint —
                   zo weet je bij veel verhalen per dag altijd welke dag je leest. */}
               <div className="sticky z-10 flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white rounded-t-2xl"
-                style={{ top: "calc(3rem + env(safe-area-inset-top))" }}>
+                style={{ top: "var(--rp-kop)" }}>
                 {/* Zelfde dagmarkering als op de planning, zodat de twee schermen
                     familie van elkaar blijven zonder identiek te zijn. */}
                 <div className="shrink-0 text-right" style={{ width: "2.6rem" }}>

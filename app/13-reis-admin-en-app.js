@@ -237,8 +237,13 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
 
       {/* Desktop tabs — op mobiel navigeert de onderste balk al, en "· Dagplanning"
           naast de reisnaam hierboven is de subtiele snelkoppeling daar terug. */}
+      {/* Vastgezet onder de kop. Op een telefoon is de onderste balk de
+          navigatie en doet deze niet mee; op een iPad of laptop is dít de enige
+          navigatie, en die scrollde weg zodra je een lange dagplanning inging.
+          Dan zat je vast te scrollen om ergens anders heen te kunnen. */}
       {!readOnly && (
-        <div className="hidden sm:block">
+        <div className="hidden sm:block sticky z-30 -mx-1 px-1 bg-gray-50/95 backdrop-blur-md"
+          style={{ top: "var(--rp-kop)" }}>
           <Tabs tabs={tabs} active={tab} onChange={setTab} accentColor={accent} />
         </div>
       )}

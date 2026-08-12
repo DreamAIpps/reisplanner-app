@@ -646,6 +646,65 @@ function AccommodationForm({ tripId, trip, accommodations, initial, onSaved, onC
 }
 
 // ---------- Transport form ----------
+// Hoeveel uur zit er werkelijk tussen vertrek en aankomst?
+//
+// De tijden zijn klokstanden op de plek zelf. Zonder tijdzone erbij is dit niet
+// uit te rekenen: een vlucht die om 09:00 uit Amsterdam vertrekt en om 08:15 in
+// Tokio landt zou min een uur duren, terwijl het er elf zijn. Met de zone erbij
+// wordt elke klokstand eerst teruggerekend naar een echt moment, en dan pas
+// afgetrokken.
+//
+// Twee zones nodig: staat er maar één, dan is de andere onbekend en is er niets
+// te zeggen. Zijn ze gelijk, dan valt het verschil vanzelf weg en klopt het ook.
+function verschuivingMinuten(zone, isoKlok) {
+  // Wat is de afstand tot UTC in die zone, op dát moment? Dat verschilt per
+  // datum, want zomertijd. Vandaar dat de datum meegegeven wordt in plaats van
+  // een vaste waarde per zone.
+  const alsUtc = new Date(isoKlok + "Z");
+  if (Number.isNaN(alsUtc.getTime())) return null;
+  try {
+    const opmaak = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const d = Object.fromEntries(opmaak.formatToParts(alsUtc).map((p) => [p.type, p.value]));
+    const inZone = Date.UTC(+d.year, +d.month - 1, +d.day, +d.hour % 24, +d.minute, +d.second);
+    return (inZone - alsUtc.getTime()) / 60000;
+  } catch { return null; }
+}
+
+function reisduurMinuten({ departure_time, arrival_time, departure_tz, arrival_tz }) {
+  if (!departure_time || !arrival_time || !departure_tz || !arrival_tz) return null;
+  const vertrekKlok = String(departure_time).slice(0, 16);
+  const aankomstKlok = String(arrival_time).slice(0, 16);
+  const vOffset = verschuivingMinuten(departure_tz, vertrekKlok + ":00");
+  const aOffset = verschuivingMinuten(arrival_tz, aankomstKlok + ":00");
+  if (vOffset === null || aOffset === null) return null;
+  const vertrekMoment = new Date(vertrekKlok + ":00Z").getTime() - vOffset * 60000;
+  const aankomstMoment = new Date(aankomstKlok + ":00Z").getTime() - aOffset * 60000;
+  const minuten = Math.round((aankomstMoment - vertrekMoment) / 60000);
+  return Number.isFinite(minuten) ? minuten : null;
+}
+
+// "Asia/Tokyo" wordt "Tokyo" — de stad zegt genoeg naast een tijd, en de hele
+// zonenaam maakt een regel onleesbaar op een telefoon.
+function korteZone(zone) {
+  if (!zone) return "";
+  return String(zone).split("/").slice(-1)[0].replace(/_/g, " ");
+}
+
+function vluchtduur(vervoer) {
+  const m = reisduurMinuten(vervoer || {});
+  if (m === null) return null;
+  // Een negatieve uitkomst betekent dat er iets niet klopt aan de invoer — een
+  // verkeerde zone, of aankomst vóór vertrek. Dan liever niets tonen dan een
+  // getal dat niemand kan plaatsen.
+  if (m < 0) return null;
+  const uren = Math.floor(m / 60), min = m % 60;
+  if (uren === 0) return `${min} min`;
+  return min === 0 ? `${uren} uur` : `${uren} uur ${min} min`;
+}
+
 function TransportForm({ tripId, trip, transports, initial, onSaved, onClose, onImport, journalEntries, onJournalChange, currentUserId, photos, onPhotosChange, readOnly, showPhotos = false }) {
   // `initial` is the raw DB row, where empty columns are null. Feeding null
   // into a controlled <Input> makes React flip it to uncontrolled on typing.
@@ -654,11 +713,18 @@ function TransportForm({ tripId, trip, transports, initial, onSaved, onClose, on
     from_location: initial.from_location ?? "", to_location: initial.to_location ?? "",
     departure_time: initial.departure_time ? new Date(initial.departure_time).toISOString().slice(0,16) : "",
     arrival_time: initial.arrival_time ? new Date(initial.arrival_time).toISOString().slice(0,16) : "",
+    departure_tz: initial.departure_tz || "",
+    arrival_tz: initial.arrival_tz || "",
     cost: initial.cost ?? "",
     booking_ref: initial.booking_ref ?? "",
     notes: initial.notes ?? "",
     baggage_allowance: initial.baggage_allowance ?? "",
-  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: beginVoorVervoer(trip, transports), arrival_time: "", booking_ref: "", cost: "", notes: "", baggage_allowance: "", is_private: false });
+  } : { type: "Vliegtuig", from_location: "", to_location: "", departure_time: beginVoorVervoer(trip, transports), arrival_time: "",
+      // Leeg = "geen zone opgegeven", en dan gedraagt alles zich als vroeger.
+      // Pas als je ze zelf invult, kan de app de echte reisduur uitrekenen.
+      departure_tz: "", arrival_tz: "",
+      booking_ref: "", cost: "", notes: "", baggage_allowance: "", is_private: false });
+  const [toonZones, setToonZones] = useState(false);
   // Een reis loopt tot en met de einddatum, dus de grens is die dag om 23:59 en
   // niet om middernacht — anders valt een avondvlucht op de laatste dag erbuiten.
   const reisVan = reisDagIso(trip?.start_date);
@@ -704,6 +770,48 @@ function TransportForm({ tripId, trip, transports, initial, onSaved, onClose, on
               vertrekveld hierboven. */}
           <Field label="Aankomst"><Input type="datetime-local" value={form.arrival_time} onChange={set("arrival_time")} min={form.departure_time || vanMinuut} max={totMinuut} disabled={readOnly} /></Field>
         </div>
+
+        {/* Tijdzones, ingeklapt tot je ze nodig hebt. Voor een trein naar Parijs
+            zijn ze overbodig; voor een vlucht naar Tokio zijn ze het verschil
+            tussen "min een uur" en "elf uur vliegen". De tijden hierboven zijn
+            en blijven de klok op de plek zelf: je tikt in wat er op je ticket
+            staat, en dat verandert hier niet door. */}
+        {form.departure_tz || form.arrival_tz || toonZones ? (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Tijdzone vertrek">
+              <Select value={form.departure_tz} onChange={set("departure_tz")} disabled={readOnly}>
+                <option value="">Niet opgegeven</option>
+                {Object.entries(TIMEZONES_PER_REGIO).map(([regio, zones]) => (
+                  <optgroup key={regio} label={regio}>
+                    {zones.map((tz) => <option key={tz} value={tz}>{tz.split("/").slice(1).join(" · ").replace(/_/g, " ") || tz}</option>)}
+                  </optgroup>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Tijdzone aankomst">
+              <Select value={form.arrival_tz} onChange={set("arrival_tz")} disabled={readOnly}>
+                <option value="">Niet opgegeven</option>
+                {Object.entries(TIMEZONES_PER_REGIO).map(([regio, zones]) => (
+                  <optgroup key={regio} label={regio}>
+                    {zones.map((tz) => <option key={tz} value={tz}>{tz.split("/").slice(1).join(" · ").replace(/_/g, " ") || tz}</option>)}
+                  </optgroup>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        ) : !readOnly && (
+          <button type="button" onClick={() => setToonZones(true)}
+            className="text-xs text-gray-400 hover:text-sky-600 transition-colors">
+            + Tijdzones instellen — nodig als je een tijdzone over gaat
+          </button>
+        )}
+
+        {vluchtduur(form) && (
+          <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+            <Icon name="clock" size={13} className="mr-1.5" />
+            Onderweg: <span className="font-semibold text-gray-700">{vluchtduur(form)}</span>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Boekingsnummer"><Input value={form.booking_ref} onChange={set("booking_ref")} disabled={readOnly} /></Field>
           {!readOnly && <Field label="Kosten (€)"><Input type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0,00" /></Field>}
