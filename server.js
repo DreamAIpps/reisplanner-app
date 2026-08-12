@@ -3481,11 +3481,11 @@ route("POST", "/api/geocode/place-name", async (req, res, params, body) => {
 // gepolld hoeft te worden op de server naast wat de deelnemers toch al doen.
 // Meedoen kan alleen via het session-specifieke join-token (de QR-code), nooit
 // via het gewone alleen-lezen-uitnodigingslink van de reis.
-const QUIZ_QUESTION_SECONDS_DEFAULT = 15;
+const QUIZ_QUESTION_SECONDS_DEFAULT = 20;
 const QUIZ_QUESTION_SECONDS_MIN = 5;
 const QUIZ_QUESTION_SECONDS_MAX = 60;
 const QUIZ_INTERVAL_SECONDS = 6;
-const QUIZ_QUESTION_COUNT_DEFAULT = 5;
+const QUIZ_QUESTION_COUNT_DEFAULT = 15;
 const QUIZ_QUESTION_COUNT_MIN = 2;
 const QUIZ_QUESTION_COUNT_MAX = 15;
 // Moet gelijk zijn aan OPENING_SCREEN_MS/1000 in app.js — de client toont dat
@@ -3784,7 +3784,11 @@ Return ONLY valid JSON, no markdown: {"items":[{"question":"...","correct":"..."
 // server een lopende timer hoeft bij te houden.
 // Niet na élke vraag een tussenstand — dat onderbrak het tempo te vaak — maar
 // pas na elke 3e vraag (dus na vraag 3, 6, 9, ...).
-const QUIZ_STANDINGS_EVERY = 3;
+// Om de hoeveel vragen de volle ranglijst verschijnt. Na de andere vragen komt
+// alleen de korte "dit was het goede antwoord"-pauze. Met vijftien vragen als
+// standaard zou elke derde vraag de ranglijst vijf keer onderbreken; om de vijf
+// zijn het er twee, en dat houdt het tempo erin.
+const QUIZ_STANDINGS_EVERY = 5;
 // De verdubbelaar-vraag krijgt een paar seconden extra bedenktijd bovenop de
 // ingestelde tijd per vraag — dubbele punten mogen ook wat meer tijd kosten.
 const QUIZ_DOUBLER_BONUS_SECONDS = 5;
@@ -3964,7 +3968,7 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
     // blur-aftelling op de client niet meer voor de verdubbelaar-vraag.
     questionSeconds: questionDuration(session, index),
     isHost: session.host_user_id === req.user.id,
-    // Alleen bij elke 3e vraag de volle tussenstand (ranglijst) — de korte
+    // Alleen bij elke vijfde vraag de volle tussenstand (ranglijst) — de korte
     // "dit was het goede antwoord"-pauze na de andere vragen toont alleen het
     // antwoord, geen ranglijst.
     showsLeaderboard: phase === "standings" ? !!showsLeaderboard : true,
@@ -3981,6 +3985,25 @@ route("GET", "/api/quiz-sessions/:sessionId/state", async (req, res, params) => 
     payload.question = { type: q.type, question: q.question, photo_id: q.photo_id, url: q.url, thumb_url: q.thumb_url, options: q.options, correct: q.correct, doubler: !!q.doubler };
     const { rows: mine } = await query("SELECT choice, correct, points FROM quiz_answers WHERE participant_id = $1 AND question_index = $2", [me.id, index]);
     payload.myAnswer = mine[0] || null;
+
+    // Wie had 'm goed? Dat is het leukste moment van een quiz aan tafel, en het
+    // stond er niet: je zag alleen of jíj het goed had. Op volgorde van
+    // antwoorden, want wie het snelst was hoort vooraan te staan — dat is ook de
+    // volgorde waarin de punten zijn toegekend.
+    const { rows: goed } = await query(
+      `SELECT p.user_id, p.name
+         FROM quiz_answers a JOIN quiz_participants p ON p.id = a.participant_id
+        WHERE a.session_id = $1 AND a.question_index = $2 AND a.correct = TRUE
+        ORDER BY a.answered_at ASC`,
+      [session.id, index]
+    );
+    payload.goedeAntwoorden = goed.map((r) => ({ id: r.user_id, naam: r.name, isMe: r.user_id === req.user.id }));
+    // Hoeveel er meededen aan déze vraag, zodat "3 van de 5" te tonen is.
+    const { rows: totaal } = await query(
+      "SELECT COUNT(*)::int AS n FROM quiz_answers WHERE session_id = $1 AND question_index = $2",
+      [session.id, index]
+    );
+    payload.aantalGeantwoord = totaal[0].n;
   }
 
   sendJson(res, 200, payload);

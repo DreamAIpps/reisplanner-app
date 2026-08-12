@@ -344,6 +344,35 @@ function PartyStreamers({ count = 60 }) {
 // na elke vraag en een winnaar aan het eind. De voortgang komt volledig uit
 // GET .../state (zie computeQuizPhase in server.js) — deze component pollt
 // alleen, er wordt hier niets aan lokale timers of host-besturing gedaan.
+// De namen van wie deze vraag goed had. Niemand goed is óók een uitkomst en
+// hoort er te staan — anders lijkt het alsof de lijst niet geladen is.
+function GoedeAntwoorders({ lijst, totaal }) {
+  if (!Array.isArray(lijst)) return null;
+  if (lijst.length === 0) {
+    return (
+      <div className="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2.5 text-center">
+        <div className="text-sm text-gray-500">Niemand had deze goed</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl bg-green-50 border border-green-100 px-3 py-2.5">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-green-700 mb-1.5 text-center">
+        Goed{typeof totaal === "number" && totaal > 0 ? ` — ${lijst.length} van de ${totaal}` : ""}
+      </div>
+      <div className="flex flex-wrap justify-center gap-1.5">
+        {lijst.map((p, i) => (
+          <span key={`${p.id ?? "x"}-${i}`}
+            className={`text-sm px-2.5 py-1 rounded-full ${p.isMe ? "bg-green-600 text-white font-semibold" : "bg-white text-green-800 border border-green-200"}`}>
+            {/* De snelste vooraan, met een medaille voor de eerste. */}
+            {i === 0 && lijst.length > 1 ? "⚡ " : ""}{p.isMe ? "Jij" : p.naam}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PhotoQuizTab({ trip }) {
   const [session, setSession] = useState(undefined); // undefined = laden, null = geen sessie
   const [error, setError] = useState(null);
@@ -352,8 +381,8 @@ function PhotoQuizTab({ trip }) {
   const [stopping, setStopping] = useState(false);
   const [live, setLive] = useState(null);
   const [myPick, setMyPick] = useState(null);
-  const [questionSeconds, setQuestionSeconds] = useState(15);
-  const [questionCount, setQuestionCount] = useState(5);
+  const [questionSeconds, setQuestionSeconds] = useState(20);
+  const [questionCount, setQuestionCount] = useState(15);
   const [photoPool, setPhotoPool] = useState([]);
   const [revealedIndex, setRevealedIndex] = useState(-1);
   const [openingScreenActive, setOpeningScreenActive] = useState(false);
@@ -832,7 +861,7 @@ function PhotoQuizTab({ trip }) {
 
   // Korte "dit was het goede antwoord"-pauze ná elke vraag die geen
   // tussenstand-ronde is — alleen het antwoord, geen ranglijst (die komt
-  // alleen elke 3e vraag, zie showsLeaderboard vanuit de server).
+  // alleen elke vijfde vraag, zie showsLeaderboard vanuit de server).
   if (phase === "standings" && live && live.showsLeaderboard === false) {
     const q = live.question;
     const myAnswer = (myPick && myPick.index === live.currentIndex) ? myPick : live.myAnswer;
@@ -868,7 +897,12 @@ function PhotoQuizTab({ trip }) {
                 })}
               </div>
             )}
-            <p className="text-xs text-gray-400 text-center">
+            {/* Wie had 'm goed. Dit is het moment waar het aan tafel om draait
+                — je zag tot nu toe alleen of jíj het goed had. Op volgorde van
+                antwoorden, dus wie het snelst was staat vooraan; dat is ook de
+                volgorde waarin de punten zijn toegekend. */}
+            <GoedeAntwoorders lijst={live.goedeAntwoorden} totaal={live.aantalGeantwoord} />
+            <p className="text-xs text-gray-400 text-center mt-3">
               {q?.correct && <>Juiste antwoord: <span className="font-semibold text-gray-600">{q.correct}</span></>}
               {live.remainingSeconds != null && <> · volgende vraag over {live.remainingSeconds}s</>}
             </p>
