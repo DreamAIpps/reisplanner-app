@@ -3496,6 +3496,11 @@ const QUIZ_OPENING_SCREEN_SECONDS = 6.5;
 // Korte "dit was het goede antwoord"-pauze ná iedere vraag, ook als het geen
 // tussenstand-ronde is (die krijgt de langere QUIZ_INTERVAL_SECONDS).
 const QUIZ_REVEAL_SECONDS = 3;
+// Tien tellen tussen "start" en de eerste vraag. Zonder die pauze staat de
+// eerste vraag er al terwijl de helft van de tafel nog naar zijn telefoon zoekt
+// — en die eerste vraag telt net zo zwaar als de rest. Nu is er tijd om erbij
+// te gaan zitten, en bouwt het aftellen meteen wat spanning op.
+const QUIZ_INTRO_SECONDS = 10;
 
 // `.sort(() => Math.random() - 0.5)` is een bekende valse vriend: geen echte
 // shuffle, en met kleine arrays (zoals 4 meerkeuze-opties) systematisch
@@ -3802,7 +3807,9 @@ function questionDuration(session, index) {
 // verstuurd antwoord nog aan de juiste vraag te kunnen toewijzen, ook als
 // de vraag zelf inmiddels (net) gesloten is.
 function questionWindow(session, index) {
-  let acc = 0;
+  // De hele quiz schuift op met de introductie: vraag één begint pas als het
+  // aftellen voorbij is.
+  let acc = QUIZ_INTRO_SECONDS;
   for (let i = 0; i < index; i++) {
     const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
     acc += questionDuration(session, i) + (showsStandings ? session.interval_seconds : QUIZ_REVEAL_SECONDS);
@@ -3820,12 +3827,17 @@ function computeQuizPhase(session) {
     return { phase: "lobby", index: 0, remainingSeconds: null };
   }
   const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
-  // Vragen hebben niet meer allemaal dezelfde slotlengte: elke vraag krijgt
-  // een korte "dit was het goede antwoord"-pauze, en na elke 3e vraag is dat
-  // de langere tussenstand-pauze in plaats daarvan. De verdubbelaar-vraag
-  // duurt zelf ook langer. Dit loopt daarom cumulatief door de vragen heen in
-  // plaats van een vaste deling te doen.
-  let acc = 0;
+  // Eerst het aftellen: iedereen aan tafel de kans geven erbij te komen zitten
+  // voordat de eerste vraag begint.
+  if (elapsed < QUIZ_INTRO_SECONDS) {
+    return { phase: "intro", index: 0, remainingSeconds: Math.ceil(QUIZ_INTRO_SECONDS - elapsed) };
+  }
+  // Vragen hebben niet allemaal dezelfde slotlengte: elke vraag krijgt een
+  // korte "dit was het goede antwoord"-pauze, en na elke vijfde vraag is dat de
+  // langere tussenstand-pauze in plaats daarvan. De verdubbelaar-vraag duurt
+  // zelf ook langer. Dit loopt daarom cumulatief door de vragen heen in plaats
+  // van een vaste deling te doen.
+  let acc = QUIZ_INTRO_SECONDS;
   for (let i = 0; i < total; i++) {
     const showsStandings = (i + 1) % QUIZ_STANDINGS_EVERY === 0;
     const qDuration = questionDuration(session, i);
@@ -4028,9 +4040,17 @@ route("POST", "/api/quiz-sessions/:sessionId/answer", async (req, res, params, b
   // aankomen — zonder een korte genadetermijn zou zo'n antwoord ten onrechte
   // worden afgewezen als "niet meer actief" terwijl de speler wel op tijd was.
   const ANSWER_GRACE_SECONDS = 4;
+  // En een kleine marge aan de ónderkant, om een andere reden. De verstreken
+  // tijd wordt hier met de klok van Node gemeten, terwijl started_at van de
+  // database komt. Lopen die een fractie uit de pas, dan is "verstreken" bij de
+  // allereerste vraag net negatief en werd een antwoord geweigerd dat prima op
+  // tijd was. Anderhalve seconde dekt dat verschil ruim, en is te kort om de
+  // volgende vraag alvast te kunnen beantwoorden — die kent de speler dan nog
+  // niet eens.
+  const KLOKMARGE_SECONDS = 1.5;
   const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
   const { start, end } = questionWindow(session, questionIndex);
-  if (elapsed < start || elapsed > end + ANSWER_GRACE_SECONDS) {
+  if (elapsed < start - KLOKMARGE_SECONDS || elapsed > end + ANSWER_GRACE_SECONDS) {
     return sendError(res, 400, "Deze vraag is niet meer actief");
   }
   const remainingSeconds = Math.max(0, end - elapsed);
