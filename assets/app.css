@@ -99,6 +99,13 @@
 /* Cijfers die onder elkaar horen te staan — tijden, bedragen, dagnummers. */
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* De hoogte van de vaste kop bovenaan (h-16 = 4rem) plus de veilige zone van
+   het toestel. Alles wat daaronder blijft plakken rekent hiermee, in plaats van
+   een getal over te tikken dat bij de volgende wijziging van de kop niet meer
+   klopt — precies hoe de dagkoppen op 3rem waren blijven staan terwijl de kop
+   al 4rem was, en dus een centimeter achter die kop verdwenen. */
+:root { --rp-kop: calc(4rem + env(safe-area-inset-top)); }
+
 /* Een dagblok in de planning of het dagboek. Bij een reis van drie weken staan
    die allemaal tegelijk in de pagina: gemeten 18.000 DOM-knopen en ruim 100.000
    pixels hoogte, oftewel meer dan honderd schermen. De browser deed daar bij elk

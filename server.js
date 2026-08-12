@@ -1870,6 +1870,17 @@ route("DELETE", "/api/accommodations/:id", async (req, res, params) => {
 }, { tripScope: "accommodations" });
 
 // ---------- Transport ----------
+// Een tijdzone komt van de client en moet dus gecontroleerd worden voordat hij
+// de database in gaat. Intl kent de hele IANA-lijst en weigert alles daarbuiten,
+// dus dat is meteen de complete controle — geen eigen lijst die veroudert.
+function geldigeZone(naam) {
+  if (!naam || typeof naam !== "string") return null;
+  try {
+    new Intl.DateTimeFormat("nl-NL", { timeZone: naam });
+    return naam;
+  } catch { return null; }
+}
+
 route("GET", "/api/trips/:id/transports", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM transports WHERE trip_id = $1 ORDER BY departure_time ASC NULLS LAST", [params.id]);
   const visible = req.tripRole === "viewer" ? rows.filter((r) => !r.is_private) : rows;
@@ -1877,7 +1888,7 @@ route("GET", "/api/trips/:id/transports", async (req, res, params) => {
 }, { tripScope: "param" });
 
 route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, departure_tz, arrival_tz, booking_ref, cost, notes, baggage_allowance, is_private } = body;
   const dateErr = invalidDates({ departure_time, arrival_time });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows: tripRows } = await query("SELECT start_date, end_date FROM trips WHERE id = $1", [params.id]);
@@ -1885,19 +1896,19 @@ route("POST", "/api/trips/:id/transports", async (req, res, params, body) => {
   const err = checkDateInRange(departure_time, trip?.start_date, trip?.end_date) || checkDateInRange(arrival_time, trip?.start_date, trip?.end_date);
   if (err) return sendError(res, 400, err);
   const { rows } = await query(
-    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
-    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private]
+    "INSERT INTO transports (trip_id, type, from_location, to_location, departure_time, arrival_time, departure_tz, arrival_tz, booking_ref, cost, notes, baggage_allowance, is_private) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",
+    [params.id, type, from_location||null, to_location||null, departure_time||null, arrival_time||null, geldigeZone(departure_tz), geldigeZone(arrival_tz), booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private]
   );
   sendJson(res, 201, rows[0]);
 }, { tripScope: "param" });
 
 route("PUT", "/api/transports/:id", async (req, res, params, body) => {
-  const { type, from_location, to_location, departure_time, arrival_time, booking_ref, cost, notes, baggage_allowance, is_private } = body;
+  const { type, from_location, to_location, departure_time, arrival_time, departure_tz, arrival_tz, booking_ref, cost, notes, baggage_allowance, is_private } = body;
   const dateErr = invalidDates({ departure_time, arrival_time });
   if (dateErr) return sendError(res, 400, dateErr);
   const { rows } = await query(
-    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, booking_ref=$6, cost=$7, notes=$8, baggage_allowance=$9, is_private=$10 WHERE id=$11 RETURNING *",
-    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private, params.id]
+    "UPDATE transports SET type=$1, from_location=$2, to_location=$3, departure_time=$4, arrival_time=$5, departure_tz=$6, arrival_tz=$7, booking_ref=$8, cost=$9, notes=$10, baggage_allowance=$11, is_private=$12 WHERE id=$13 RETURNING *",
+    [type, from_location||null, to_location||null, departure_time||null, arrival_time||null, geldigeZone(departure_tz), geldigeZone(arrival_tz), booking_ref||null, cost||null, notes||null, baggage_allowance||null, !!is_private, params.id]
   );
   sendJson(res, 200, rows[0]);
 }, { tripScope: "transports" });

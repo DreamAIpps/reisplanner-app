@@ -153,8 +153,11 @@ function TransportTab({ trip, transports, onRefresh, readOnly, currentUserId }) 
                 <div className="flex-1">
                   <div className="font-semibold text-gray-800">{t.type}: {t.from_location} → {t.to_location}</div>
                   <div className="flex gap-4 mt-1 text-sm text-gray-500 flex-wrap">
-                    {t.departure_time && <span>Vertrek: {fmtDatetime(t.departure_time)}</span>}
-                    {t.arrival_time && <span>Aankomst: {fmtDatetime(t.arrival_time)}</span>}
+                    {/* De zone erbij zodra hij bekend is: "09:00" zegt bij een
+                        vlucht naar Tokio niets zonder te weten welke klok dat is. */}
+                    {t.departure_time && <span>Vertrek: {fmtDatetime(t.departure_time)}{t.departure_tz ? ` ${korteZone(t.departure_tz)}` : ""}</span>}
+                    {t.arrival_time && <span>Aankomst: {fmtDatetime(t.arrival_time)}{t.arrival_tz ? ` ${korteZone(t.arrival_tz)}` : ""}</span>}
+                    {vluchtduur(t) && <span className="font-medium text-gray-600">Onderweg: {vluchtduur(t)}</span>}
                     {t.booking_ref && <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">#{t.booking_ref}</span>}
                     {t.cost && <span className="font-medium" style={{ color: PALETTE.coralDeep }}>{fmtMoney(t.cost)}</span>}
                   </div>

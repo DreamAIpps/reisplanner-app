@@ -147,6 +147,7 @@ async function initDb() {
     );
     ALTER TABLE trip_invites ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
 
+
     CREATE TABLE IF NOT EXISTS trip_views (
       id SERIAL PRIMARY KEY,
       trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -304,6 +305,22 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS activities_day_idx ON activities(day_id);
     CREATE INDEX IF NOT EXISTS accommodations_trip_idx ON accommodations(trip_id);
     CREATE INDEX IF NOT EXISTS transports_trip_idx ON transports(trip_id);
+
+    -- De tijdzone bij een vertrek- en aankomsttijd, per etappe.
+    --
+    -- departure_time en arrival_time zijn klokstanden: typ je 09:00, dan staat
+    -- er 09:00, waar je ook bent als je het teruglees. Dat werkt zolang een reis
+    -- in één tijdzone blijft, maar bij een vlucht Amsterdam-Tokio betekent 09:00
+    -- twee verschillende momenten en wist de app niet welke. Daardoor was de
+    -- vliegduur niet uit te rekenen: 09:00 vertrek en 08:15 aankomst zag eruit
+    -- als min een uur, terwijl het er elf zijn.
+    --
+    -- De klokstand blijft staan zoals hij is; deze kolommen zeggen er alleen bij
+    -- in welke zone die klok loopt. Bestaande rijen houden NULL en gedragen zich
+    -- precies zoals voorheen — geen migratie van gegevens nodig.
+    ALTER TABLE transports ADD COLUMN IF NOT EXISTS departure_tz TEXT;
+    ALTER TABLE transports ADD COLUMN IF NOT EXISTS arrival_tz TEXT;
+
     CREATE INDEX IF NOT EXISTS expenses_trip_idx ON expenses(trip_id);
     CREATE INDEX IF NOT EXISTS packing_items_trip_idx ON packing_items(trip_id);
 
