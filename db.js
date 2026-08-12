@@ -481,7 +481,7 @@ async function initDb() {
       host_user_id INTEGER NOT NULL REFERENCES users(id),
       token TEXT UNIQUE NOT NULL,
       questions JSONB NOT NULL,
-      question_seconds INTEGER NOT NULL DEFAULT 15,
+      question_seconds INTEGER NOT NULL DEFAULT 20,
       interval_seconds INTEGER NOT NULL DEFAULT 6,
       status TEXT NOT NULL DEFAULT 'lobby',
       started_at TIMESTAMPTZ,
