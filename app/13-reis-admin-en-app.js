@@ -160,6 +160,10 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
     // niet het boek dat je er achteraf van maakt. De server weigert het ook
     // (403), maar dan zou een kijker eerst op een doodlopende knop tikken.
     ...(readOnly ? [] : [{ key: "photobook", label: "Fotoboek", icon: "frame" }]),
+    // Aan het eind van de reis: je eigen top vijf foto's en vijf vragen over
+    // wat het leukste was. Ook voor meekijkers zichtbaar — die kunnen de
+    // uitslag lezen, maar niet zelf stemmen (zie EvaluatieTab).
+    { key: "evaluatie", label: "Evaluatie", icon: "star" },
   ];
 
   // De onderste balk hoort te gaan over wat je onderweg het vaakst doet, en dat
@@ -187,6 +191,7 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
     { titel: "Achteraf", items: [
       ...(readOnly ? [] : [{ key: "photobook", icon: "frame", label: "Fotoboek" }]),
       { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
+      { key: "evaluatie", icon: "star", label: "Evaluatie" },
     ] },
   ];
   const moreMenuItems = moreMenuGroups.flatMap((g) => g.items);
@@ -294,6 +299,11 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
         <QuizFullscreen onClose={() => setTab(readOnly ? "journal" : "days")} label="Fotoquiz sluiten">
           <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>
+      )}
+
+      {tab === "evaluatie" && (
+        <EvaluatieTab trip={viewTrip} readOnly={readOnly}
+          currentUserId={currentUserId} onRefresh={load} />
       )}
 
       {/* Stond hier eerder bewust los van de readOnly-splitsing, zodat ook
