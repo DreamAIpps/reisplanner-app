@@ -201,6 +201,13 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
 
   const fotoOpId = new Map(photos.map((p) => [p.id, p]));
 
+  // Bij een reis met honderden foto's kiest de server er honderd uit — voor
+  // iedereen dezelfde. In de volgorde van de reis en niet in die van de server:
+  // de greep is willekeurig, de vólgorde hoeft dat niet te zijn, en op datum
+  // herken je je eigen reis terug.
+  const greep = data.fotoKeuze?.ids ? new Set(data.fotoKeuze.ids) : null;
+  const teKiezen = greep ? photos.filter((p) => greep.has(p.id)) : photos;
+
   return (
     <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
       {(top.length > 0 || klaar) && (
@@ -214,13 +221,20 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
 
       {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
-      {photos.length === 0 ? (
+      {greep && (
+        <p className="text-xs text-gray-400">
+          Een willekeurige greep van {data.fotoKeuze.max} uit de {data.fotoKeuze.totaal} foto's van
+          deze reis — voor iedereen dezelfde, anders valt er niets op te tellen.
+        </p>
+      )}
+
+      {teKiezen.length === 0 ? (
         <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-6 text-center text-sm text-gray-400">
           Er zijn nog geen foto's in deze reis.
         </div>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-          {photos.map((p) => {
+          {teKiezen.map((p) => {
             const plek = top.indexOf(p.id);
             const gekozen = plek !== -1;
             // Zit je top vol, dan is een niet-gekozen foto niet meer aan te
@@ -247,7 +261,7 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
       )}
 
       <div className="flex items-center gap-3 flex-wrap">
-        <Button onClick={opslaan} disabled={bezig || photos.length === 0}>
+        <Button onClick={opslaan} disabled={bezig || teKiezen.length === 0}>
           {bezig ? "Opslaan…" : klaar ? "Mijn top vijf bijwerken" : "Klaar — laat de uitslag zien"}
         </Button>
         <span className="text-xs text-gray-400">

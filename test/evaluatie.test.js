@@ -355,6 +355,89 @@ test("een ongeldige deel-link stuurt je weg, en delen is niet voor meekijkers", 
   assert.ok(delen.status >= 400, "een meekijker kon een deel-link maken");
 });
 
+// Rechtstreeks in de database: honderdtwintig foto's uploaden via de route is
+// traag en het gaat hier alleen om het aantal, niet om de plaatjes.
+async function vulAanTot(reis, aantal) {
+  const { rows } = await S.pool.query("SELECT COUNT(*)::int n FROM photos WHERE trip_id = $1", [reis.id]);
+  // Doortellen vanaf wat er al staat, niet vanaf nul: bij een tweede aanroep
+  // zou dezelfde inhoud opnieuw ontstaan en dan botst hij op de unieke index
+  // over content_hash — precies de index die dubbele foto's tegenhoudt.
+  for (let i = rows[0].n; i < aantal; i++) {
+    await S.pool.query(
+      // Expliciet casten: zonder ::bytea kan Postgres niet uitmaken of $2 nu
+      // bytea (de kolom) of text (md5) moet zijn.
+      `INSERT INTO photos (trip_id, mime_type, data, content_hash)
+       VALUES ($1, 'image/svg+xml', $2::bytea, md5($2::bytea))`,
+      [reis.id, Buffer.from(`<svg id="vul-${i}"/>`)]
+    );
+  }
+}
+
+test("boven de honderd foto's krijgt iedereen dezelfde greep van honderd", opties, async () => {
+  const { a, b, reis } = await maakReisMetFotos(3);
+  await vulAanTot(reis, 137);
+
+  const vanA = await lees(a, reis);
+  const vanB = await lees(b, reis);
+  assert.equal(vanA.data.fotoKeuze.totaal, 137);
+  assert.equal(vanA.data.fotoKeuze.max, 100);
+  assert.equal(vanA.data.fotoKeuze.ids.length, 100, "de greep is niet honderd foto's groot");
+  assert.deepEqual(vanA.data.fotoKeuze.ids, vanB.data.fotoKeuze.ids,
+    "twee gebruikers zien een andere greep — dan valt de uitslag niet op te tellen");
+
+  // Twee keer vragen levert hetzelfde op: de greep is vast, niet elke keer nieuw.
+  const nogmaals = await lees(a, reis);
+  assert.deepEqual(nogmaals.data.fotoKeuze.ids, vanA.data.fotoKeuze.ids, "de greep verandert per aanroep");
+
+  // En hij is echt een greep, geen "de eerste honderd": de gekozen ids liggen
+  // verspreid over alle foto's in plaats van aaneengesloten vooraan.
+  const alle = (await S.pool.query("SELECT id FROM photos WHERE trip_id = $1 ORDER BY id", [reis.id])).rows.map((r) => r.id);
+  const gekozen = new Set(vanA.data.fotoKeuze.ids);
+  const laatsteDertig = alle.slice(-30).filter((id) => gekozen.has(id));
+  assert.ok(laatsteDertig.length > 5,
+    `de greep zit vooraan geplakt: maar ${laatsteDertig.length} van de laatste dertig foto's zitten erin`);
+});
+
+test("stemmen kan alleen op foto's uit de greep", opties, async () => {
+  const { a, reis } = await maakReisMetFotos(3);
+  await vulAanTot(reis, 137);
+  const { data } = await lees(a, reis);
+  const gekozen = new Set(data.fotoKeuze.ids);
+  const alle = (await S.pool.query("SELECT id FROM photos WHERE trip_id = $1 ORDER BY id", [reis.id])).rows.map((r) => r.id);
+  const buiten = alle.find((id) => !gekozen.has(id));
+  assert.ok(buiten, "er valt geen foto buiten de greep om mee te testen");
+
+  const fout = await stuurFotos(a, reis, [buiten]);
+  assert.equal(fout.status, 400, "een foto van buiten de greep werd geaccepteerd");
+
+  const goed = await stuurFotos(a, reis, [data.fotoKeuze.ids[0]]);
+  assert.equal(goed.status, 200);
+});
+
+test("een foto waar al op gestemd is blijft in de greep staan", opties, async () => {
+  const { a, reis } = await maakReisMetFotos(3);
+  await vulAanTot(reis, 137);
+  const eerste = await lees(a, reis);
+  const stem = eerste.data.fotoKeuze.ids[0];
+  await stuurFotos(a, reis, [stem]);
+
+  // Er komen foto's bij, dus de greep verschuift. De foto met een stem hoort
+  // te blijven, anders verdwijnt er iets uit de uitslag.
+  await vulAanTot(reis, 300);
+  const later = await lees(a, reis);
+  assert.ok(later.data.fotoKeuze.ids.includes(stem),
+    "de foto waarop gestemd is viel uit de greep");
+  assert.ok(later.data.fotoKeuze.ids.length >= 100);
+});
+
+test("honderd foto's of minder: geen greep, gewoon alles", opties, async () => {
+  const { a, reis } = await maakReisMetFotos(3);
+  await vulAanTot(reis, 100);
+  const { data } = await lees(a, reis);
+  assert.equal(data.fotoKeuze.totaal, 100);
+  assert.equal(data.fotoKeuze.ids, null, "er wordt al een greep gemaakt terwijl het er precies honderd zijn");
+});
+
 test("een buitenstaander komt er niet bij", opties, async () => {
   const { reis, fotos } = await maakReisMetFotos(1);
   const vreemde = await S.maakGebruiker("vreemde");
