@@ -5184,6 +5184,38 @@ const FOTO_TOP = 5;
 // "de mooiste" betekent.
 const FOTO_PUNTEN = (positie) => FOTO_TOP + 1 - positie;
 
+// Bij een reis met honderden foto's is een top vijf kiezen geen spel meer maar
+// werk: je scrollt een kwartier en geeft het op. Daarom een greep van honderd.
+//
+// Voor iedereen dezelfde greep, anders stemt de een over foto's die de ander
+// nooit gezien heeft en telt de uitslag appels bij peren. "Willekeurig" is
+// daarom md5(id + reis): geen echte toevalsgenerator maar een vaste ordening
+// die er willekeurig uitziet. Bij elke aanroep dezelfde uitkomst, zonder dat de
+// keuze ergens bewaard hoeft te worden — en verdeeld over de hele reis in
+// plaats van de eerste honderd dagen.
+//
+// Foto's waar al op gestemd is blijven er altijd bij, ook als ze buiten de
+// greep vallen. Komt er later nog een foto bij, dan verschuift de greep een
+// beetje, en zonder deze uitzondering zou er een foto uit de uitslag
+// verdwijnen waar iemand zijn nummer één van had gemaakt.
+const FOTO_KEUZE_MAX = 100;
+
+async function evaluatieFotoKeuze(tripId) {
+  const [{ rows: totaal }, { rows: gestemd }] = await Promise.all([
+    query("SELECT COUNT(*)::int AS n FROM photos WHERE trip_id = $1", [tripId]),
+    query("SELECT DISTINCT photo_id FROM trip_fotostemmen WHERE trip_id = $1", [tripId]),
+  ]);
+  if (totaal[0].n <= FOTO_KEUZE_MAX) return { ids: null, totaal: totaal[0].n, max: FOTO_KEUZE_MAX };
+  const { rows } = await query(
+    `SELECT id FROM photos WHERE trip_id = $1
+      ORDER BY md5(id::text || '-' || $1::text) ASC
+      LIMIT $2`,
+    [tripId, FOTO_KEUZE_MAX]
+  );
+  const ids = [...new Set([...rows.map((r) => r.id), ...gestemd.map((r) => r.photo_id)])];
+  return { ids, totaal: totaal[0].n, max: FOTO_KEUZE_MAX };
+}
+
 function schoonAntwoorden(ruw) {
   const uit = {};
   if (!ruw || typeof ruw !== "object") return uit;
@@ -5291,7 +5323,7 @@ async function magVragenDoen(tripId, userId, tripRole) {
 }
 
 route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
-  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }, keuzes, voortgang, magVragen, { rows: link }] = await Promise.all([
+  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }, keuzes, voortgang, magVragen, { rows: link }, fotoKeuze] = await Promise.all([
     query("SELECT antwoorden, fotos_op, vragen_op FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]),
     query("SELECT photo_id, positie FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2 ORDER BY positie ASC", [params.id, req.user.id]),
     query(
@@ -5305,6 +5337,7 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     evaluatieVoortgang(params.id),
     magVragenDoen(params.id, req.user.id, req.tripRole),
     query("SELECT token FROM evaluatie_links WHERE trip_id = $1", [params.id]),
+    evaluatieFotoKeuze(params.id),
   ]);
 
   // Een meekijker stemt wél mee voor de mooiste foto — die heeft hij allemaal
@@ -5325,6 +5358,7 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     keuzes,
     maxTeken: EVALUATIE_MAX_TEKEN,
     fotoTop: FOTO_TOP,
+    fotoKeuze,
     magVragenBeantwoorden: magVragen,
     // Delen is voor wie de reis draait, niet voor wie is uitgenodigd: anders
     // nodigt een genodigde de volgende uit en groeit de kring buiten het zicht
@@ -5358,6 +5392,14 @@ route("PUT", "/api/trips/:id/evaluatie/fotos", async (req, res, params, body) =>
     const bestaat = new Set(rows.map((r) => r.id));
     geldigeIds = fotoIds.filter((id) => bestaat.has(id));
     if (geldigeIds.length !== fotoIds.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
+
+    // Bij een grote reis mag je alleen kiezen uit de greep die iedereen ziet.
+    // Anders stemt wie de lijst omzeilt op een foto die de rest nooit onder
+    // ogen kreeg, en dat is geen eerlijke uitslag meer.
+    const keuze = await evaluatieFotoKeuze(params.id);
+    if (keuze.ids && geldigeIds.some((id) => !keuze.ids.includes(id))) {
+      return sendError(res, 400, "Eén of meer foto's staan niet in de selectie");
+    }
   }
 
   // In één transactie: eerst de oude stemmen weg, dan de nieuwe erin. Knapt er
