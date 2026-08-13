@@ -1406,6 +1406,163 @@ route("GET", "/api/admin/storage", async (req, res) => {
   });
 });
 
+// ---------- Foto's die op elkaar lijken ----------
+//
+// Byte-identieke foto's kunnen niet meer twee keer in een reis staan: daar zit
+// een unieke index op content_hash, en bij het opstarten worden oudere gevallen
+// samengevoegd. Toch staan er dubbelen in de lijst, en dat kan alleen als het
+// dezelfde foto is met net andere bytes — bijvoorbeeld één keer geüpload op
+// volle grootte en één keer al verkleind.
+//
+// Vandaar deze twee signalen, met erbij wélk signaal aansloeg, zodat er iets te
+// zien valt in plaats van iets te raden:
+//
+//   exif  — hetzelfde opnametijdstip binnen één reis. Sterk: twee opnames op
+//           precies dezelfde seconde zijn vrijwel altijd dezelfde foto. Een
+//           serieopname kan het ook halen, dus dit is een aanwijzing en geen
+//           bewijs; daarom staan de plaatjes erbij.
+//   maat  — geen opnametijdstip, maar wel exact dezelfde afmetingen én een
+//           bestandsgrootte die minder dan een procent uiteenloopt.
+//
+// Alleen kijken, niets aanraken: opruimen gebeurt in de route hieronder, met
+// deze lijst als voorvertoning.
+route("GET", "/api/admin/fotodubbels", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const { rows } = await query(`
+    SELECT p.id, p.trip_id, t.name AS trip_name, p.taken_at, p.width, p.height,
+           length(p.data) AS bytes, p.caption, d.date AS day_date
+      FROM photos p
+      JOIN trips t ON t.id = p.trip_id
+      LEFT JOIN days d ON d.id = p.day_id
+     ORDER BY p.trip_id, p.created_at ASC
+  `);
+
+  const groepen = [];
+  const perReis = new Map();
+  for (const r of rows) {
+    if (!perReis.has(r.trip_id)) perReis.set(r.trip_id, []);
+    perReis.get(r.trip_id).push(r);
+  }
+
+  for (const fotos of perReis.values()) {
+    const opTijd = new Map();
+    for (const f of fotos) {
+      if (!f.taken_at) continue;
+      const sleutel = new Date(f.taken_at).toISOString();
+      if (!opTijd.has(sleutel)) opTijd.set(sleutel, []);
+      opTijd.get(sleutel).push(f);
+    }
+    const alGezien = new Set();
+    for (const [sleutel, groep] of opTijd) {
+      if (groep.length < 2) continue;
+      groep.forEach((f) => alGezien.add(f.id));
+      groepen.push({ signaal: "exif", sleutel, fotos: groep });
+    }
+
+    // Wat geen opnametijdstip heeft valt op maat te vergelijken. Bewust pas
+    // hier, zodat een foto niet in twee groepen tegelijk belandt.
+    const zonderTijd = fotos.filter((f) => !f.taken_at && !alGezien.has(f.id) && f.width && f.height && f.bytes);
+    for (let i = 0; i < zonderTijd.length; i++) {
+      if (alGezien.has(zonderTijd[i].id)) continue;
+      const groep = [zonderTijd[i]];
+      for (let j = i + 1; j < zonderTijd.length; j++) {
+        const a = zonderTijd[i], b = zonderTijd[j];
+        if (alGezien.has(b.id)) continue;
+        if (a.width !== b.width || a.height !== b.height) continue;
+        if (Math.abs(Number(a.bytes) - Number(b.bytes)) > Number(a.bytes) * 0.01) continue;
+        groep.push(b);
+      }
+      if (groep.length < 2) continue;
+      groep.forEach((f) => alGezien.add(f.id));
+      groepen.push({ signaal: "maat", sleutel: `${zonderTijd[i].width}×${zonderTijd[i].height}`, fotos: groep });
+    }
+  }
+
+  sendJson(res, 200, {
+    aantalGroepen: groepen.length,
+    aantalDubbel: groepen.reduce((n, g) => n + g.fotos.length - 1, 0),
+    groepen: groepen.map((g) => ({
+      signaal: g.signaal,
+      sleutel: g.sleutel,
+      tripId: g.fotos[0].trip_id,
+      tripNaam: g.fotos[0].trip_name,
+      fotos: g.fotos.map((f) => ({
+        id: f.id, bytes: Number(f.bytes), width: f.width, height: f.height,
+        takenAt: f.taken_at, caption: f.caption, dayDate: f.day_date,
+      })),
+    })),
+  });
+});
+
+// Samenvoegen: van elke groep blijft er één over. Welke, dat bepaalt de
+// beheerder — de voorvertoning hierboven laat de afmetingen en de
+// bestandsgrootte zien, en de grootste is meestal het origineel.
+//
+// Wat de bestaande samenvoeging bij het opstarten níét doet en dit wel: alles
+// wat naar de weg te gooien foto verwijst wordt eerst omgehangen. Zonder die
+// stap ruimt de ON DELETE CASCADE een fotoboekpagina leeg en verdwijnt er een
+// stem uit de evaluatie — dan ben je meer kwijt dan een dubbele.
+route("POST", "/api/admin/fotodubbels/opruimen", async (req, res, params, body) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  const groepen = Array.isArray(body?.groepen) ? body.groepen : [];
+  if (!groepen.length) return sendError(res, 400, "Geen groepen meegestuurd");
+
+  let opgeruimd = 0;
+  for (const groep of groepen) {
+    const houd = Number(groep?.houd);
+    const weg = (Array.isArray(groep?.weg) ? groep.weg : []).map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0 && id !== houd);
+    if (!Number.isInteger(houd) || !weg.length) continue;
+
+    // Alles moet bij dezelfde reis horen; anders zou een verkeerd meegestuurde
+    // groep foto's uit twee reizen door elkaar husselen.
+    const { rows: check } = await query(
+      "SELECT id, trip_id FROM photos WHERE id = ANY($1::int[])", [[houd, ...weg]]);
+    if (check.length !== weg.length + 1) return sendError(res, 400, "Een van de foto's bestaat niet meer");
+    if (new Set(check.map((r) => r.trip_id)).size !== 1) return sendError(res, 400, "Foto's uit verschillende reizen");
+
+    await transaction(async (client) => {
+      for (const dupId of weg) {
+        // Ontbrekende gegevens overnemen van de foto die weggaat.
+        await client.query(
+          `UPDATE photos p SET
+             day_id = COALESCE(p.day_id, d.day_id),
+             activity_id = COALESCE(p.activity_id, d.activity_id),
+             transport_id = COALESCE(p.transport_id, d.transport_id),
+             accommodation_id = COALESCE(p.accommodation_id, d.accommodation_id),
+             caption = COALESCE(NULLIF(p.caption, ''), d.caption),
+             taken_at = COALESCE(p.taken_at, d.taken_at),
+             latitude = COALESCE(p.latitude, d.latitude),
+             longitude = COALESCE(p.longitude, d.longitude)
+           FROM (SELECT * FROM photos WHERE id = $2) d
+           WHERE p.id = $1`,
+          [houd, dupId]
+        );
+
+        // Fotoboek: plaatsingen en achtergronden omhangen.
+        await client.query("UPDATE photobook_page_photos SET photo_id = $1 WHERE photo_id = $2", [houd, dupId]);
+        await client.query("UPDATE photobook_pages SET background_photo_id = $1 WHERE background_photo_id = $2", [houd, dupId]);
+
+        // Evaluatiestemmen. Stemde iemand op allebei, dan blijft zijn hoogste
+        // plek staan en gaat de andere weg — anders botst het op de regel dat
+        // je één keer op een foto mag stemmen.
+        await client.query(
+          `DELETE FROM trip_fotostemmen w
+            WHERE w.photo_id = $2
+              AND EXISTS (SELECT 1 FROM trip_fotostemmen h
+                           WHERE h.trip_id = w.trip_id AND h.user_id = w.user_id AND h.photo_id = $1)`,
+          [houd, dupId]
+        );
+        await client.query("UPDATE trip_fotostemmen SET photo_id = $1 WHERE photo_id = $2", [houd, dupId]);
+
+        await client.query("DELETE FROM photos WHERE id = $1", [dupId]);
+        opgeruimd++;
+      }
+    });
+  }
+  sendJson(res, 200, { ok: true, opgeruimd });
+});
+
 // Staan de koppelingen met de buitenwereld goed? "Ingesteld" is te weinig om
 // op te vertrouwen — een token kan verlopen of ingetrokken zijn en dan blijft
 // de variabele gewoon gevuld. Daarom wordt elke koppeling waar dat kan ook
