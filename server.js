@@ -5049,9 +5049,10 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     ),
   ]);
   const ingediend = !!eigen[0]?.ingediend_op;
-  // Een meekijker stemt niet mee (zie de PUT hieronder), en zou de uitslag dus
-  // nooit te zien krijgen als hij achter het indienen verstopt bleef. Voor hem
-  // is er niets te beïnvloeden, dus mag hij gewoon meelezen.
+  // Een meekijker stemt wél mee voor de mooiste foto — daar heeft hij net zo
+  // goed een mening over, hij heeft ze tenslotte allemaal langs zien komen. De
+  // vijf vragen zijn dat niet: "het fijnste hotel" kun je alleen beantwoorden
+  // als je er geslapen hebt.
   const meekijker = req.tripRole === "viewer";
   sendJson(res, 200, {
     vragen: EVALUATIE_VRAGEN,
@@ -5065,13 +5066,20 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     aantalLeden: leden[0].n,
     // Pas ná het indienen de uitslag meesturen. Wie de rest al ziet staan vult
     // niet meer in wat hij zelf vond.
-    magStemmen: !meekijker,
-    uitslag: (ingediend || meekijker) ? await evaluatieUitslag(params.id) : null,
+    magFotosKiezen: true,
+    magVragenBeantwoorden: !meekijker,
+    // Ook voor een meekijker: eerst zelf stemmen, dan pas de uitslag. Zag hij
+    // hem eerder, dan stemt hij met de tussenstand in zijn achterhoofd.
+    uitslag: ingediend ? await evaluatieUitslag(params.id) : null,
   });
 }, { tripScope: "param", allowViewer: true });
 
 route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
-  const antwoorden = schoonAntwoorden(body?.antwoorden);
+  // Een meekijker mag de foto's rangschikken maar niet de vragen invullen. Dat
+  // hier afdwingen en niet alleen in het scherm: het scherm toont ze niet, maar
+  // een verzoek eromheen zou ze anders alsnog opslaan.
+  const meekijker = req.tripRole === "viewer";
+  const antwoorden = meekijker ? {} : schoonAntwoorden(body?.antwoorden);
   const ruweTop = Array.isArray(body?.top) ? body.top.slice(0, FOTO_TOP) : [];
 
   // Alleen foto's van déze reis, en geen dubbele. Zonder deze controle kon je
@@ -5107,10 +5115,7 @@ route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
   });
 
   sendJson(res, 200, { ok: true, uitslag: await evaluatieUitslag(params.id) });
-  // Bewust zónder allowViewer: de evaluatie gaat over de reis die je gemaakt
-  // hebt. Wie meekijkt leest de uitslag wel (zie de GET hierboven), maar stemt
-  // niet mee — anders bepaalt iemand die er niet bij was welke foto wint.
-}, { tripScope: "param" });
+}, { tripScope: "param", allowViewer: true });
 
 // ---------- Packing list ----------
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {

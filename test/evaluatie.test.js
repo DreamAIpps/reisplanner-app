@@ -150,24 +150,38 @@ test("de uitslag noemt per vraag wie wat antwoordde", opties, async () => {
   assert.ok(vraag.antwoorden.every((x) => x.naam), "er staat een antwoord zonder naam bij");
 });
 
-test("een meekijker leest de uitslag maar stemt niet mee", opties, async () => {
+test("een meekijker stemt mee voor de foto's, maar niet op de vragen", opties, async () => {
   const { a, reis, fotos } = await maakReisMetFotos(3);
   const kijker = await S.maakGebruiker("meekijker");
   await S.pool.query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [reis.id, kijker.id]);
   await S.req("PUT", `/api/trips/${reis.id}/evaluatie`, { gebruiker: a, body: { antwoorden: { plaats: "Kyoto" }, top: [fotos[0]] } });
 
-  // Hij heeft zelf niets ingevuld, en ziet de uitslag toch — anders zou hij hem
-  // nooit te zien krijgen, want stemmen mag hij niet.
-  const lezen = await S.req("GET", `/api/trips/${reis.id}/evaluatie`, { gebruiker: kijker });
-  assert.equal(lezen.status, 200);
-  assert.equal(lezen.data.magStemmen, false);
-  assert.ok(lezen.data.uitslag, "een meekijker kreeg de uitslag niet te zien");
-  assert.equal(lezen.data.uitslag.aantalIngediend, 1);
+  // Voordat hij zelf stemt ziet hij de uitslag niet — dezelfde regel als voor
+  // iedereen, anders stemt hij met de tussenstand in zijn achterhoofd.
+  const voor = await S.req("GET", `/api/trips/${reis.id}/evaluatie`, { gebruiker: kijker });
+  assert.equal(voor.status, 200);
+  assert.equal(voor.data.uitslag, null, "een meekijker zag de uitslag voordat hij zelf stemde");
+  assert.equal(voor.data.magFotosKiezen, true);
+  assert.equal(voor.data.magVragenBeantwoorden, false);
 
-  const stemmen = await S.req("PUT", `/api/trips/${reis.id}/evaluatie`, { gebruiker: kijker, body: { antwoorden: {}, top: [fotos[1]] } });
-  assert.ok(stemmen.status >= 400, `een meekijker mocht stemmen (${stemmen.status})`);
-  const { rows } = await S.pool.query("SELECT COUNT(*)::int n FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [reis.id, kijker.id]);
-  assert.equal(rows[0].n, 0);
+  // Zijn fotostem telt, zijn poging om de vragen in te vullen niet.
+  const stem = await S.req("PUT", `/api/trips/${reis.id}/evaluatie`, {
+    gebruiker: kijker, body: { antwoorden: { plaats: "Ik was er niet bij" }, top: [fotos[1], fotos[0]] },
+  });
+  assert.equal(stem.status, 200);
+
+  const { rows: stemmen } = await S.pool.query(
+    "SELECT photo_id, positie FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2 ORDER BY positie", [reis.id, kijker.id]);
+  assert.deepEqual(stemmen.map((r) => r.photo_id), [fotos[1], fotos[0]], "de fotostemmen van de meekijker zijn niet bewaard");
+
+  const { rows: eigen } = await S.pool.query(
+    "SELECT antwoorden FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [reis.id, kijker.id]);
+  assert.deepEqual(eigen[0].antwoorden, {}, "een meekijker kon toch een vraag beantwoorden");
+
+  // En zijn stem telt mee in de uitslag: foto 0 heeft nu 5 (van a) + 4 = 9.
+  const punten = Object.fromEntries(stem.data.uitslag.fotos.map((x) => [x.photoId, x.punten]));
+  assert.equal(punten[fotos[0]], 9);
+  assert.equal(punten[fotos[1]], 5);
 });
 
 test("een buitenstaander komt er niet bij", opties, async () => {
