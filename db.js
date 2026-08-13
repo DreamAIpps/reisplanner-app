@@ -59,7 +59,32 @@ async function transaction(fn) {
   }
 }
 
+// Starten er twee servers tegelijk, dan draaien ze allebei de migratie
+// hieronder. CREATE TABLE IF NOT EXISTS is daar niet tegen bestand: twee
+// backends die op hetzelfde moment dezelfde tabel aanmaken botsen op
+// pg_type_typname_nsp_index ("duplicate key value"), en dan valt er eentje om
+// nog vóór hij een verzoek heeft beantwoord. Dat is geen theoretisch geval —
+// het gebeurt bij een rolling deploy, en het brak de testsuite zodra er een
+// tweede testbestand bijkwam dat de database gebruikt.
+//
+// Een advisory lock zet de starters achter elkaar in de rij. Wie als tweede aan
+// de beurt is vindt alles al staan en loopt er in een oogwenk doorheen. De lock
+// hangt aan de verbinding, dus een server die halverwege omvalt laat hem niet
+// achter.
+const MIGRATIE_SLOT = 831_204; // willekeurig gekozen, maar vast: alleen wij gebruiken dit nummer
+
 async function initDb() {
+  const slot = await pool.connect();
+  try {
+    await slot.query("SELECT pg_advisory_lock($1)", [MIGRATIE_SLOT]);
+    await voerMigratiesUit();
+  } finally {
+    await slot.query("SELECT pg_advisory_unlock($1)", [MIGRATIE_SLOT]).catch(() => {});
+    slot.release();
+  }
+}
+
+async function voerMigratiesUit() {
   await query(`
     CREATE TABLE IF NOT EXISTS trips (
       id SERIAL PRIMARY KEY,
