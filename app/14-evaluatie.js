@@ -281,6 +281,20 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
 // wel meer ruimte, en na de eerste drie wordt het raster kleiner — anders
 // leest een lange lijst als vijftien gelijkwaardige winnaars.
 function FotoUitslag({ lijst, fotoOpId }) {
+  // Aantikken opent de foto op volle grootte, met dezelfde weergave als in het
+  // dagboek — daar kun je ook doorvegen naar de volgende. Dat is precies wat je
+  // wil bij een uitslag: van de winnaar naar nummer twee bladeren zonder terug
+  // naar de lijst.
+  const [bekijkt, setBekijkt] = useState(null);
+  // Alleen de foto's die er nog zijn, in de volgorde van de uitslag. Een foto
+  // die inmiddels verwijderd is heeft geen plaatje om te tonen, en zou anders
+  // een gat in het doorvegen maken.
+  const bekijkbaar = lijst.map((r) => fotoOpId.get(r.photoId)).filter(Boolean);
+  const openFoto = (photoId) => {
+    const i = bekijkbaar.findIndex((p) => p.id === photoId);
+    if (i !== -1) setBekijkt(i);
+  };
+
   if (lijst.length === 0) {
     return <div className="pt-3 border-t border-gray-100 text-sm text-gray-400">Nog niemand heeft foto's gekozen.</div>;
   }
@@ -298,29 +312,40 @@ function FotoUitslag({ lijst, fotoOpId }) {
       <div className="grid grid-cols-2 gap-2">
         {podium.map((r, i) => (
           <UitslagFoto key={r.photoId} rij={r} plek={i + 1} foto={fotoOpId.get(r.photoId)}
-            groot={i === 0} />
+            groot={i === 0} onOpen={() => openFoto(r.photoId)} />
         ))}
       </div>
 
       {rest.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {rest.map((r, i) => (
-            <UitslagFoto key={r.photoId} rij={r} plek={i + 4} foto={fotoOpId.get(r.photoId)} klein />
+            <UitslagFoto key={r.photoId} rij={r} plek={i + 4} foto={fotoOpId.get(r.photoId)} klein
+              onOpen={() => openFoto(r.photoId)} />
           ))}
         </div>
+      )}
+
+      {bekijkt !== null && (
+        <PhotoLightbox photos={bekijkbaar} index={bekijkt}
+          onClose={() => setBekijkt(null)}
+          onIndexChange={(i) => setBekijkt(i)} />
       )}
     </div>
   );
 }
 
-function UitslagFoto({ rij, plek, foto, groot, klein }) {
+function UitslagFoto({ rij, plek, foto, groot, klein, onOpen }) {
+  // Een <button> en geen <div met onClick>: dan werkt aantikken ook met het
+  // toetsenbord en zegt de voorleessoftware dat er iets te openen valt.
+  const Omhulsel = foto ? "button" : "div";
   return (
     <div className={groot ? "col-span-2" : ""}>
-      <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50"
+      <Omhulsel {...(foto ? { type: "button", onClick: onOpen, "aria-label": `Foto op plek ${plek} groot bekijken` } : {})}
+        className="relative block w-full rounded-xl overflow-hidden border border-gray-100 bg-gray-50 group"
         style={{ aspectRatio: groot ? 1.5 : 1 }}>
         {foto ? (
           <img src={foto.thumb_url || foto.url} alt="" loading="lazy" decoding="async"
-            className="w-full h-full object-cover" />
+            className="w-full h-full object-cover transition-transform group-hover:scale-[1.03]" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">Foto weg</div>
         )}
@@ -329,7 +354,7 @@ function UitslagFoto({ rij, plek, foto, groot, klein }) {
         }`}>
           {plek}
         </span>
-      </div>
+      </Omhulsel>
       <div className="text-[11px] text-gray-500 mt-1 tnum">
         {rij.punten} {rij.punten === 1 ? "punt" : "punten"} · {rij.stemmen}×
       </div>
