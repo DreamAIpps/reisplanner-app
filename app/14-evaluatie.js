@@ -16,6 +16,47 @@
 // regel als op de server; die telt echt.
 const EVAL_TOP = 5;
 
+// De lijst bij "de leukste plaats" moet dezelfde namen tonen als het dagboek:
+// "Kyoto", niet "Gionmachi, Higashiyama, Kyoto 605-0862, Japan". De server kan
+// dat niet: het opschonen gebeurt in de app, met geocodePlace, en die bewaart
+// zijn antwoorden in localStorage. Dezelfde functie aanroepen betekent dus ook
+// dezelfde cache — en dat is de enige manier om zeker te weten dat er in deze
+// lijst hetzelfde staat als in het dagboek.
+//
+// Wat al kort is wordt overgeslagen: "Kyoto" is de plaatsnaam, daar valt niets
+// op te zoeken. Dat scheelt oproepen naar een route waar een limiet op zit.
+function moetOpgezocht(naam) {
+  return naam.includes(",") || naam.trim().split(/\s+/).length > 2;
+}
+
+function useSchonePlaatsen(ruw) {
+  const [lijst, setLijst] = useState(ruw);
+  const [bezig, setBezig] = useState(false);
+  const sleutel = ruw.join("|");
+
+  useEffect(() => {
+    const bronnen = sleutel ? sleutel.split("|") : [];
+    if (!bronnen.some(moetOpgezocht)) { setLijst(bronnen); setBezig(false); return; }
+    let vervallen = false;
+    setBezig(true);
+    (async () => {
+      const uit = await Promise.all(bronnen.map(async (naam) => {
+        if (!moetOpgezocht(naam)) return naam;
+        try { return (await geocodePlace(naam))?.city || naam; } catch { return naam; }
+      }));
+      if (vervallen) return;
+      // Opnieuw ontdubbelen: twee adressen in dezelfde stad worden na het
+      // opschonen één regel, en dat is precies de bedoeling.
+      setLijst([...new Set(uit.map((x) => String(x).trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, "nl")));
+      setBezig(false);
+    })();
+    return () => { vervallen = true; };
+  }, [sleutel]);
+
+  return { lijst, bezig };
+}
+
 function EvaluatieTab({ trip, readOnly, currentUserId }) {
   // Zelf ophalen in plaats van doorgereikt krijgen: dit tabblad is het enige
   // dat álle foto's van de reis tegelijk nodig heeft, en het wordt zelden
@@ -77,16 +118,54 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
     });
   }
 
+  function zetIngeleverd(uit, gekozen) {
+    onOpgeslagen((d) => ({
+      ...d, uitslagFotos: uit.uitslagFotos, voortgang: uit.voortgang,
+      mijn: {
+        ...d.mijn,
+        top: gekozen.map((id, i) => ({ photoId: id, positie: i + 1 })),
+        fotosOp: d.mijn.fotosOp || new Date().toISOString(),
+      },
+    }));
+  }
+
   async function opslaan() {
     setBezig(true); setFout(null);
     try {
-      const uit = await api.slaEvaluatieFotosOp(trip.id, top);
-      onOpgeslagen((d) => ({
-        ...d, uitslagFotos: uit.uitslagFotos, voortgang: uit.voortgang,
-        mijn: { ...d.mijn, fotosOp: d.mijn.fotosOp || new Date().toISOString() },
-      }));
+      zetIngeleverd(await api.slaEvaluatieFotosOp(trip.id, top), top);
     } catch (err) { setFout(err.message || "Opslaan is niet gelukt"); }
     finally { setBezig(false); }
+  }
+
+  // Opnieuw beginnen. Heb je nog niets ingeleverd, dan is dit gewoon je
+  // selectie leegmaken. Was je al klaar, dan gaat je stem ook echt weg en
+  // verdwijnt de uitslag weer tot je opnieuw hebt gekozen — anders zou je met
+  // de uitslag in je achterhoofd opnieuw stemmen.
+  //
+  // Geen bevestigingsvraag maar een balkje met "ongedaan maken", zoals overal
+  // in de app: dat kost geen tik extra en helpt wél als je te snel was.
+  async function opnieuw() {
+    const vorige = top;
+    setTop([]);
+    if (!klaar) return;
+    setBezig(true); setFout(null);
+    try {
+      const uit = await api.wisEvaluatieFotos(trip.id);
+      onOpgeslagen((d) => ({
+        ...d, uitslagFotos: null, voortgang: uit.voortgang,
+        mijn: { ...d.mijn, top: [], fotosOp: null },
+      }));
+      toonMelding("Je top vijf is gewist", vorige.length ? {
+        label: "Ongedaan maken",
+        run: async () => {
+          zetIngeleverd(await api.slaEvaluatieFotosOp(trip.id, vorige), vorige);
+          setTop(vorige);
+        },
+      } : null);
+    } catch (err) {
+      setFout(err.message || "Wissen is niet gelukt");
+      setTop(vorige);
+    } finally { setBezig(false); }
   }
 
   const fotoOpId = new Map(photos.map((p) => [p.id, p]));
@@ -100,9 +179,10 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
             Tik vijf foto's aan, in volgorde: de eerste die je kiest is je nummer één.
           </p>
         </div>
-        {top.length > 0 && (
-          <button type="button" onClick={() => setTop([])} className="text-xs text-gray-400 hover:text-gray-600 shrink-0">
-            Begin opnieuw
+        {(top.length > 0 || klaar) && (
+          <button type="button" onClick={opnieuw} disabled={bezig}
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+            {klaar ? "Wissen en opnieuw" : "Begin opnieuw"}
           </button>
         )}
       </div>
@@ -196,33 +276,79 @@ function VraagAntwoord({ trip, data, currentUserId, onOpgeslagen }) {
   const [bezig, setBezig] = useState(false);
   const [fout, setFout] = useState(null);
   const klaar = !!data.mijn.vragenOp;
+  const ietsIngevuld = Object.values(antwoorden).some((x) => String(x || "").trim());
+
+  // Alleen bij "de leukste plaats" worden de namen opgeschoond; de andere vier
+  // lijsten zijn namen die je zelf hebt ingetikt (een hotel, een restaurant) en
+  // daar valt niets aan te verbeteren.
+  const { lijst: plaatsen, bezig: plaatsenBezig } = useSchonePlaatsen(data.keuzes?.plaats || []);
+  const keuzeLijst = (sleutel) => (sleutel === "plaats" ? plaatsen : data.keuzes?.[sleutel] || []);
+
+  function zetIngeleverd(uit, ingevuld) {
+    onOpgeslagen((d) => ({
+      ...d, uitslagVragen: uit.uitslagVragen, aantalVragenIngediend: uit.aantalVragenIngediend, voortgang: uit.voortgang,
+      mijn: { ...d.mijn, antwoorden: ingevuld, vragenOp: d.mijn.vragenOp || new Date().toISOString() },
+    }));
+  }
 
   async function opslaan() {
     setBezig(true); setFout(null);
     try {
-      const uit = await api.slaEvaluatieVragenOp(trip.id, antwoorden);
-      onOpgeslagen((d) => ({
-        ...d, uitslagVragen: uit.uitslagVragen, aantalVragenIngediend: uit.aantalVragenIngediend, voortgang: uit.voortgang,
-        mijn: { ...d.mijn, vragenOp: d.mijn.vragenOp || new Date().toISOString() },
-      }));
+      zetIngeleverd(await api.slaEvaluatieVragenOp(trip.id, antwoorden), antwoorden);
     } catch (err) { setFout(err.message || "Opslaan is niet gelukt"); }
     finally { setBezig(false); }
   }
 
+  // Zelfde afspraak als bij de foto's: nog niet ingeleverd is gewoon de velden
+  // leegmaken, wél ingeleverd haalt je antwoorden ook echt weg en verbergt de
+  // uitslag weer.
+  async function opnieuw() {
+    const vorige = antwoorden;
+    setAntwoorden({});
+    if (!klaar) return;
+    setBezig(true); setFout(null);
+    try {
+      const uit = await api.wisEvaluatieVragen(trip.id);
+      onOpgeslagen((d) => ({
+        ...d, uitslagVragen: null, voortgang: uit.voortgang,
+        mijn: { ...d.mijn, antwoorden: {}, vragenOp: null },
+      }));
+      toonMelding("Je antwoorden zijn gewist", {
+        label: "Ongedaan maken",
+        run: async () => {
+          zetIngeleverd(await api.slaEvaluatieVragenOp(trip.id, vorige), vorige);
+          setAntwoorden(vorige);
+        },
+      });
+    } catch (err) {
+      setFout(err.message || "Wissen is niet gelukt");
+      setAntwoorden(vorige);
+    } finally { setBezig(false); }
+  }
+
   return (
     <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
-      <div>
-        <h3 className="font-display text-[19px] text-gray-800">Vijf vragen</h3>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Kies uit wat er in de reis staat, of vul zelf iets in.
-        </p>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="font-display text-[19px] text-gray-800">Vijf vragen</h3>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Kies uit wat er in de reis staat, of vul zelf iets in.
+          </p>
+        </div>
+        {(ietsIngevuld || klaar) && (
+          <button type="button" onClick={opnieuw} disabled={bezig}
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+            {klaar ? "Wissen en opnieuw" : "Begin opnieuw"}
+          </button>
+        )}
       </div>
 
       {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
       <div className="space-y-3">
         {data.vragen.map((v) => (
-          <KeuzeOfEigen key={v.sleutel} vraag={v} keuzes={data.keuzes?.[v.sleutel] || []}
+          <KeuzeOfEigen key={v.sleutel} vraag={v} keuzes={keuzeLijst(v.sleutel)}
+            bezig={v.sleutel === "plaats" && plaatsenBezig}
             waarde={antwoorden[v.sleutel] || ""} maxTeken={data.maxTeken}
             onWijzig={(tekst) => setAntwoorden((a) => ({ ...a, [v.sleutel]: tekst }))} />
         ))}
@@ -246,7 +372,7 @@ function VraagAntwoord({ trip, data, currentUserId, onOpgeslagen }) {
 // "Ryokan Sakura" en "ryokan sakura" als twee antwoorden geteld worden; de
 // uitweg voorkomt dat je iets niet kunt noemen omdat het nooit in de planning
 // terechtkwam.
-function KeuzeOfEigen({ vraag, keuzes, waarde, maxTeken, onWijzig }) {
+function KeuzeOfEigen({ vraag, keuzes, waarde, maxTeken, bezig, onWijzig }) {
   const staatInLijst = keuzes.includes(waarde);
   const [eigen, setEigen] = useState(!!waarde && !staatInLijst);
 
@@ -255,7 +381,10 @@ function KeuzeOfEigen({ vraag, keuzes, waarde, maxTeken, onWijzig }) {
   const label = <div className="text-sm font-semibold text-gray-700 mb-1.5">{vraag.vraag}</div>;
 
   // Zonder keuzes uit de reis heeft een lijst geen zin — dan meteen een veld.
-  if (keuzes.length === 0) {
+  // Behalve als de lijst nog onderweg is: dan zou het veld er staan en een tel
+  // later ineens omslaan in een keuzelijst, precies terwijl je aan het tikken
+  // bent.
+  if (keuzes.length === 0 && !bezig) {
     return (
       <label className="block">
         {label}
@@ -275,7 +404,7 @@ function KeuzeOfEigen({ vraag, keuzes, waarde, maxTeken, onWijzig }) {
             if (e.target.value === "__anders") { setEigen(true); onWijzig(""); }
             else { setEigen(false); onWijzig(e.target.value); }
           }}>
-          <option value="">Geen voorkeur</option>
+          <option value="">{bezig ? "Plaatsnamen ophalen…" : "Geen voorkeur"}</option>
           {keuzes.map((k) => <option key={k} value={k}>{k}</option>)}
           <option value="__anders">Anders, namelijk…</option>
         </Select>

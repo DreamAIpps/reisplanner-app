@@ -44,6 +44,10 @@ const stuurVragen = (gebruiker, reis, antwoorden) =>
   S.req("PUT", `/api/trips/${reis.id}/evaluatie/vragen`, { gebruiker, body: { antwoorden } });
 const lees = (gebruiker, reis) =>
   S.req("GET", `/api/trips/${reis.id}/evaluatie`, { gebruiker });
+const wisFotos = (gebruiker, reis) =>
+  S.req("DELETE", `/api/trips/${reis.id}/evaluatie/fotos`, { gebruiker });
+const wisVragen = (gebruiker, reis) =>
+  S.req("DELETE", `/api/trips/${reis.id}/evaluatie/vragen`, { gebruiker });
 
 test("de twee onderdelen staan los: je foto's inleveren toont niet de antwoorden", opties, async () => {
   const { a, b, reis, fotos } = await maakReisMetFotos(3);
@@ -85,6 +89,9 @@ test("de keuzelijst komt uit de reis zelf", opties, async () => {
   await S.req("POST", `/api/trips/${reis.id}/accommodations`, {
     gebruiker: a, body: { name: "Ryokan Sakura", check_in: "2025-06-01", check_out: "2025-06-03" },
   });
+  await S.req("POST", `/api/trips/${reis.id}/accommodations`, {
+    gebruiker: a, body: { name: "Hotel Granvia", address: "Gionmachi, Higashiyama, Kyoto 605-0862", check_in: "2025-06-01", check_out: "2025-06-03" },
+  });
   await act("Sushi Ken", "Restaurant", "Kyoto");
   await act("Fushimi Inari", "Bezienswaardigheid", "Kyoto");
   await act("Nationaal Museum", "Museum", "Nara");
@@ -92,12 +99,17 @@ test("de keuzelijst komt uit de reis zelf", opties, async () => {
   await act("Hardlopen", "Sport", "Osaka");
 
   const { data } = await lees(a, reis);
-  assert.deepEqual(data.keuzes.hotel, ["Ryokan Sakura"]);
+  assert.deepEqual(data.keuzes.hotel, ["Hotel Granvia", "Ryokan Sakura"]);
   assert.deepEqual(data.keuzes.restaurant, ["Sushi Ken"]);
   assert.deepEqual(data.keuzes.shoppen, ["Nishiki-markt"]);
   assert.deepEqual(data.keuzes.bezichtiging, ["Fushimi Inari", "Nationaal Museum"]);
-  // De bestemming van de reis staat erbij, en elke plaats maar één keer.
-  assert.deepEqual(data.keuzes.plaats, ["Japan", "Kyoto", "Nara", "Osaka"]);
+  // De bestemming van de reis staat erbij, en elke plaats maar één keer. Het
+  // adres van een verblijf komt er rauw in: de app maakt er "Kyoto" van met
+  // dezelfde opzoeker als het dagboek. De naam van een verblijf hoort er niet
+  // in — een hotel is geen plaats.
+  assert.deepEqual(data.keuzes.plaats,
+    ["Gionmachi, Higashiyama, Kyoto 605-0862", "Japan", "Kyoto", "Nara", "Osaka"]);
+  assert.ok(!data.keuzes.plaats.includes("Ryokan Sakura"));
 
   // Een activiteit die bij geen van de vragen hoort komt nergens in een lijst.
   const alles = Object.values(data.keuzes).flat();
@@ -213,6 +225,79 @@ test("een meekijker stemt mee voor de foto's, maar komt niet bij de vragen", opt
   const punten = Object.fromEntries(stem.data.uitslagFotos.map((x) => [x.photoId, x.punten]));
   assert.equal(punten[fotos[0]], 9);
   assert.equal(punten[fotos[1]], 5);
+});
+
+test("opnieuw beginnen wist je eigen inzending, en die van een ander niet", opties, async () => {
+  const { a, b, reis, fotos } = await maakReisMetFotos(3);
+  await stuurFotos(a, reis, [fotos[0], fotos[1]]);
+  await stuurVragen(a, reis, { plaats: "Kyoto" });
+  await stuurFotos(b, reis, [fotos[2]]);
+  await stuurVragen(b, reis, { plaats: "Nara" });
+
+  // Alleen de foto's wissen laat de antwoorden staan: het zijn twee onderdelen.
+  const naFotos = await wisFotos(a, reis);
+  assert.equal(naFotos.status, 200);
+  assert.equal(naFotos.data.voortgang.fotos, 1);
+  assert.equal(naFotos.data.voortgang.vragen, 2);
+
+  const tussen = await lees(a, reis);
+  assert.deepEqual(tussen.data.mijn.top, [], "de fotostemmen staan er nog");
+  assert.equal(tussen.data.mijn.fotosOp, null);
+  assert.equal(tussen.data.uitslagFotos, null, "de foto-uitslag bleef zichtbaar na het wissen");
+  assert.ok(tussen.data.uitslagVragen, "de antwoorden verdwenen mee met de foto's");
+  assert.deepEqual(tussen.data.mijn.antwoorden, { plaats: "Kyoto" });
+
+  // En dan de vragen.
+  const naVragen = await wisVragen(a, reis);
+  assert.equal(naVragen.data.voortgang.vragen, 1);
+  const leeg = await lees(a, reis);
+  assert.deepEqual(leeg.data.mijn.antwoorden, {});
+  assert.equal(leeg.data.mijn.vragenOp, null);
+  assert.equal(leeg.data.uitslagVragen, null);
+
+  // De rij is nu helemaal weg in plaats van leeg achtergebleven.
+  const { rows } = await S.pool.query(
+    "SELECT COUNT(*)::int n FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [reis.id, a.id]);
+  assert.equal(rows[0].n, 0, "er bleef een lege inzending achter");
+
+  // b is niet geraakt: zijn stem en zijn antwoord staan er nog.
+  const vanB = await lees(b, reis);
+  assert.deepEqual(vanB.data.mijn.top.map((t) => t.photoId), [fotos[2]]);
+  assert.deepEqual(vanB.data.mijn.antwoorden, { plaats: "Nara" });
+  const punten = Object.fromEntries(vanB.data.uitslagFotos.map((x) => [x.photoId, x.punten]));
+  assert.deepEqual(punten, { [fotos[2]]: 5 }, "de stemmen van a tellen nog mee in de uitslag");
+});
+
+test("wissen mag alleen bij je eigen reis, en een meekijker wist alleen foto's", opties, async () => {
+  const { a, reis, fotos } = await maakReisMetFotos(2);
+  const kijker = await S.maakGebruiker("meekijker");
+  await S.pool.query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [reis.id, kijker.id]);
+  await stuurFotos(kijker, reis, [fotos[0]]);
+  await stuurFotos(a, reis, [fotos[1]]);
+
+  assert.equal((await wisFotos(kijker, reis)).status, 200);
+  const { rows } = await S.pool.query(
+    "SELECT COUNT(*)::int n FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [reis.id, kijker.id]);
+  assert.equal(rows[0].n, 0, "de meekijker kon zijn eigen stem niet wissen");
+  assert.ok((await wisVragen(kijker, reis)).status >= 400, "een meekijker kwam bij de vragen");
+
+  const vreemde = await S.maakGebruiker("vreemde");
+  assert.ok((await wisFotos(vreemde, reis)).status >= 400, "een buitenstaander kon wissen");
+  assert.ok((await wisVragen(vreemde, reis)).status >= 400, "een buitenstaander kon wissen");
+
+  // a's stem staat er nog: een ander die wist raakt jou niet.
+  const { rows: vanA } = await S.pool.query(
+    "SELECT COUNT(*)::int n FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [reis.id, a.id]);
+  assert.equal(vanA[0].n, 1);
+});
+
+test("wissen zonder ooit iets te hebben ingeleverd gaat gewoon goed", opties, async () => {
+  const { a, reis } = await maakReisMetFotos(1);
+  assert.equal((await wisFotos(a, reis)).status, 200);
+  assert.equal((await wisVragen(a, reis)).status, 200);
+  const { rows } = await S.pool.query(
+    "SELECT COUNT(*)::int n FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [reis.id, a.id]);
+  assert.equal(rows[0].n, 0);
 });
 
 test("een buitenstaander komt er niet bij", opties, async () => {

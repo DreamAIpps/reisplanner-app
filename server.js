@@ -5015,7 +5015,7 @@ function schoonAntwoorden(ruw) {
 async function evaluatieKeuzes(tripId) {
   const [{ rows: acts }, { rows: verblijven }, { rows: reis }] = await Promise.all([
     query("SELECT title, location, category FROM activities WHERE trip_id = $1", [tripId]),
-    query("SELECT name FROM accommodations WHERE trip_id = $1", [tripId]),
+    query("SELECT name, address FROM accommodations WHERE trip_id = $1", [tripId]),
     query("SELECT destination FROM trips WHERE id = $1", [tripId]),
   ]);
   const schoon = (lijst) => [...new Set(lijst.map((x) => String(x || "").trim()).filter(Boolean))]
@@ -5024,9 +5024,18 @@ async function evaluatieKeuzes(tripId) {
     schoon(acts.filter((a) => categorieen.includes(a.category)).map((a) => a.title));
 
   return {
-    // Plaatsen komen uit de locatievelden van activiteiten, met de bestemming
-    // van de reis erbij — die staat er niet altijd als losse activiteit in.
-    plaats: schoon([...acts.map((a) => a.location), reis[0]?.destination]),
+    // Plaatsen zijn de locatievelden van activiteiten, de adressen waar je
+    // sliep, en de bestemming van de reis (die staat er niet altijd als losse
+    // activiteit in). Dit zijn nog de rúwe teksten: "Gionmachi, Higashiyama,
+    // Kyoto 605-0862". De app maakt er "Kyoto" van met dezelfde opzoeker die
+    // het dagboek gebruikt — daar zit de cache, en dat is de enige manier om
+    // zeker te weten dat er in de lijst hetzelfde staat als in het dagboek.
+    //
+    // Van een verblijf alleen het adres, niet de naam: het dagboek valt bij een
+    // verblijf zonder adres terug op de naam, maar daar wordt hij daarna alsnog
+    // opgezocht. Hier zou "Ryokan Sakura" onopgezocht in de plaatsenlijst
+    // blijven staan als het opzoeken niet lukt, en een hotel is geen plaats.
+    plaats: schoon([...acts.map((a) => a.location), ...verblijven.map((v) => v.address), reis[0]?.destination]),
     hotel: schoon(verblijven.map((v) => v.name)),
     restaurant: titelsVan(["Restaurant"]),
     bezichtiging: titelsVan(["Bezienswaardigheid", "Museum", "Natuur"]),
@@ -5178,6 +5187,38 @@ route("PUT", "/api/trips/:id/evaluatie/vragen", async (req, res, params, body) =
   );
   const uitslag = await evaluatieUitslag(params.id);
   sendJson(res, 200, { ok: true, uitslagVragen: uitslag.vragen, aantalVragenIngediend: uitslag.aantalIngediend, voortgang: await evaluatieVoortgang(params.id) });
+}, { tripScope: "param" });
+
+// Opnieuw beginnen. Alleen je eigen inzending: iemand anders uit de uitslag
+// halen hoort niet te kunnen, ook niet als je de reis bezit.
+//
+// Blijft er na het wissen niets van je inzending over, dan gaat de hele rij weg
+// in plaats van een lege achter te laten. Anders blijft er een spook in
+// trip_evaluaties staan dat in geen enkele teller nog meedoet.
+const GEEN_INZENDING_MEER =
+  "DELETE FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2 AND fotos_op IS NULL AND vragen_op IS NULL";
+
+route("DELETE", "/api/trips/:id/evaluatie/fotos", async (req, res, params) => {
+  await transaction(async (client) => {
+    await client.query("DELETE FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]);
+    await client.query(
+      "UPDATE trip_evaluaties SET fotos_op = NULL, updated_at = NOW() WHERE trip_id = $1 AND user_id = $2",
+      [params.id, req.user.id]
+    );
+    await client.query(GEEN_INZENDING_MEER, [params.id, req.user.id]);
+  });
+  sendJson(res, 200, { ok: true, voortgang: await evaluatieVoortgang(params.id) });
+}, { tripScope: "param", allowViewer: true });
+
+route("DELETE", "/api/trips/:id/evaluatie/vragen", async (req, res, params) => {
+  await transaction(async (client) => {
+    await client.query(
+      "UPDATE trip_evaluaties SET antwoorden = '{}'::jsonb, vragen_op = NULL, updated_at = NOW() WHERE trip_id = $1 AND user_id = $2",
+      [params.id, req.user.id]
+    );
+    await client.query(GEEN_INZENDING_MEER, [params.id, req.user.id]);
+  });
+  sendJson(res, 200, { ok: true, voortgang: await evaluatieVoortgang(params.id) });
 }, { tripScope: "param" });
 
 // ---------- Packing list ----------
