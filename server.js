@@ -5004,6 +5004,36 @@ function schoonAntwoorden(ruw) {
 }
 
 // De uitslag: per foto de opgetelde punten, en per vraag ieders antwoord.
+// De antwoorden staan al in de reis: de hotels zijn de verblijven, de
+// restaurants zijn de activiteiten met die categorie. Een keuzelijst daaruit
+// scheelt tikwerk én zorgt dat iedereen dezelfde naam kiest — anders wordt
+// "Ryokan Sakura" en "ryokan sakura" twee verschillende antwoorden en telt de
+// uitslag ze los.
+//
+// Er staat altijd "Anders, namelijk…" onder: wie iets bedoelt dat nooit in de
+// planning terechtkwam moet dat gewoon kunnen opschrijven.
+async function evaluatieKeuzes(tripId) {
+  const [{ rows: acts }, { rows: verblijven }, { rows: reis }] = await Promise.all([
+    query("SELECT title, location, category FROM activities WHERE trip_id = $1", [tripId]),
+    query("SELECT name FROM accommodations WHERE trip_id = $1", [tripId]),
+    query("SELECT destination FROM trips WHERE id = $1", [tripId]),
+  ]);
+  const schoon = (lijst) => [...new Set(lijst.map((x) => String(x || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "nl"));
+  const titelsVan = (categorieen) =>
+    schoon(acts.filter((a) => categorieen.includes(a.category)).map((a) => a.title));
+
+  return {
+    // Plaatsen komen uit de locatievelden van activiteiten, met de bestemming
+    // van de reis erbij — die staat er niet altijd als losse activiteit in.
+    plaats: schoon([...acts.map((a) => a.location), reis[0]?.destination]),
+    hotel: schoon(verblijven.map((v) => v.name)),
+    restaurant: titelsVan(["Restaurant"]),
+    bezichtiging: titelsVan(["Bezienswaardigheid", "Museum", "Natuur"]),
+    shoppen: titelsVan(["Shopping", "Winkelen"]),
+  };
+}
+
 async function evaluatieUitslag(tripId) {
   const [{ rows: fotoRijen }, { rows: antwoordRijen }] = await Promise.all([
     query(
@@ -5018,8 +5048,8 @@ async function evaluatieUitslag(tripId) {
     query(
       `SELECT e.antwoorden, u.id AS user_id, u.name
          FROM trip_evaluaties e JOIN users u ON u.id = e.user_id
-        WHERE e.trip_id = $1 AND e.ingediend_op IS NOT NULL
-        ORDER BY e.ingediend_op ASC`,
+        WHERE e.trip_id = $1 AND e.vragen_op IS NOT NULL
+        ORDER BY e.vragen_op ASC`,
       [tripId]
     ),
   ]);
@@ -5036,9 +5066,21 @@ async function evaluatieUitslag(tripId) {
   };
 }
 
+// Hoeveel mensen hebben elk onderdeel afgerond? Twee losse tellers, want de
+// twee onderdelen staan los van elkaar.
+async function evaluatieVoortgang(tripId) {
+  const { rows } = await query(
+    `SELECT COUNT(*) FILTER (WHERE fotos_op IS NOT NULL)::int AS fotos,
+            COUNT(*) FILTER (WHERE vragen_op IS NOT NULL)::int AS vragen
+       FROM trip_evaluaties WHERE trip_id = $1`,
+    [tripId]
+  );
+  return { fotos: rows[0].fotos, vragen: rows[0].vragen };
+}
+
 route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
-  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }] = await Promise.all([
-    query("SELECT antwoorden, ingediend_op FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]),
+  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }, keuzes, voortgang] = await Promise.all([
+    query("SELECT antwoorden, fotos_op, vragen_op FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]),
     query("SELECT photo_id, positie FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2 ORDER BY positie ASC", [params.id, req.user.id]),
     query(
       `SELECT COUNT(*)::int AS n FROM (
@@ -5047,41 +5089,46 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
        ) x`,
       [params.id]
     ),
+    evaluatieKeuzes(params.id),
+    evaluatieVoortgang(params.id),
   ]);
-  const ingediend = !!eigen[0]?.ingediend_op;
-  // Een meekijker stemt wél mee voor de mooiste foto — daar heeft hij net zo
-  // goed een mening over, hij heeft ze tenslotte allemaal langs zien komen. De
-  // vijf vragen zijn dat niet: "het fijnste hotel" kun je alleen beantwoorden
-  // als je er geslapen hebt.
+
+  // Een meekijker stemt wél mee voor de mooiste foto — die heeft hij allemaal
+  // langs zien komen. De vijf vragen zijn dat niet: "het fijnste hotel" kun je
+  // alleen beantwoorden als je er geslapen hebt.
   const meekijker = req.tripRole === "viewer";
+  const fotosKlaar = !!eigen[0]?.fotos_op;
+  const vragenKlaar = !!eigen[0]?.vragen_op;
+
+  // De twee uitslagen staan los van elkaar: wie zijn foto's heeft ingeleverd
+  // ziet de fotouitslag, ook als hij de vragen nog niet heeft gedaan. Voor
+  // allebei geldt wel: eerst zelf, dan pas kijken.
+  const uitslag = (fotosKlaar || vragenKlaar) ? await evaluatieUitslag(params.id) : null;
+
   sendJson(res, 200, {
     vragen: EVALUATIE_VRAGEN,
+    keuzes,
     maxTeken: EVALUATIE_MAX_TEKEN,
     fotoTop: FOTO_TOP,
+    magVragenBeantwoorden: !meekijker,
+    aantalLeden: leden[0].n,
+    voortgang,
     mijn: {
       antwoorden: eigen[0]?.antwoorden || {},
       top: stemmen.map((r) => ({ photoId: r.photo_id, positie: r.positie })),
-      ingediendOp: eigen[0]?.ingediend_op || null,
+      fotosOp: eigen[0]?.fotos_op || null,
+      vragenOp: eigen[0]?.vragen_op || null,
     },
-    aantalLeden: leden[0].n,
-    // Pas ná het indienen de uitslag meesturen. Wie de rest al ziet staan vult
-    // niet meer in wat hij zelf vond.
-    magFotosKiezen: true,
-    magVragenBeantwoorden: !meekijker,
-    // Ook voor een meekijker: eerst zelf stemmen, dan pas de uitslag. Zag hij
-    // hem eerder, dan stemt hij met de tussenstand in zijn achterhoofd.
-    uitslag: ingediend ? await evaluatieUitslag(params.id) : null,
+    uitslagFotos: fotosKlaar ? uitslag.fotos : null,
+    uitslagVragen: vragenKlaar ? uitslag.vragen : null,
+    aantalVragenIngediend: uitslag ? uitslag.aantalIngediend : 0,
   });
 }, { tripScope: "param", allowViewer: true });
 
-route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
-  // Een meekijker mag de foto's rangschikken maar niet de vragen invullen. Dat
-  // hier afdwingen en niet alleen in het scherm: het scherm toont ze niet, maar
-  // een verzoek eromheen zou ze anders alsnog opslaan.
-  const meekijker = req.tripRole === "viewer";
-  const antwoorden = meekijker ? {} : schoonAntwoorden(body?.antwoorden);
+// Twee losse onderdelen, dus twee losse routes. Je top vijf inleveren zonder de
+// vragen in te vullen moet kunnen, en andersom.
+route("PUT", "/api/trips/:id/evaluatie/fotos", async (req, res, params, body) => {
   const ruweTop = Array.isArray(body?.top) ? body.top.slice(0, FOTO_TOP) : [];
-
   // Alleen foto's van déze reis, en geen dubbele. Zonder deze controle kon je
   // een foto uit een andere reis in je top vijf zetten.
   const fotoIds = [...new Set(ruweTop.map((id) => Number(id)).filter((n) => Number.isInteger(n) && n > 0))];
@@ -5097,13 +5144,11 @@ route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
   // iets halverwege, dan houd je je oude lijst in plaats van een halve nieuwe.
   await transaction(async (client) => {
     await client.query(
-      `INSERT INTO trip_evaluaties (trip_id, user_id, antwoorden, ingediend_op, updated_at)
-       VALUES ($1,$2,$3,NOW(),NOW())
+      `INSERT INTO trip_evaluaties (trip_id, user_id, fotos_op, updated_at)
+       VALUES ($1,$2,NOW(),NOW())
        ON CONFLICT (trip_id, user_id) DO UPDATE SET
-         antwoorden = EXCLUDED.antwoorden,
-         ingediend_op = COALESCE(trip_evaluaties.ingediend_op, NOW()),
-         updated_at = NOW()`,
-      [params.id, req.user.id, JSON.stringify(antwoorden)]
+         fotos_op = COALESCE(trip_evaluaties.fotos_op, NOW()), updated_at = NOW()`,
+      [params.id, req.user.id]
     );
     await client.query("DELETE FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]);
     for (let i = 0; i < geldigeIds.length; i++) {
@@ -5114,8 +5159,26 @@ route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
     }
   });
 
-  sendJson(res, 200, { ok: true, uitslag: await evaluatieUitslag(params.id) });
+  const uitslag = await evaluatieUitslag(params.id);
+  sendJson(res, 200, { ok: true, uitslagFotos: uitslag.fotos, voortgang: await evaluatieVoortgang(params.id) });
 }, { tripScope: "param", allowViewer: true });
+
+route("PUT", "/api/trips/:id/evaluatie/vragen", async (req, res, params, body) => {
+  // Bewust zónder allowViewer: wie meekijkt heeft er niet geslapen en niet
+  // gegeten, dus over die vragen valt voor hem niets te zeggen.
+  const antwoorden = schoonAntwoorden(body?.antwoorden);
+  await query(
+    `INSERT INTO trip_evaluaties (trip_id, user_id, antwoorden, vragen_op, updated_at)
+     VALUES ($1,$2,$3,NOW(),NOW())
+     ON CONFLICT (trip_id, user_id) DO UPDATE SET
+       antwoorden = EXCLUDED.antwoorden,
+       vragen_op = COALESCE(trip_evaluaties.vragen_op, NOW()),
+       updated_at = NOW()`,
+    [params.id, req.user.id, JSON.stringify(antwoorden)]
+  );
+  const uitslag = await evaluatieUitslag(params.id);
+  sendJson(res, 200, { ok: true, uitslagVragen: uitslag.vragen, aantalVragenIngediend: uitslag.aantalIngediend, voortgang: await evaluatieVoortgang(params.id) });
+}, { tripScope: "param" });
 
 // ---------- Packing list ----------
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {

@@ -518,6 +518,16 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS trip_evaluaties_trip_idx ON trip_evaluaties(trip_id);
 
+    -- De foto's en de vragen zijn twee losse onderdelen: je kunt je top vijf
+    -- afronden zonder de vragen in te vullen, en andersom. Elk heeft dus een
+    -- eigen "klaar"-moment, want daar hangt aan vast of je de uitslag te zien
+    -- krijgt — en die uitslagen staan los van elkaar.
+    ALTER TABLE trip_evaluaties ADD COLUMN IF NOT EXISTS fotos_op TIMESTAMPTZ;
+    ALTER TABLE trip_evaluaties ADD COLUMN IF NOT EXISTS vragen_op TIMESTAMPTZ;
+    -- Wie in het eerste uur al iets had ingevuld had allebei tegelijk gedaan.
+    UPDATE trip_evaluaties SET fotos_op = ingediend_op, vragen_op = ingediend_op
+     WHERE ingediend_op IS NOT NULL AND fotos_op IS NULL AND vragen_op IS NULL;
+
     -- De top vijf van één persoon. Eén rij per plek, zodat de volgorde
     -- vaststaat; de twee unieke sleutels sluiten uit dat dezelfde foto twee
     -- keer in je lijst staat of dat plek 2 twee keer bezet is.
