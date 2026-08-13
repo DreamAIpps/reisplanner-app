@@ -492,6 +492,125 @@ function CockpitSparkline({ timeline }) {
 // sleutel kan ingetrokken zijn zonder dat de omgevingsvariabele verandert, en
 // dan merk je het pas als een gebruiker klaagt dat de tips leeg blijven. De
 // server klopt daarom echt even aan; hier staat alleen de uitslag.
+// Foto's die op elkaar lijken, met de plaatjes erbij. Zonder die plaatjes is
+// het een lijst met getallen waar je niets over kunt beslissen — en dit is een
+// aanwijzing, geen bewijs: een serieopname deelt ook zijn opnametijdstip.
+// Vandaar kijken vóór opruimen, en per groep zelf aanwijzen welke blijft.
+function FotoDubbelsPanel() {
+  const [data, setData] = useState(null);
+  const [fout, setFout] = useState(null);
+  const [bezig, setBezig] = useState(false);
+  // Per groep het id dat blijft staan. Standaard de grootste: die is meestal
+  // het origineel en de andere de verkleinde kopie.
+  const [houd, setHoud] = useState({});
+  const [uitgevoerd, setUitgevoerd] = useState(null);
+
+  const laad = useCallback(() => {
+    setBezig(true); setFout(null);
+    api.getFotoDubbels()
+      .then((d) => {
+        setData(d);
+        const keuze = {};
+        d.groepen.forEach((g, i) => {
+          keuze[i] = g.fotos.reduce((a, b) => (b.bytes > a.bytes ? b : a)).id;
+        });
+        setHoud(keuze);
+      })
+      .catch((e) => setFout(e.message || "Laden mislukt"))
+      .finally(() => setBezig(false));
+  }, []);
+  useEffect(() => { laad(); }, [laad]);
+
+  async function ruimOp() {
+    const groepen = data.groepen.map((g, i) => ({
+      houd: houd[i],
+      weg: g.fotos.map((f) => f.id).filter((id) => id !== houd[i]),
+    })).filter((g) => g.weg.length);
+    if (!groepen.length) return;
+    const aantal = groepen.reduce((n, g) => n + g.weg.length, 0);
+    if (!confirm(`${aantal} ${aantal === 1 ? "foto" : "foto's"} samenvoegen? Dit kan niet ongedaan gemaakt worden. Plaatsingen in fotoboeken en stemmen in de evaluatie verhuizen mee naar de foto die blijft.`)) return;
+    setBezig(true); setFout(null);
+    try {
+      const r = await api.ruimFotoDubbelsOp(groepen);
+      setUitgevoerd(r.opgeruimd);
+      laad();
+    } catch (e) { setFout(e.message || "Opruimen mislukt"); setBezig(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <div className="text-sm font-semibold text-gray-700">Foto's die op elkaar lijken</div>
+        <button type="button" onClick={laad} disabled={bezig}
+          className="text-xs font-medium text-sky-600 hover:text-sky-800 disabled:opacity-50">
+          {bezig ? "Zoeken…" : "Opnieuw zoeken"}
+        </button>
+      </div>
+      <p className="text-xs text-gray-400 mb-3">
+        Exact gelijke foto's kunnen niet twee keer in een reis staan. Dit vindt de gevallen die
+        gelijk zijn maar net andere bytes hebben — zelfde opnametijdstip, of zelfde afmetingen en
+        bestandsgrootte.
+      </p>
+
+      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg mb-3">{fout}</div>}
+      {uitgevoerd !== null && (
+        <div className="bg-green-50 text-green-800 text-sm px-3 py-2 rounded-lg mb-3">
+          {uitgevoerd} {uitgevoerd === 1 ? "foto" : "foto's"} samengevoegd.
+        </div>
+      )}
+      {!data && !fout && <div className="text-sm text-gray-400 py-4">Zoeken…</div>}
+
+      {data && data.groepen.length === 0 && (
+        <div className="text-sm text-gray-400 py-3">Geen foto's gevonden die op elkaar lijken.</div>
+      )}
+
+      {data && data.groepen.length > 0 && (
+        <>
+          <div className="text-xs text-gray-500 mb-3 tnum">
+            {data.aantalGroepen} {data.aantalGroepen === 1 ? "groep" : "groepen"} ·
+            {" "}{data.aantalDubbel} {data.aantalDubbel === 1 ? "foto" : "foto's"} zou verdwijnen
+          </div>
+          <div className="space-y-4 max-h-[28rem] overflow-y-auto pr-1">
+            {data.groepen.map((g, i) => (
+              <div key={i} className="border border-gray-100 rounded-xl p-3">
+                <div className="flex items-baseline justify-between gap-2 mb-2 flex-wrap">
+                  <div className="text-xs font-semibold text-gray-600">{g.tripNaam}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {g.signaal === "exif" ? `zelfde opnametijdstip · ${fmtMoment(g.sleutel)}` : `zelfde maat · ${g.sleutel}`}
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {g.fotos.map((f) => {
+                    const blijft = houd[i] === f.id;
+                    return (
+                      <button key={f.id} type="button" onClick={() => setHoud((h) => ({ ...h, [i]: f.id }))}
+                        aria-pressed={blijft}
+                        className={`text-left rounded-lg border-2 p-1 transition-colors ${blijft ? "border-sky-400 bg-sky-50" : "border-transparent hover:bg-gray-50"}`}>
+                        <img src={`/api/photos/${f.id}/thumb`} alt="" loading="lazy"
+                          className={`w-20 h-20 object-cover rounded ${blijft ? "" : "opacity-60"}`} />
+                        <div className="text-[10px] text-gray-500 mt-1 tnum leading-tight">
+                          {f.width && f.height ? `${f.width}×${f.height}` : "onbekend"}<br />
+                          {fmtBytes(f.bytes)}<br />
+                          <span className={blijft ? "text-sky-700 font-semibold" : "text-gray-400"}>
+                            {blijft ? "blijft" : "gaat weg"}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button variant="secondary" onClick={ruimOp} disabled={bezig} className="mt-3">
+            {bezig ? "Bezig…" : "Samenvoegen"}
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ApiStatusPanel() {
   const [data, setData] = useState(null);
   const [fout, setFout] = useState(null);
@@ -1022,6 +1141,7 @@ function AdminView({ onBack, currentUserId }) {
       ) : (
         <div className="space-y-6">
           <CockpitPanel />
+          <FotoDubbelsPanel />
           <ApiStatusPanel />
           <AiVerbruikPanel />
         </div>
