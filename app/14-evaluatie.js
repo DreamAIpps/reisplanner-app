@@ -1,63 +1,75 @@
 // ---------- Evaluatie aan het eind van de reis ----------
 //
-// Twee dingen die bij elkaar horen: je eigen top vijf van de mooiste foto's, en
-// vijf vragen over wat het leukste was. Iedereen die bij de reis mag vult zijn
-// eigen versie in.
+// Twee losse onderdelen op één scherm, met opzet uit elkaar gehouden: je top
+// vijf van de mooiste foto's, en vijf vragen over wat het leukste was. Ze
+// hebben elk hun eigen knop, hun eigen "klaar"-moment en hun eigen uitslag. Wie
+// alleen de foto's wil doen hoeft de vragen niet af te maken.
 //
-// Eén keuze die het hele scherm bepaalt: de uitslag verschijnt pas als je zelf
-// klaar bent. Zie je eerst wat de rest vond, dan vul je niet meer in wat jíj
-// vond — en dan is de uitslag een echo in plaats van een optelsom. De server
-// stuurt hem daarom ook niet mee zolang je nog niets hebt ingediend; het is dus
-// geen kwestie van iets verbergen dat er al is.
+// Eén regel geldt voor allebei: de uitslag verschijnt pas als je dat onderdeel
+// zelf hebt ingeleverd. Zie je eerst wat de rest vond, dan vul je niet meer in
+// wat jíj vond, en dan is de uitslag een echo in plaats van een optelsom. De
+// server stuurt hem daarom ook niet mee — het is dus geen kwestie van iets
+// verbergen dat al op je scherm staat.
 
-// Hoeveel punten een plek waard is. Plek 1 telt vijf punten, plek 5 er één —
-// zo wint een foto die bij twee mensen bovenaan staat het van een foto die bij
-// vijf mensen vijfde staat. Zelfde regel als op de server; die telt echt.
+// Plek 1 telt vijf punten, plek 5 er één, zodat een foto die bij twee mensen
+// bovenaan staat wint van een foto die bij vijf mensen vijfde staat. Zelfde
+// regel als op de server; die telt echt.
 const EVAL_TOP = 5;
 
-function EvaluatieTab({ trip, readOnly, currentUserId, onRefresh }) {
+function EvaluatieTab({ trip, readOnly, currentUserId }) {
   // Zelf ophalen in plaats van doorgereikt krijgen: dit tabblad is het enige
   // dat álle foto's van de reis tegelijk nodig heeft, en het wordt zelden
-  // geopend. Ze meeslepen door TripDetail zou elke andere tab belasten met een
-  // lijst die daar niets doet.
+  // geopend.
   const [photos, setPhotos] = useState([]);
   const [data, setData] = useState(null);
   const [fout, setFout] = useState(null);
-  const [antwoorden, setAntwoorden] = useState({});
-  const [top, setTop] = useState([]);          // rij van photoId's, plek 1 vooraan
-  const [bezig, setBezig] = useState(false);
-  const [zieUitslag, setZieUitslag] = useState(false);
 
   const laden = useCallback(async () => {
-    try {
-      const d = await api.getEvaluatie(trip.id);
-      setData(d);
-      setAntwoorden(d.mijn.antwoorden || {});
-      setTop((d.mijn.top || []).sort((a, b) => a.positie - b.positie).map((r) => r.photoId));
-      setZieUitslag(!!d.mijn.ingediendOp);
-    } catch (err) { setFout(err.message || "Evaluatie laden is niet gelukt"); }
+    try { setData(await api.getEvaluatie(trip.id)); }
+    catch (err) { setFout(err.message || "Evaluatie laden is niet gelukt"); }
   }, [trip.id]);
   useEffect(() => { laden(); }, [laden]);
   useEffect(() => {
     let vervallen = false;
-    api.getPhotos(trip.id)
-      .then((r) => { if (!vervallen) setPhotos(asList(r)); })
-      .catch(() => {});
+    api.getPhotos(trip.id).then((r) => { if (!vervallen) setPhotos(asList(r)); }).catch(() => {});
     return () => { vervallen = true; };
   }, [trip.id]);
 
-  async function opslaan() {
-    setBezig(true); setFout(null);
-    try {
-      const uit = await api.slaEvaluatieOp(trip.id, { antwoorden, top });
-      setData((d) => ({ ...d, uitslag: uit.uitslag, mijn: { ...d.mijn, ingediendOp: d.mijn.ingediendOp || new Date().toISOString() } }));
-      setZieUitslag(true);
-      onRefresh?.();
-    } catch (err) { setFout(err.message || "Opslaan is niet gelukt"); }
-    finally { setBezig(false); }
-  }
+  if (fout && !data) return <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>;
+  if (!data) return <div className="text-center py-16 text-gray-400">Laden...</div>;
 
-  function wisselFoto(id) {
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <header>
+        <h2 className="font-display text-[22px] text-gray-800 leading-snug">Hoe was de reis?</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Twee dingen, los van elkaar. Je kunt er ook maar één doen.
+        </p>
+      </header>
+
+      <FotoStemmen trip={trip} data={data} photos={photos} onOpgeslagen={setData} />
+
+      {data.magVragenBeantwoorden !== false ? (
+        <VraagAntwoord trip={trip} data={data} currentUserId={currentUserId} onOpgeslagen={setData} />
+      ) : (
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-sm text-gray-500">
+          De vijf vragen zijn voor wie mee is geweest — over het fijnste hotel valt weinig te
+          zeggen als je er niet geslapen hebt.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Onderdeel 1: de mooiste foto's ----------
+function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
+  const [top, setTop] = useState(() => (data.mijn.top || []).sort((a, b) => a.positie - b.positie).map((r) => r.photoId));
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState(null);
+  const klaar = !!data.mijn.fotosOp;
+  const vol = top.length >= EVAL_TOP;
+
+  function wissel(id) {
     setTop((rij) => {
       if (rij.includes(id)) return rij.filter((x) => x !== id);
       if (rij.length >= EVAL_TOP) return rij;   // vol; eerst iets weghalen
@@ -65,77 +77,37 @@ function EvaluatieTab({ trip, readOnly, currentUserId, onRefresh }) {
     });
   }
 
-  if (fout && !data) return <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>;
-  if (!data) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+  async function opslaan() {
+    setBezig(true); setFout(null);
+    try {
+      const uit = await api.slaEvaluatieFotosOp(trip.id, top);
+      onOpgeslagen((d) => ({
+        ...d, uitslagFotos: uit.uitslagFotos, voortgang: uit.voortgang,
+        mijn: { ...d.mijn, fotosOp: d.mijn.fotosOp || new Date().toISOString() },
+      }));
+    } catch (err) { setFout(err.message || "Opslaan is niet gelukt"); }
+    finally { setBezig(false); }
+  }
 
-  const fotoOpId = new Map((photos || []).map((p) => [p.id, p]));
-  const ingediend = !!data.mijn.ingediendOp;
+  const fotoOpId = new Map(photos.map((p) => [p.id, p]));
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
-      <header>
-        <h2 className="font-display text-[22px] text-gray-800 leading-snug">Hoe was de reis?</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          {readOnly
-            ? "Kies je vijf mooiste foto's. Als je klaar bent zie je wat de anderen vonden."
-            : "Kies je vijf mooiste foto's en beantwoord vijf vragen. Als je klaar bent zie je wat de anderen vonden."}
-        </p>
-        {ingediend && (
-          <p className="text-xs text-gray-400 mt-2">
-            Je hebt dit al ingevuld — aanpassen mag, je nieuwe antwoorden vervangen de oude.
-          </p>
-        )}
-      </header>
-
-      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
-
-      <>
-        <FotoTopKiezer photos={photos || []} top={top} onWissel={wisselFoto} onLeeg={() => setTop([])} />
-        {/* De vijf vragen alleen voor wie mee is geweest: "het fijnste hotel"
-            kun je niet beantwoorden als je er niet geslapen hebt. De foto's zijn
-            wél voor iedereen — die heeft een meekijker allemaal langs zien komen
-            en daar heeft hij net zo goed een mening over. */}
-        {data.magVragenBeantwoorden !== false && (
-          <VragenLijst vragen={data.vragen} antwoorden={antwoorden} maxTeken={data.maxTeken}
-            onWijzig={(sleutel, tekst) => setAntwoorden((a) => ({ ...a, [sleutel]: tekst }))} />
-        )}
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <Button onClick={opslaan} disabled={bezig}>
-              {bezig ? "Opslaan…" : ingediend ? "Antwoorden bijwerken" : "Klaar — laat de uitslag zien"}
-            </Button>
-            <span className="text-xs text-gray-400">
-              {top.length} van de {EVAL_TOP} foto's gekozen
-              {data.aantalLeden > 1 && ` · ${data.uitslag?.aantalIngediend ?? 0} van de ${data.aantalLeden} hebben ingevuld`}
-            </span>
-          </div>
-      </>
-
-      {(zieUitslag || readOnly) && data.uitslag && (
-        <Uitslag uitslag={data.uitslag} fotoOpId={fotoOpId} currentUserId={currentUserId} />
-      )}
-    </div>
-  );
-}
-
-// Alle foto's van de reis, met een tik om ze in je top vijf te zetten. Het
-// nummer op de foto is de plek: dat is de enige manier om te zien dat de
-// volgorde meetelt zonder het ergens uit te hoeven leggen.
-function FotoTopKiezer({ photos, top, onWissel, onLeeg }) {
-  const vol = top.length >= EVAL_TOP;
-  return (
-    <section className="space-y-3">
+    <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <h3 className="font-display text-[18px] text-gray-800">De mooiste foto's</h3>
+        <div>
+          <h3 className="font-display text-[19px] text-gray-800">De mooiste foto's</h3>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Tik vijf foto's aan, in volgorde: de eerste die je kiest is je nummer één.
+          </p>
+        </div>
         {top.length > 0 && (
-          <button type="button" onClick={onLeeg} className="text-xs text-gray-400 hover:text-gray-600">
+          <button type="button" onClick={() => setTop([])} className="text-xs text-gray-400 hover:text-gray-600 shrink-0">
             Begin opnieuw
           </button>
         )}
       </div>
-      <p className="text-sm text-gray-500">
-        Tik vijf foto's aan, in volgorde: de eerste die je kiest is je nummer één.
-      </p>
+
+      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
       {photos.length === 0 ? (
         <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-6 text-center text-sm text-gray-400">
@@ -150,7 +122,7 @@ function FotoTopKiezer({ photos, top, onWissel, onLeeg }) {
             // tikken. Hem doorzichtig maken zegt dat zonder een melding.
             const geblokkeerd = vol && !gekozen;
             return (
-              <button key={p.id} type="button" onClick={() => onWissel(p.id)} disabled={geblokkeerd}
+              <button key={p.id} type="button" onClick={() => wissel(p.id)} disabled={geblokkeerd}
                 aria-pressed={gekozen}
                 aria-label={gekozen ? `Foto op plek ${plek + 1}, tik om weg te halen` : "Foto kiezen"}
                 className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all ${
@@ -168,87 +140,195 @@ function FotoTopKiezer({ photos, top, onWissel, onLeeg }) {
           })}
         </div>
       )}
-    </section>
-  );
-}
 
-function VragenLijst({ vragen, antwoorden, maxTeken, onWijzig }) {
-  return (
-    <section className="space-y-3">
-      <h3 className="font-display text-[18px] text-gray-800">Vijf vragen</h3>
-      <div className="space-y-3">
-        {vragen.map((v) => (
-          <Field key={v.sleutel} label={v.vraag}>
-            <Input value={antwoorden[v.sleutel] || ""} maxLength={maxTeken}
-              onChange={(e) => onWijzig(v.sleutel, e.target.value)}
-              placeholder="Laat leeg als je geen voorkeur hebt" />
-          </Field>
-        ))}
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button onClick={opslaan} disabled={bezig || photos.length === 0}>
+          {bezig ? "Opslaan…" : klaar ? "Mijn top vijf bijwerken" : "Klaar — laat de uitslag zien"}
+        </Button>
+        <span className="text-xs text-gray-400">
+          {top.length} van de {EVAL_TOP} gekozen
+          {data.aantalLeden > 1 && ` · ${data.voortgang?.fotos ?? 0} van de ${data.aantalLeden} klaar`}
+        </span>
       </div>
+
+      {data.uitslagFotos && <FotoUitslag lijst={data.uitslagFotos} fotoOpId={fotoOpId} />}
     </section>
   );
 }
 
-function Uitslag({ uitslag, fotoOpId, currentUserId }) {
-  const podium = uitslag.fotos.slice(0, EVAL_TOP);
+function FotoUitslag({ lijst, fotoOpId }) {
+  const podium = lijst.slice(0, EVAL_TOP);
+  if (podium.length === 0) {
+    return <div className="pt-3 border-t border-gray-100 text-sm text-gray-400">Nog niemand heeft foto's gekozen.</div>;
+  }
   return (
-    <section className="space-y-6 pt-2 border-t border-gray-100">
+    <div className="pt-4 border-t border-gray-100 space-y-2">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">De uitslag</div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {podium.map((r, i) => {
+          const foto = fotoOpId.get(r.photoId);
+          return (
+            <div key={r.photoId} className={i === 0 ? "col-span-2" : ""}>
+              <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50" style={{ aspectRatio: i === 0 ? 1.4 : 1 }}>
+                {foto ? (
+                  <img src={foto.thumb_url || foto.url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">Foto weg</div>
+                )}
+                <span className="absolute top-1.5 left-1.5 w-7 h-7 rounded-full bg-white/95 text-gray-800 text-sm font-bold flex items-center justify-center shadow tnum">
+                  {i + 1}
+                </span>
+              </div>
+              <div className="text-[11px] text-gray-500 mt-1 tnum">
+                {r.punten} {r.punten === 1 ? "punt" : "punten"} · {r.stemmen}× gekozen
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Onderdeel 2: de vijf vragen ----------
+function VraagAntwoord({ trip, data, currentUserId, onOpgeslagen }) {
+  const [antwoorden, setAntwoorden] = useState(data.mijn.antwoorden || {});
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState(null);
+  const klaar = !!data.mijn.vragenOp;
+
+  async function opslaan() {
+    setBezig(true); setFout(null);
+    try {
+      const uit = await api.slaEvaluatieVragenOp(trip.id, antwoorden);
+      onOpgeslagen((d) => ({
+        ...d, uitslagVragen: uit.uitslagVragen, aantalVragenIngediend: uit.aantalVragenIngediend, voortgang: uit.voortgang,
+        mijn: { ...d.mijn, vragenOp: d.mijn.vragenOp || new Date().toISOString() },
+      }));
+    } catch (err) { setFout(err.message || "Opslaan is niet gelukt"); }
+    finally { setBezig(false); }
+  }
+
+  return (
+    <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
       <div>
-        <h3 className="font-display text-[18px] text-gray-800 mb-1">De uitslag</h3>
-        <p className="text-sm text-gray-500">
-          {uitslag.aantalIngediend === 1
-            ? "Jij bent voorlopig de enige die heeft ingevuld."
-            : `Van ${uitslag.aantalIngediend} mensen bij elkaar.`}
+        <h3 className="font-display text-[19px] text-gray-800">Vijf vragen</h3>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Kies uit wat er in de reis staat, of vul zelf iets in.
         </p>
       </div>
 
-      {podium.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">Mooiste foto's</div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            {podium.map((r, i) => {
-              const foto = fotoOpId.get(r.photoId);
-              return (
-                <div key={r.photoId} className={i === 0 ? "col-span-2 sm:col-span-2" : ""}>
-                  <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50" style={{ aspectRatio: i === 0 ? 1.4 : 1 }}>
-                    {foto ? (
-                      <img src={foto.thumb_url || foto.url} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">Foto weg</div>
-                    )}
-                    <span className="absolute top-1.5 left-1.5 w-7 h-7 rounded-full bg-white/95 text-gray-800 text-sm font-bold flex items-center justify-center shadow tnum">
-                      {i + 1}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-gray-500 mt-1 tnum">
-                    {r.punten} {r.punten === 1 ? "punt" : "punten"} · {r.stemmen}× gekozen
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
-      <div className="space-y-4">
-        {uitslag.vragen.map((v) => (
-          <div key={v.sleutel}>
-            <div className="text-sm font-semibold text-gray-700 mb-1.5">{v.vraag}</div>
-            {v.antwoorden.length === 0 ? (
-              <div className="text-sm text-gray-400">Nog niemand ingevuld.</div>
-            ) : (
-              <div className="space-y-1.5">
-                {v.antwoorden.map((a, i) => (
-                  <div key={i} className={`rounded-lg px-3 py-2 text-sm ${a.userId === currentUserId ? "bg-sky-50 border border-sky-100" : "bg-gray-50"}`}>
-                    <span className="text-gray-700">{a.tekst}</span>
-                    <span className="text-xs text-gray-400 ml-2">— {a.userId === currentUserId ? "jij" : a.naam}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      <div className="space-y-3">
+        {data.vragen.map((v) => (
+          <KeuzeOfEigen key={v.sleutel} vraag={v} keuzes={data.keuzes?.[v.sleutel] || []}
+            waarde={antwoorden[v.sleutel] || ""} maxTeken={data.maxTeken}
+            onWijzig={(tekst) => setAntwoorden((a) => ({ ...a, [v.sleutel]: tekst }))} />
         ))}
       </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button onClick={opslaan} disabled={bezig}>
+          {bezig ? "Opslaan…" : klaar ? "Mijn antwoorden bijwerken" : "Klaar — laat de antwoorden zien"}
+        </Button>
+        <span className="text-xs text-gray-400">
+          {data.aantalLeden > 1 && `${data.voortgang?.vragen ?? 0} van de ${data.aantalLeden} klaar`}
+        </span>
+      </div>
+
+      {data.uitslagVragen && <VragenUitslag vragen={data.uitslagVragen} currentUserId={currentUserId} />}
     </section>
   );
+}
+
+// Een keuzelijst uit de reis zelf, met altijd een uitweg. De lijst voorkomt dat
+// "Ryokan Sakura" en "ryokan sakura" als twee antwoorden geteld worden; de
+// uitweg voorkomt dat je iets niet kunt noemen omdat het nooit in de planning
+// terechtkwam.
+function KeuzeOfEigen({ vraag, keuzes, waarde, maxTeken, onWijzig }) {
+  const staatInLijst = keuzes.includes(waarde);
+  const [eigen, setEigen] = useState(!!waarde && !staatInLijst);
+
+  // Bewust geen <Field>: die zet zijn label in kapitalen, en dat is prima voor
+  // "DATUM" maar schreeuwerig voor een hele vraag.
+  const label = <div className="text-sm font-semibold text-gray-700 mb-1.5">{vraag.vraag}</div>;
+
+  // Zonder keuzes uit de reis heeft een lijst geen zin — dan meteen een veld.
+  if (keuzes.length === 0) {
+    return (
+      <label className="block">
+        {label}
+        <Input value={waarde} maxLength={maxTeken} onChange={(e) => onWijzig(e.target.value)}
+          placeholder="Laat leeg als je geen voorkeur hebt" />
+      </label>
+    );
+  }
+
+  return (
+    <div>
+      {label}
+      <div className="space-y-2">
+        <Select
+          value={eigen ? "__anders" : waarde}
+          onChange={(e) => {
+            if (e.target.value === "__anders") { setEigen(true); onWijzig(""); }
+            else { setEigen(false); onWijzig(e.target.value); }
+          }}>
+          <option value="">Geen voorkeur</option>
+          {keuzes.map((k) => <option key={k} value={k}>{k}</option>)}
+          <option value="__anders">Anders, namelijk…</option>
+        </Select>
+        {eigen && (
+          <Input autoFocus value={waarde} maxLength={maxTeken} onChange={(e) => onWijzig(e.target.value)}
+            placeholder="Schrijf het zelf op" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VragenUitslag({ vragen, currentUserId }) {
+  return (
+    <div className="pt-4 border-t border-gray-100 space-y-4">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">De antwoorden</div>
+      {vragen.map((v) => (
+        <div key={v.sleutel}>
+          <div className="text-sm font-semibold text-gray-700 mb-1.5">{v.vraag}</div>
+          {v.antwoorden.length === 0 ? (
+            <div className="text-sm text-gray-400">Nog niemand ingevuld.</div>
+          ) : (
+            <div className="space-y-1.5">
+              {/* Gelijke antwoorden bij elkaar: dat is de hele reden dat er een
+                  keuzelijst is — zo zie je meteen waar iedereen het over eens was. */}
+              {groepeerAntwoorden(v.antwoorden).map((groep, i) => (
+                <div key={i} className={`rounded-lg px-3 py-2 text-sm ${groep.ikZitErbij ? "bg-sky-50 border border-sky-100" : "bg-gray-50"}`}>
+                  <span className="text-gray-700">{groep.tekst}</span>
+                  {groep.namen.length > 1 && (
+                    <span className="ml-2 text-xs font-semibold text-sky-700">{groep.namen.length}×</span>
+                  )}
+                  <span className="text-xs text-gray-400 ml-2">
+                    — {groep.namen.map((n) => (n.isMe ? "jij" : n.naam)).join(", ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  function groepeerAntwoorden(lijst) {
+    const perTekst = new Map();
+    for (const a of lijst) {
+      const sleutel = a.tekst.trim().toLowerCase();
+      if (!perTekst.has(sleutel)) perTekst.set(sleutel, { tekst: a.tekst, namen: [], ikZitErbij: false });
+      const groep = perTekst.get(sleutel);
+      const isMe = a.userId === currentUserId;
+      groep.namen.push({ naam: a.naam, isMe });
+      if (isMe) groep.ikZitErbij = true;
+    }
+    return [...perTekst.values()].sort((a, b) => b.namen.length - a.namen.length);
+  }
 }

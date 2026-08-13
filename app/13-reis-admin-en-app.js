@@ -302,8 +302,7 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
       )}
 
       {tab === "evaluatie" && (
-        <EvaluatieTab trip={viewTrip} readOnly={readOnly}
-          currentUserId={currentUserId} onRefresh={load} />
+        <EvaluatieTab trip={viewTrip} readOnly={readOnly} currentUserId={currentUserId} />
       )}
 
       {/* Stond hier eerder bewust los van de readOnly-splitsing, zodat ook
