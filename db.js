@@ -499,6 +499,38 @@ async function initDb() {
       UNIQUE (session_id, user_id)
     );
 
+    -- ---------- Evaluatie aan het eind van de reis ----------
+    -- Twee dingen die bij elkaar horen maar los ingevuld worden: vijf vragen
+    -- ("wat was de leukste plaats?") en een eigen top vijf van de mooiste
+    -- foto's. Eén rij per persoon per reis; iedereen die bij de reis mag vult
+    -- zijn eigen in en ziet de uitslag pas als hij zelf klaar is — anders kleurt
+    -- wat de rest vond je eigen antwoord.
+    CREATE TABLE IF NOT EXISTS trip_evaluaties (
+      id SERIAL PRIMARY KEY,
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      -- De antwoorden als JSON: de vragen liggen vast in de code, en zo hoeft
+      -- er geen kolom bij als er ooit een vraag verandert.
+      antwoorden JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ingediend_op TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (trip_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS trip_evaluaties_trip_idx ON trip_evaluaties(trip_id);
+
+    -- De top vijf van één persoon. Eén rij per plek, zodat de volgorde
+    -- vaststaat; de twee unieke sleutels sluiten uit dat dezelfde foto twee
+    -- keer in je lijst staat of dat plek 2 twee keer bezet is.
+    CREATE TABLE IF NOT EXISTS trip_fotostemmen (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+      positie INTEGER NOT NULL CHECK (positie BETWEEN 1 AND 5),
+      PRIMARY KEY (trip_id, user_id, positie),
+      UNIQUE (trip_id, user_id, photo_id)
+    );
+    CREATE INDEX IF NOT EXISTS trip_fotostemmen_trip_idx ON trip_fotostemmen(trip_id);
+
     CREATE TABLE IF NOT EXISTS quiz_answers (
       id SERIAL PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,

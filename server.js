@@ -4973,6 +4973,145 @@ route("DELETE", "/api/expenses/:id", async (req, res, params) => {
   res.writeHead(204); res.end();
 }, { tripScope: "expenses" });
 
+// ---------- Evaluatie aan het eind van de reis ----------
+// De vragen liggen hier vast, niet in de database: ze zijn voor elke reis
+// hetzelfde, en een sleutel per vraag maakt het samenvatten mogelijk zonder een
+// tabel met vraagteksten erbij.
+const EVALUATIE_VRAGEN = [
+  { sleutel: "plaats", vraag: "Wat was de leukste plaats?" },
+  { sleutel: "hotel", vraag: "Wat was het fijnste hotel?" },
+  { sleutel: "restaurant", vraag: "Wat was het leukste restaurant?" },
+  { sleutel: "bezichtiging", vraag: "Wat was de leukste bezichtiging?" },
+  { sleutel: "shoppen", vraag: "Wat was het leukste shoppen?" },
+];
+const EVALUATIE_SLEUTELS = new Set(EVALUATIE_VRAGEN.map((v) => v.sleutel));
+const EVALUATIE_MAX_TEKEN = 300;
+const FOTO_TOP = 5;
+// Plek 1 telt vijf punten, plek 5 er één. Zo wint een foto die bij twee mensen
+// bovenaan staat het van een foto die bij vijf mensen vijfde staat — dat is wat
+// "de mooiste" betekent.
+const FOTO_PUNTEN = (positie) => FOTO_TOP + 1 - positie;
+
+function schoonAntwoorden(ruw) {
+  const uit = {};
+  if (!ruw || typeof ruw !== "object") return uit;
+  for (const [sleutel, waarde] of Object.entries(ruw)) {
+    if (!EVALUATIE_SLEUTELS.has(sleutel)) continue;
+    const tekst = String(waarde ?? "").trim().slice(0, EVALUATIE_MAX_TEKEN);
+    if (tekst) uit[sleutel] = tekst;
+  }
+  return uit;
+}
+
+// De uitslag: per foto de opgetelde punten, en per vraag ieders antwoord.
+async function evaluatieUitslag(tripId) {
+  const [{ rows: fotoRijen }, { rows: antwoordRijen }] = await Promise.all([
+    query(
+      `SELECT v.photo_id, SUM($2 + 1 - v.positie)::int AS punten, COUNT(*)::int AS stemmen,
+              MIN(v.positie)::int AS beste_plek
+         FROM trip_fotostemmen v
+        WHERE v.trip_id = $1
+        GROUP BY v.photo_id
+        ORDER BY SUM($2 + 1 - v.positie) DESC, COUNT(*) DESC, MIN(v.positie) ASC`,
+      [tripId, FOTO_TOP]
+    ),
+    query(
+      `SELECT e.antwoorden, u.id AS user_id, u.name
+         FROM trip_evaluaties e JOIN users u ON u.id = e.user_id
+        WHERE e.trip_id = $1 AND e.ingediend_op IS NOT NULL
+        ORDER BY e.ingediend_op ASC`,
+      [tripId]
+    ),
+  ]);
+  return {
+    fotos: fotoRijen.map((r) => ({ photoId: r.photo_id, punten: r.punten, stemmen: r.stemmen, bestePlek: r.beste_plek })),
+    vragen: EVALUATIE_VRAGEN.map((v) => ({
+      sleutel: v.sleutel,
+      vraag: v.vraag,
+      antwoorden: antwoordRijen
+        .map((r) => ({ naam: firstName({ name: r.name }) || r.name || "Iemand", userId: r.user_id, tekst: (r.antwoorden || {})[v.sleutel] }))
+        .filter((a) => a.tekst),
+    })),
+    aantalIngediend: antwoordRijen.length,
+  };
+}
+
+route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
+  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }] = await Promise.all([
+    query("SELECT antwoorden, ingediend_op FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]),
+    query("SELECT photo_id, positie FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2 ORDER BY positie ASC", [params.id, req.user.id]),
+    query(
+      `SELECT COUNT(*)::int AS n FROM (
+         SELECT user_id FROM trip_members WHERE trip_id = $1
+         UNION SELECT user_id FROM trips WHERE id = $1 AND user_id IS NOT NULL
+       ) x`,
+      [params.id]
+    ),
+  ]);
+  const ingediend = !!eigen[0]?.ingediend_op;
+  // Een meekijker stemt niet mee (zie de PUT hieronder), en zou de uitslag dus
+  // nooit te zien krijgen als hij achter het indienen verstopt bleef. Voor hem
+  // is er niets te beïnvloeden, dus mag hij gewoon meelezen.
+  const meekijker = req.tripRole === "viewer";
+  sendJson(res, 200, {
+    vragen: EVALUATIE_VRAGEN,
+    maxTeken: EVALUATIE_MAX_TEKEN,
+    fotoTop: FOTO_TOP,
+    mijn: {
+      antwoorden: eigen[0]?.antwoorden || {},
+      top: stemmen.map((r) => ({ photoId: r.photo_id, positie: r.positie })),
+      ingediendOp: eigen[0]?.ingediend_op || null,
+    },
+    aantalLeden: leden[0].n,
+    // Pas ná het indienen de uitslag meesturen. Wie de rest al ziet staan vult
+    // niet meer in wat hij zelf vond.
+    magStemmen: !meekijker,
+    uitslag: (ingediend || meekijker) ? await evaluatieUitslag(params.id) : null,
+  });
+}, { tripScope: "param", allowViewer: true });
+
+route("PUT", "/api/trips/:id/evaluatie", async (req, res, params, body) => {
+  const antwoorden = schoonAntwoorden(body?.antwoorden);
+  const ruweTop = Array.isArray(body?.top) ? body.top.slice(0, FOTO_TOP) : [];
+
+  // Alleen foto's van déze reis, en geen dubbele. Zonder deze controle kon je
+  // een foto uit een andere reis in je top vijf zetten.
+  const fotoIds = [...new Set(ruweTop.map((id) => Number(id)).filter((n) => Number.isInteger(n) && n > 0))];
+  let geldigeIds = [];
+  if (fotoIds.length) {
+    const { rows } = await query("SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::int[])", [params.id, fotoIds]);
+    const bestaat = new Set(rows.map((r) => r.id));
+    geldigeIds = fotoIds.filter((id) => bestaat.has(id));
+    if (geldigeIds.length !== fotoIds.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
+  }
+
+  // In één transactie: eerst de oude stemmen weg, dan de nieuwe erin. Knapt er
+  // iets halverwege, dan houd je je oude lijst in plaats van een halve nieuwe.
+  await transaction(async (client) => {
+    await client.query(
+      `INSERT INTO trip_evaluaties (trip_id, user_id, antwoorden, ingediend_op, updated_at)
+       VALUES ($1,$2,$3,NOW(),NOW())
+       ON CONFLICT (trip_id, user_id) DO UPDATE SET
+         antwoorden = EXCLUDED.antwoorden,
+         ingediend_op = COALESCE(trip_evaluaties.ingediend_op, NOW()),
+         updated_at = NOW()`,
+      [params.id, req.user.id, JSON.stringify(antwoorden)]
+    );
+    await client.query("DELETE FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]);
+    for (let i = 0; i < geldigeIds.length; i++) {
+      await client.query(
+        "INSERT INTO trip_fotostemmen (trip_id, user_id, photo_id, positie) VALUES ($1,$2,$3,$4)",
+        [params.id, req.user.id, geldigeIds[i], i + 1]
+      );
+    }
+  });
+
+  sendJson(res, 200, { ok: true, uitslag: await evaluatieUitslag(params.id) });
+  // Bewust zónder allowViewer: de evaluatie gaat over de reis die je gemaakt
+  // hebt. Wie meekijkt leest de uitslag wel (zie de GET hierboven), maar stemt
+  // niet mee — anders bepaalt iemand die er niet bij was welke foto wint.
+}, { tripScope: "param" });
+
 // ---------- Packing list ----------
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM packing_items WHERE trip_id = $1 ORDER BY category, created_at ASC", [params.id]);
