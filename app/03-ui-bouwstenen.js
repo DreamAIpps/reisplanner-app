@@ -343,6 +343,30 @@ function RichTextToolbar({ getEl, onChange, align, onAlignChange }) {
   );
 }
 
+// navigator.clipboard.writeText() geeft geen enkele terugkoppeling als hij
+// stilzwijgend weigert (geen HTTPS-context, geen clipboard-permissie in een
+// ingesloten webview, iOS-eigenaardigheden) — de knop leek dan "niets te doen".
+// Vandaar de omweg via een verborgen textarea + execCommand, en een echt
+// ja/nee terug zodat de aanroeper iets kan zeggen als het niet lukte.
+async function kopieerTekst(tekst) {
+  try {
+    await navigator.clipboard.writeText(tekst);
+    return true;
+  } catch { /* onderstaande omweg */ }
+  try {
+    const el = document.createElement("textarea");
+    el.value = tekst;
+    el.style.position = "fixed";
+    el.style.opacity = "0";
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    document.execCommand("copy");
+    document.body.removeChild(el);
+    return true;
+  } catch { return false; }
+}
+
 function Field({ label, hint, children }) {
   return (
     <div>

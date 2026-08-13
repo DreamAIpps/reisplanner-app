@@ -5,7 +5,10 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
   const [accommodations, setAccommodations] = useState([]);
   const [transports, setTransports] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [tab, setTab] = useState(initialTab || "days");
+  // "evaluatie" was één tabblad met de foto's en de vragen onder elkaar; dat
+  // zijn nu twee losse schermen. Een oude link of bladwijzer belandt op de
+  // foto's in plaats van op een leeg scherm.
+  const [tab, setTab] = useState((initialTab === "evaluatie" ? "mooistefoto" : initialTab) || "days");
   const [editing, setEditing] = useState(false);
   // Bij een net aangemaakte reis waar "ik heb al boekingen" is gekozen staat
   // het importvenster meteen open — dat is waar die keuze om vroeg.
@@ -20,6 +23,9 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
   // aan de reis toegevoegd, en landt daarna op tab=quiz — die hoort hem juist
   // wél te zien, anders is de QR-code een doodlopende weg.
   const [magQuiz, setMagQuiz] = useState(false);
+  // Zelfde verhaal voor de reisvragen: een gewone meekijker hoort ze niet te
+  // zien, maar wie de QR van de vragen scande is er juist voor uitgenodigd.
+  const [magReisvragen, setMagReisvragen] = useState(false);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -46,11 +52,14 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
   // Alleen voor alleen-lezen bezoekers opvragen: voor een eigenaar of reisgenoot
   // staat de quiz toch al in het menu, en dan is dit een verzoek om niets.
   useEffect(() => {
-    if (trip?.role !== "viewer") { setMagQuiz(false); return; }
+    if (trip?.role !== "viewer") { setMagQuiz(false); setMagReisvragen(false); return; }
     let vervallen = false;
     api.getQuizSession(tripId, true)
       .then((d) => { if (!vervallen) setMagQuiz(!!d?.session?.isParticipant); })
       .catch(() => { if (!vervallen) setMagQuiz(false); });
+    api.getEvaluatie(tripId)
+      .then((d) => { if (!vervallen) setMagReisvragen(!!d?.magVragenBeantwoorden); })
+      .catch(() => { if (!vervallen) setMagReisvragen(false); });
     return () => { vervallen = true; };
   }, [tripId, trip?.role]);
 
@@ -160,10 +169,12 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
     // niet het boek dat je er achteraf van maakt. De server weigert het ook
     // (403), maar dan zou een kijker eerst op een doodlopende knop tikken.
     ...(readOnly ? [] : [{ key: "photobook", label: "Fotoboek", icon: "frame" }]),
-    // Aan het eind van de reis: je eigen top vijf foto's en vijf vragen over
-    // wat het leukste was. Ook voor meekijkers zichtbaar — die kunnen de
-    // uitslag lezen, maar niet zelf stemmen (zie EvaluatieTab).
-    { key: "evaluatie", label: "Evaluatie", icon: "star" },
+    // Aan het eind van de reis, twee losse dingen. De mooiste foto is voor
+    // iedereen, ook voor meekijkers — die hebben alle foto's langs zien komen.
+    // De reisvragen zijn dat niet: die zijn voor wie mee is geweest, of voor
+    // wie de deel-link heeft gekregen.
+    { key: "mooistefoto", label: "Mooiste foto", icon: "star" },
+    ...(readOnly && !magReisvragen ? [] : [{ key: "reisvragen", label: "Reisvragen", icon: "chat" }]),
   ];
 
   // De onderste balk hoort te gaan over wat je onderweg het vaakst doet, en dat
@@ -191,10 +202,18 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
     { titel: "Achteraf", items: [
       ...(readOnly ? [] : [{ key: "photobook", icon: "frame", label: "Fotoboek" }]),
       { key: "quiz", icon: "sparkle", label: "Fotoquiz" },
-      { key: "evaluatie", icon: "star", label: "Evaluatie" },
+      { key: "mooistefoto", icon: "star", label: "Mooiste foto" },
+      ...(readOnly && !magReisvragen ? [] : [{ key: "reisvragen", icon: "chat", label: "Reisvragen" }]),
     ] },
   ];
   const moreMenuItems = moreMenuGroups.flatMap((g) => g.items);
+  // Wat een meekijker mag; zie de balk verderop.
+  const gastTabs = [
+    { key: "journal", icon: "book", label: "Dagboek" },
+    { key: "mooistefoto", icon: "star", label: "Mooiste foto" },
+    ...(magQuiz ? [{ key: "quiz", icon: "sparkle", label: "Fotoquiz" }] : []),
+    ...(magReisvragen ? [{ key: "reisvragen", icon: "chat", label: "Reisvragen" }] : []),
+  ];
   const isMoreActive = moreMenuItems.some((item) => item.key === tab);
 
   // De grote foto-hero en de budgetbalk zijn overal weg. Ze stonden op elk
@@ -256,26 +275,31 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
 
       {readOnly ? (
         <>
-          {/* Alleen-lezen bezoekers krijgen geen volledige tabbalk, alleen het
-              dagboek. De fotoquiz stond hier ook, maar wie via een deel-link
-              meekijkt heeft daar niets mee te maken; die verschijnt alleen voor
-              wie daadwerkelijk meespeelt. Zonder tweede knop is de balk zelf ook
-              overbodig — één tab is geen keuze. */}
-          {magQuiz && (
+          {/* Een meekijker krijgt geen volledige tabbalk. Wat hij wél mag staat
+              hier: het dagboek, en de mooiste foto — alle foto's heeft hij
+              langs zien komen, dus daar hoort hij over mee te mogen stemmen.
+              De fotoquiz en de reisvragen komen erbij zodra hij daar via een
+              QR-code voor is uitgenodigd; zonder die uitnodiging heeft hij er
+              niets mee te maken. */}
+          {gastTabs.length > 1 && (
             <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 w-fit flex-wrap">
-              <button onClick={() => setTab("journal")}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab !== "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-                style={tab !== "quiz" ? { color: legibleOn(accent) } : {}}>
-                <Icon name="book" size={15} />Dagboek
-              </button>
-              <button onClick={() => setTab("quiz")}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${tab === "quiz" ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
-                style={tab === "quiz" ? { color: legibleOn(accent) } : {}}>
-                <Icon name="sparkle" size={15} />Fotoquiz
-              </button>
+              {gastTabs.map((g) => {
+                const actief = g.key === "journal" ? !gastTabs.some((x) => x.key === tab && x.key !== "journal") : tab === g.key;
+                return (
+                  <button key={g.key} onClick={() => setTab(g.key)}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${actief ? "bg-white shadow" : "text-gray-500 hover:text-gray-700"}`}
+                    style={actief ? { color: legibleOn(accent) } : {}}>
+                    <Icon name={g.icon} size={15} />{g.label}
+                  </button>
+                );
+              })}
             </div>
           )}
-          <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />
+          {/* De mooiste foto en de reisvragen tekenen zichzelf verderop, buiten
+              deze splitsing om — hier alleen niet ook nog het dagboek eronder. */}
+          {tab !== "mooistefoto" && tab !== "reisvragen" && (
+            <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />
+          )}
         </>
       ) : (
         <>
@@ -301,8 +325,14 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
         </QuizFullscreen>
       )}
 
-      {tab === "evaluatie" && (
-        <EvaluatieTab trip={viewTrip} readOnly={readOnly} currentUserId={currentUserId} />
+      {tab === "mooistefoto" && <MooisteFotoTab trip={viewTrip} />}
+
+      {/* Ook het scherm zelf achter dezelfde voorwaarde als de tab, anders komt
+          een meekijker er alsnog in via ?tab=reisvragen in de adresbalk. De
+          server weigert hem daar dan wel, maar dat is een foutmelding op een
+          scherm waar hij niets te zoeken had. */}
+      {tab === "reisvragen" && (!readOnly || magReisvragen) && (
+        <ReisvragenTab trip={viewTrip} currentUserId={currentUserId} />
       )}
 
       {/* Stond hier eerder bewust los van de readOnly-splitsing, zodat ook

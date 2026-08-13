@@ -434,7 +434,7 @@ async function handlePostLogin(req, res, user) {
   cookies.push("oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
   let redirect = "/";
 
-  const { invite, quizjoin } = parseCookies(req);
+  const { invite, quizjoin, evaljoin } = parseCookies(req);
   if (invite) {
     const { rows } = await query("SELECT * FROM trip_invites WHERE token = $1", [invite]);
     if (rows.length) {
@@ -453,6 +453,14 @@ async function handlePostLogin(req, res, user) {
       redirect = `/?trip=${session.trip_id}&tab=quiz`;
     }
     cookies.push("quizjoin=; HttpOnly; Path=/; Max-Age=0");
+  }
+  if (evaljoin) {
+    const { rows } = await query("SELECT trip_id FROM evaluatie_links WHERE token = $1", [evaljoin]);
+    if (rows.length) {
+      await schrijfEvaluatieDeelnemerIn(rows[0].trip_id, user.id);
+      redirect = `/?trip=${rows[0].trip_id}&tab=reisvragen`;
+    }
+    cookies.push("evaljoin=; HttpOnly; Path=/; Max-Age=0");
   }
 
   res.setHeader("Set-Cookie", cookies);
@@ -1068,6 +1076,33 @@ route("GET", "/quiz/:token", async (req, res, params) => {
   res.writeHead(302, { Location: `/?trip=${session.trip_id}&tab=quiz` });
   res.end();
 });
+
+// Meedoen aan de reisvragen, langs dezelfde weg als de quiz-QR. De
+// trip_members-rij is nodig om überhaupt bij de reis te kunnen; de rij in
+// evaluatie_deelnemers is wat hem onderscheidt van een gewone meekijker en hem
+// de vragen laat beantwoorden.
+route("GET", "/evaluatie/:token", async (req, res, params) => {
+  const { rows } = await query("SELECT trip_id FROM evaluatie_links WHERE token = $1", [params.token]);
+  if (!rows.length) { res.writeHead(302, { Location: "/?error=invalid-evaluatie" }); res.end(); return; }
+  const tripId = rows[0].trip_id;
+
+  const user = await getSession(req);
+  if (!user) {
+    res.setHeader("Set-Cookie", `evaljoin=${params.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`);
+    res.writeHead(302, { Location: "/login" });
+    res.end();
+    return;
+  }
+
+  await schrijfEvaluatieDeelnemerIn(tripId, user.id);
+  res.writeHead(302, { Location: `/?trip=${tripId}&tab=reisvragen` });
+  res.end();
+});
+
+async function schrijfEvaluatieDeelnemerIn(tripId, userId) {
+  await query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [tripId, userId]);
+  await query("INSERT INTO evaluatie_deelnemers (trip_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [tripId, userId]);
+}
 
 // Heartbeat from an open trip. Rounded to the minute and keyed on it, so the
 // row count is the number of minutes spent regardless of how often the client
@@ -5087,8 +5122,19 @@ async function evaluatieVoortgang(tripId) {
   return { fotos: rows[0].fotos, vragen: rows[0].vragen };
 }
 
+// Wie via de deel-link binnenkwam mag de vragen beantwoorden, ook al staat hij
+// verder als meekijker in de reis. Dat is het hele punt van die link: de vragen
+// zijn leuker met de vrienden erbij die niet mee waren op reis maar wel het
+// dagboek hebben gelezen.
+async function magVragenDoen(tripId, userId, tripRole) {
+  if (tripRole !== "viewer") return true;
+  const { rows } = await query(
+    "SELECT 1 FROM evaluatie_deelnemers WHERE trip_id = $1 AND user_id = $2", [tripId, userId]);
+  return rows.length > 0;
+}
+
 route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
-  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }, keuzes, voortgang] = await Promise.all([
+  const [{ rows: eigen }, { rows: stemmen }, { rows: leden }, keuzes, voortgang, magVragen, { rows: link }] = await Promise.all([
     query("SELECT antwoorden, fotos_op, vragen_op FROM trip_evaluaties WHERE trip_id = $1 AND user_id = $2", [params.id, req.user.id]),
     query("SELECT photo_id, positie FROM trip_fotostemmen WHERE trip_id = $1 AND user_id = $2 ORDER BY positie ASC", [params.id, req.user.id]),
     query(
@@ -5100,11 +5146,14 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     ),
     evaluatieKeuzes(params.id),
     evaluatieVoortgang(params.id),
+    magVragenDoen(params.id, req.user.id, req.tripRole),
+    query("SELECT token FROM evaluatie_links WHERE trip_id = $1", [params.id]),
   ]);
 
   // Een meekijker stemt wél mee voor de mooiste foto — die heeft hij allemaal
   // langs zien komen. De vijf vragen zijn dat niet: "het fijnste hotel" kun je
-  // alleen beantwoorden als je er geslapen hebt.
+  // alleen beantwoorden als je er geslapen hebt. Tenzij hij via de deel-link
+  // binnenkwam: dan is hij juist uitgenodigd om ze te beantwoorden.
   const meekijker = req.tripRole === "viewer";
   const fotosKlaar = !!eigen[0]?.fotos_op;
   const vragenKlaar = !!eigen[0]?.vragen_op;
@@ -5119,7 +5168,12 @@ route("GET", "/api/trips/:id/evaluatie", async (req, res, params) => {
     keuzes,
     maxTeken: EVALUATIE_MAX_TEKEN,
     fotoTop: FOTO_TOP,
-    magVragenBeantwoorden: !meekijker,
+    magVragenBeantwoorden: magVragen,
+    // Delen is voor wie de reis draait, niet voor wie is uitgenodigd: anders
+    // nodigt een genodigde de volgende uit en groeit de kring buiten het zicht
+    // van de eigenaar om.
+    magDelen: !meekijker,
+    deelLink: !meekijker && link[0] ? `${appUrl(req)}/evaluatie/${link[0].token}` : null,
     aantalLeden: leden[0].n,
     voortgang,
     mijn: {
@@ -5173,8 +5227,12 @@ route("PUT", "/api/trips/:id/evaluatie/fotos", async (req, res, params, body) =>
 }, { tripScope: "param", allowViewer: true });
 
 route("PUT", "/api/trips/:id/evaluatie/vragen", async (req, res, params, body) => {
-  // Bewust zónder allowViewer: wie meekijkt heeft er niet geslapen en niet
-  // gegeten, dus over die vragen valt voor hem niets te zeggen.
+  // allowViewer staat aan, maar niet voor iedere meekijker: wie alleen een
+  // deel-link naar de reis heeft, heeft er niet geslapen en niet gegeten. Wie
+  // de QR van de vragen scande wél — die is er expres voor uitgenodigd.
+  if (!await magVragenDoen(params.id, req.user.id, req.tripRole)) {
+    return sendError(res, 403, "De vragen zijn voor wie mee is geweest");
+  }
   const antwoorden = schoonAntwoorden(body?.antwoorden);
   await query(
     `INSERT INTO trip_evaluaties (trip_id, user_id, antwoorden, vragen_op, updated_at)
@@ -5187,7 +5245,7 @@ route("PUT", "/api/trips/:id/evaluatie/vragen", async (req, res, params, body) =
   );
   const uitslag = await evaluatieUitslag(params.id);
   sendJson(res, 200, { ok: true, uitslagVragen: uitslag.vragen, aantalVragenIngediend: uitslag.aantalIngediend, voortgang: await evaluatieVoortgang(params.id) });
-}, { tripScope: "param" });
+}, { tripScope: "param", allowViewer: true });
 
 // Opnieuw beginnen. Alleen je eigen inzending: iemand anders uit de uitslag
 // halen hoort niet te kunnen, ook niet als je de reis bezit.
@@ -5211,6 +5269,9 @@ route("DELETE", "/api/trips/:id/evaluatie/fotos", async (req, res, params) => {
 }, { tripScope: "param", allowViewer: true });
 
 route("DELETE", "/api/trips/:id/evaluatie/vragen", async (req, res, params) => {
+  if (!await magVragenDoen(params.id, req.user.id, req.tripRole)) {
+    return sendError(res, 403, "De vragen zijn voor wie mee is geweest");
+  }
   await transaction(async (client) => {
     await client.query(
       "UPDATE trip_evaluaties SET antwoorden = '{}'::jsonb, vragen_op = NULL, updated_at = NOW() WHERE trip_id = $1 AND user_id = $2",
@@ -5219,6 +5280,20 @@ route("DELETE", "/api/trips/:id/evaluatie/vragen", async (req, res, params) => {
     await client.query(GEEN_INZENDING_MEER, [params.id, req.user.id]);
   });
   sendJson(res, 200, { ok: true, voortgang: await evaluatieVoortgang(params.id) });
+}, { tripScope: "param", allowViewer: true });
+
+// De deel-link, net als de QR van de fotoquiz. Eén link per reis, en hij blijft
+// dezelfde: deel je hem in de familiegroep, dan hoort een tweede keer delen
+// niet de eerste link dood te maken.
+route("POST", "/api/trips/:id/evaluatie/deellink", async (req, res, params) => {
+  const token = crypto.randomBytes(16).toString("hex");
+  const { rows } = await query(
+    `INSERT INTO evaluatie_links (trip_id, token, created_by) VALUES ($1,$2,$3)
+     ON CONFLICT (trip_id) DO UPDATE SET trip_id = EXCLUDED.trip_id
+     RETURNING token`,
+    [params.id, token, req.user.id]
+  );
+  sendJson(res, 200, { link: `${appUrl(req)}/evaluatie/${rows[0].token}` });
 }, { tripScope: "param" });
 
 // ---------- Packing list ----------
@@ -5306,7 +5381,8 @@ const server = http.createServer(async (req, res) => {
   // sessie mag sturen. De headers zijn er hierboven al opgezet.
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/") || pathname.startsWith("/quiz/")) {
+  if (pathname.startsWith("/auth/") || pathname.startsWith("/invite/")
+      || pathname.startsWith("/quiz/") || pathname.startsWith("/evaluatie/")) {
     try {
       // matchRoute percent-decodes path params and throws URIError on malformed
       // input (e.g. "/invite/%"), so it must stay inside the try — an escaped

@@ -425,6 +425,7 @@ const api = {
   slaEvaluatieVragenOp: (tripId, antwoorden) => apiFetch(`/api/trips/${tripId}/evaluatie/vragen`, { method: "PUT", body: JSON.stringify({ antwoorden }) }),
   wisEvaluatieFotos: (tripId) => apiFetch(`/api/trips/${tripId}/evaluatie/fotos`, { method: "DELETE" }),
   wisEvaluatieVragen: (tripId) => apiFetch(`/api/trips/${tripId}/evaluatie/vragen`, { method: "DELETE" }),
+  maakEvaluatieDeellink: (tripId) => apiFetch(`/api/trips/${tripId}/evaluatie/deellink`, { method: "POST" }),
   verwijderOverzicht: () => apiFetch("/auth/me/verwijderoverzicht"),
   verwijderAccount: () => apiFetch("/auth/me", { method: "DELETE" }),
   getApiStatus: () => apiFetch("/api/admin/api-status"),

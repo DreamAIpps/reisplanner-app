@@ -566,6 +566,27 @@ async function voerMigratiesUit() {
     );
     CREATE INDEX IF NOT EXISTS trip_fotostemmen_trip_idx ON trip_fotostemmen(trip_id);
 
+    -- Deel-link voor de reisvragen, met een eigen token — net als bij de
+    -- fotoquiz. Een gewone alleen-lezen uitnodiging geeft géén toegang tot de
+    -- vragen, en meedoen aan de vragen maakt je omgekeerd geen reisgenoot. Eén
+    -- link per reis (trip_id is de sleutel): je deelt "de vragen van Japan",
+    -- niet een losse ronde.
+    CREATE TABLE IF NOT EXISTS evaluatie_links (
+      trip_id INTEGER PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+      token TEXT UNIQUE NOT NULL,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Wie via die link binnenkwam. Zonder deze rij is iemand die de link volgt
+    -- een gewone meekijker, en die mag de vragen juist niet beantwoorden.
+    CREATE TABLE IF NOT EXISTS evaluatie_deelnemers (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (trip_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS quiz_answers (
       id SERIAL PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,

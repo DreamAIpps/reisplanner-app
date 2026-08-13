@@ -1,15 +1,22 @@
-// ---------- Evaluatie aan het eind van de reis ----------
+// ---------- Achteraf: de mooiste foto, en de reisvragen ----------
 //
-// Twee losse onderdelen op één scherm, met opzet uit elkaar gehouden: je top
-// vijf van de mooiste foto's, en vijf vragen over wat het leukste was. Ze
-// hebben elk hun eigen knop, hun eigen "klaar"-moment en hun eigen uitslag. Wie
-// alleen de foto's wil doen hoeft de vragen niet af te maken.
+// Twee losse schermen, elk met een eigen ingang in het menu. Ze stonden eerst
+// onder elkaar op één "Evaluatie"-tabblad, maar dat waren ze niet: het zijn
+// twee spelletjes die je op verschillende momenten doet, met een eigen
+// klaar-moment en een eigen uitslag. Onder elkaar leek het één lang formulier
+// dat je in één keer moest afmaken.
 //
-// Eén regel geldt voor allebei: de uitslag verschijnt pas als je dat onderdeel
-// zelf hebt ingeleverd. Zie je eerst wat de rest vond, dan vul je niet meer in
-// wat jíj vond, en dan is de uitslag een echo in plaats van een optelsom. De
-// server stuurt hem daarom ook niet mee — het is dus geen kwestie van iets
-// verbergen dat al op je scherm staat.
+// Wie mag wat: de mooiste foto is voor iedereen, ook voor meekijkers — die
+// hebben alle foto's langs zien komen en mogen dus meestemmen. De reisvragen
+// niet: over het fijnste hotel valt weinig te zeggen als je er niet geslapen
+// hebt. Die ingang staat daarom niet in het menu van een meekijker, en de
+// server weigert hem ook.
+//
+// Eén regel geldt voor allebei: de uitslag verschijnt pas als je zelf hebt
+// ingeleverd. Zie je eerst wat de rest vond, dan vul je niet meer in wat jíj
+// vond, en dan is de uitslag een echo in plaats van een optelsom. De server
+// stuurt hem daarom ook niet mee — het is dus geen kwestie van iets verbergen
+// dat al op je scherm staat.
 
 // Plek 1 telt vijf punten, plek 5 er één, zodat een foto die bij twee mensen
 // bovenaan staat wint van een foto die bij vijf mensen vijfde staat. Zelfde
@@ -57,52 +64,76 @@ function useSchonePlaatsen(ruw) {
   return { lijst, bezig };
 }
 
-function EvaluatieTab({ trip, readOnly, currentUserId }) {
-  // Zelf ophalen in plaats van doorgereikt krijgen: dit tabblad is het enige
-  // dat álle foto's van de reis tegelijk nodig heeft, en het wordt zelden
-  // geopend.
-  const [photos, setPhotos] = useState([]);
+// Allebei de schermen leunen op hetzelfde antwoord van de server: welke vragen
+// er zijn, wat jij al hebt ingeleverd, en of de uitslag al mag. Ze halen het
+// allebei zelf op — ze staan los van elkaar en worden zelden achter elkaar
+// geopend, dus er valt niets te delen dat het waard is om door te geven.
+function useEvaluatie(tripId) {
   const [data, setData] = useState(null);
   const [fout, setFout] = useState(null);
+  useEffect(() => {
+    let vervallen = false;
+    api.getEvaluatie(tripId)
+      .then((d) => { if (!vervallen) setData(d); })
+      .catch((err) => { if (!vervallen) setFout(err.message || "Laden is niet gelukt"); });
+    return () => { vervallen = true; };
+  }, [tripId]);
+  return { data, setData, fout };
+}
 
-  const laden = useCallback(async () => {
-    try { setData(await api.getEvaluatie(trip.id)); }
-    catch (err) { setFout(err.message || "Evaluatie laden is niet gelukt"); }
-  }, [trip.id]);
-  useEffect(() => { laden(); }, [laden]);
+function EvaluatieScherm({ titel, uitleg, data, fout, children }) {
+  if (fout && !data) return <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>;
+  if (!data) return <div className="text-center py-16 text-gray-400">Laden...</div>;
+  return (
+    <div className="max-w-3xl mx-auto space-y-4">
+      <header>
+        <h2 className="font-display text-[22px] text-gray-800 leading-snug">{titel}</h2>
+        <p className="text-sm text-gray-500 mt-1">{uitleg}</p>
+      </header>
+      {children}
+    </div>
+  );
+}
+
+// ---------- Scherm 1: de mooiste foto ----------
+function MooisteFotoTab({ trip }) {
+  const { data, setData, fout } = useEvaluatie(trip.id);
+  // Álle foto's van de reis tegelijk: dit is het enige scherm dat ze zo nodig
+  // heeft, en het wordt zelden geopend.
+  const [photos, setPhotos] = useState([]);
   useEffect(() => {
     let vervallen = false;
     api.getPhotos(trip.id).then((r) => { if (!vervallen) setPhotos(asList(r)); }).catch(() => {});
     return () => { vervallen = true; };
   }, [trip.id]);
 
-  if (fout && !data) return <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>;
-  if (!data) return <div className="text-center py-16 text-gray-400">Laden...</div>;
-
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <header>
-        <h2 className="font-display text-[22px] text-gray-800 leading-snug">Hoe was de reis?</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Twee dingen, los van elkaar. Je kunt er ook maar één doen.
-        </p>
-      </header>
-
+    <EvaluatieScherm data={data} fout={fout} titel="De mooiste foto"
+      uitleg="Kies je top vijf uit alle foto's van de reis. De eerste die je aantikt is je nummer één en telt het zwaarst.">
       <FotoStemmen trip={trip} data={data} photos={photos} onOpgeslagen={setData} />
-
-      {data.magVragenBeantwoorden !== false ? (
-        <VraagAntwoord trip={trip} data={data} currentUserId={currentUserId} onOpgeslagen={setData} />
-      ) : (
-        <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-sm text-gray-500">
-          De vijf vragen zijn voor wie mee is geweest — over het fijnste hotel valt weinig te
-          zeggen als je er niet geslapen hebt.
-        </div>
-      )}
-    </div>
+    </EvaluatieScherm>
   );
 }
 
-// ---------- Onderdeel 1: de mooiste foto's ----------
+// ---------- Scherm 2: de reisvragen ----------
+function ReisvragenTab({ trip, currentUserId }) {
+  const { data, setData, fout } = useEvaluatie(trip.id);
+  return (
+    <EvaluatieScherm data={data} fout={fout} titel="Reisvragen"
+      uitleg="Vijf vragen over wat het leukste was. Kies uit wat er in de reis staat, of vul zelf iets in.">
+      {data?.magVragenBeantwoorden === false ? (
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-sm text-gray-500">
+          De reisvragen zijn voor wie mee is geweest — over het fijnste hotel valt weinig te
+          zeggen als je er niet geslapen hebt. Vraag om de deel-link als je toch mee wilt doen.
+        </div>
+      ) : (
+        <VraagAntwoord trip={trip} data={data} currentUserId={currentUserId} onOpgeslagen={setData} />
+      )}
+    </EvaluatieScherm>
+  );
+}
+
+// ---------- De top vijf zelf ----------
 function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
   const [top, setTop] = useState(() => (data.mijn.top || []).sort((a, b) => a.positie - b.positie).map((r) => r.photoId));
   const [bezig, setBezig] = useState(false);
@@ -172,20 +203,14 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
 
   return (
     <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="font-display text-[19px] text-gray-800">De mooiste foto's</h3>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Tik vijf foto's aan, in volgorde: de eerste die je kiest is je nummer één.
-          </p>
-        </div>
-        {(top.length > 0 || klaar) && (
+      {(top.length > 0 || klaar) && (
+        <div className="flex">
           <button type="button" onClick={opnieuw} disabled={bezig}
-            className="ml-auto text-xs text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">
             {klaar ? "Wissen en opnieuw" : "Begin opnieuw"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
@@ -236,35 +261,63 @@ function FotoStemmen({ trip, data, photos, onOpgeslagen }) {
   );
 }
 
+// Alles wat een stem kreeg staat erin, niet alleen de top vijf. Een foto die
+// door één iemand op plek vijf is gezet hoort ook in de uitslag: dat iemand hem
+// koos is het nieuws, niet dat hij het podium niet haalde. De winnaar krijgt
+// wel meer ruimte, en na de eerste drie wordt het raster kleiner — anders
+// leest een lange lijst als vijftien gelijkwaardige winnaars.
 function FotoUitslag({ lijst, fotoOpId }) {
-  const podium = lijst.slice(0, EVAL_TOP);
-  if (podium.length === 0) {
+  if (lijst.length === 0) {
     return <div className="pt-3 border-t border-gray-100 text-sm text-gray-400">Nog niemand heeft foto's gekozen.</div>;
   }
+  const podium = lijst.slice(0, 3);
+  const rest = lijst.slice(3);
   return (
-    <div className="pt-4 border-t border-gray-100 space-y-2">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">De uitslag</div>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        {podium.map((r, i) => {
-          const foto = fotoOpId.get(r.photoId);
-          return (
-            <div key={r.photoId} className={i === 0 ? "col-span-2" : ""}>
-              <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50" style={{ aspectRatio: i === 0 ? 1.4 : 1 }}>
-                {foto ? (
-                  <img src={foto.thumb_url || foto.url} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">Foto weg</div>
-                )}
-                <span className="absolute top-1.5 left-1.5 w-7 h-7 rounded-full bg-white/95 text-gray-800 text-sm font-bold flex items-center justify-center shadow tnum">
-                  {i + 1}
-                </span>
-              </div>
-              <div className="text-[11px] text-gray-500 mt-1 tnum">
-                {r.punten} {r.punten === 1 ? "punt" : "punten"} · {r.stemmen}× gekozen
-              </div>
-            </div>
-          );
-        })}
+    <div className="pt-4 border-t border-gray-100 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">De uitslag</div>
+        <div className="text-[11px] text-gray-400 tnum">
+          {lijst.length} {lijst.length === 1 ? "foto kreeg een stem" : "foto's kregen een stem"}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {podium.map((r, i) => (
+          <UitslagFoto key={r.photoId} rij={r} plek={i + 1} foto={fotoOpId.get(r.photoId)}
+            groot={i === 0} />
+        ))}
+      </div>
+
+      {rest.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          {rest.map((r, i) => (
+            <UitslagFoto key={r.photoId} rij={r} plek={i + 4} foto={fotoOpId.get(r.photoId)} klein />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UitslagFoto({ rij, plek, foto, groot, klein }) {
+  return (
+    <div className={groot ? "col-span-2" : ""}>
+      <div className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50"
+        style={{ aspectRatio: groot ? 1.5 : 1 }}>
+        {foto ? (
+          <img src={foto.thumb_url || foto.url} alt="" loading="lazy" decoding="async"
+            className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">Foto weg</div>
+        )}
+        <span className={`absolute top-1.5 left-1.5 rounded-full bg-white/95 text-gray-800 font-bold flex items-center justify-center shadow tnum ${
+          klein ? "w-6 h-6 text-xs" : "w-7 h-7 text-sm"
+        }`}>
+          {plek}
+        </span>
+      </div>
+      <div className="text-[11px] text-gray-500 mt-1 tnum">
+        {rij.punten} {rij.punten === 1 ? "punt" : "punten"} · {rij.stemmen}×
       </div>
     </div>
   );
@@ -327,21 +380,16 @@ function VraagAntwoord({ trip, data, currentUserId, onOpgeslagen }) {
   }
 
   return (
+    <>
     <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5 space-y-4">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="font-display text-[19px] text-gray-800">Vijf vragen</h3>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Kies uit wat er in de reis staat, of vul zelf iets in.
-          </p>
-        </div>
-        {(ietsIngevuld || klaar) && (
+      {(ietsIngevuld || klaar) && (
+        <div className="flex">
           <button type="button" onClick={opnieuw} disabled={bezig}
-            className="ml-auto text-xs text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">
             {klaar ? "Wissen en opnieuw" : "Begin opnieuw"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
@@ -364,6 +412,70 @@ function VraagAntwoord({ trip, data, currentUserId, onOpgeslagen }) {
       </div>
 
       {data.uitslagVragen && <VragenUitslag vragen={data.uitslagVragen} currentUserId={currentUserId} />}
+    </section>
+
+    {data.magDelen && <DeelDeVragen trip={trip} deelLink={data.deelLink} />}
+    </>
+  );
+}
+
+// De vragen zijn leuker met meer mensen: de vrienden die het dagboek hebben
+// gelezen, opa en oma, de buren die op de kat pasten. Delen gaat daarom net als
+// bij de fotoquiz — een link en een QR-code die je op tafel legt.
+//
+// Wie hem volgt komt als deelnemer binnen: hij mag de vragen beantwoorden en de
+// uitslag zien zodra hij zelf klaar is, maar hij wordt geen reisgenoot die in
+// de planning kan zitten.
+function DeelDeVragen({ trip, deelLink }) {
+  const [link, setLink] = useState(deelLink || null);
+  const [bezig, setBezig] = useState(false);
+  const [gekopieerd, setGekopieerd] = useState(false);
+  const [fout, setFout] = useState(null);
+
+  async function maakAan() {
+    setBezig(true); setFout(null);
+    try { setLink((await api.maakEvaluatieDeellink(trip.id)).link); }
+    catch (err) { setFout(err.message || "De link maken is niet gelukt"); }
+    finally { setBezig(false); }
+  }
+
+  async function kopieer() {
+    if (!await kopieerTekst(link)) {
+      setFout("Kopiëren is niet gelukt. Tik op de link om 'm zelf te selecteren.");
+      return;
+    }
+    setGekopieerd(true);
+    setTimeout(() => setGekopieerd(false), 2000);
+  }
+
+  return (
+    <section className="rounded-2xl border border-gray-100 bg-white shadow-sm p-4 sm:p-5">
+      <h3 className="font-display text-[17px] text-gray-800">Laat anderen meedoen</h3>
+      <p className="text-sm text-gray-500 mt-0.5">
+        Deel de vragen met wie er niet bij was. Ze zien de reis niet — alleen de vragen, en de
+        antwoorden zodra ze zelf klaar zijn.
+      </p>
+
+      {fout && <div className="mt-3 bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
+
+      {link ? (
+        <div className="mt-4">
+          <QrCode value={link} />
+          <p className="text-xs text-gray-400 mt-3">Scan om mee te doen op je eigen telefoon.</p>
+          <div className="flex gap-2 mt-2">
+            <input readOnly value={link} onClick={(e) => e.target.select()}
+              aria-label="Deel-link naar de reisvragen"
+              className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 bg-gray-50 focus:outline-none" />
+            <Button variant="secondary" onClick={kopieer} className="!text-xs !px-3 !py-1.5 shrink-0">
+              {gekopieerd ? <><Icon name="check" size={13} className="mr-1" />Gekopieerd</> : "Kopiëren"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="secondary" onClick={maakAan} disabled={bezig} className="mt-3">
+          {bezig ? "Bezig…" : "Maak een deel-link"}
+        </Button>
+      )}
     </section>
   );
 }
