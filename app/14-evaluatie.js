@@ -76,8 +76,9 @@ function EvaluatieTab({ trip, readOnly, currentUserId, onRefresh }) {
       <header>
         <h2 className="font-display text-[22px] text-gray-800 leading-snug">Hoe was de reis?</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Kies je vijf mooiste foto's en beantwoord vijf vragen. Als je klaar bent zie je wat de
-          anderen vonden.
+          {readOnly
+            ? "Kies je vijf mooiste foto's. Als je klaar bent zie je wat de anderen vonden."
+            : "Kies je vijf mooiste foto's en beantwoord vijf vragen. Als je klaar bent zie je wat de anderen vonden."}
         </p>
         {ingediend && (
           <p className="text-xs text-gray-400 mt-2">
@@ -88,11 +89,16 @@ function EvaluatieTab({ trip, readOnly, currentUserId, onRefresh }) {
 
       {fout && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{fout}</div>}
 
-      {!readOnly && (
-        <>
-          <FotoTopKiezer photos={photos || []} top={top} onWissel={wisselFoto} onLeeg={() => setTop([])} />
+      <>
+        <FotoTopKiezer photos={photos || []} top={top} onWissel={wisselFoto} onLeeg={() => setTop([])} />
+        {/* De vijf vragen alleen voor wie mee is geweest: "het fijnste hotel"
+            kun je niet beantwoorden als je er niet geslapen hebt. De foto's zijn
+            wél voor iedereen — die heeft een meekijker allemaal langs zien komen
+            en daar heeft hij net zo goed een mening over. */}
+        {data.magVragenBeantwoorden !== false && (
           <VragenLijst vragen={data.vragen} antwoorden={antwoorden} maxTeken={data.maxTeken}
             onWijzig={(sleutel, tekst) => setAntwoorden((a) => ({ ...a, [sleutel]: tekst }))} />
+        )}
 
           <div className="flex items-center gap-3 flex-wrap">
             <Button onClick={opslaan} disabled={bezig}>
@@ -103,14 +109,7 @@ function EvaluatieTab({ trip, readOnly, currentUserId, onRefresh }) {
               {data.aantalLeden > 1 && ` · ${data.uitslag?.aantalIngediend ?? 0} van de ${data.aantalLeden} hebben ingevuld`}
             </span>
           </div>
-        </>
-      )}
-
-      {readOnly && (
-        <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 text-sm text-gray-500">
-          Je kijkt mee bij deze reis, dus je stemt niet mee — de uitslag lees je hieronder wel.
-        </div>
-      )}
+      </>
 
       {(zieUitslag || readOnly) && data.uitslag && (
         <Uitslag uitslag={data.uitslag} fotoOpId={fotoOpId} currentUserId={currentUserId} />
