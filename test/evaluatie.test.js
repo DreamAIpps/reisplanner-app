@@ -300,6 +300,61 @@ test("wissen zonder ooit iets te hebben ingeleverd gaat gewoon goed", opties, as
   assert.equal(rows[0].n, 0);
 });
 
+test("de deel-link laat iemand van buiten de vragen beantwoorden", opties, async () => {
+  const { a, reis, fotos } = await maakReisMetFotos(2);
+  const { status, data } = await S.req("POST", `/api/trips/${reis.id}/evaluatie/deellink`, { gebruiker: a });
+  assert.equal(status, 200);
+  const token = data.link.split("/evaluatie/")[1];
+  assert.ok(token, `de link ziet er niet uit als verwacht: ${data.link}`);
+
+  // Twee keer delen geeft dezelfde link: een tweede keer delen hoort de eerste
+  // niet dood te maken.
+  const tweede = await S.req("POST", `/api/trips/${reis.id}/evaluatie/deellink`, { gebruiker: a });
+  assert.equal(tweede.data.link, data.link);
+
+  // Iemand van buiten kan er nog niets mee.
+  const gast = await S.maakGebruiker("buurvrouw");
+  assert.ok((await lees(gast, reis)).status >= 400, "een buitenstaander kwam er zonder de link al bij");
+
+  // De link volgen schrijft hem in en stuurt hem naar de vragen.
+  const heen = await S.req("GET", `/evaluatie/${token}`, { gebruiker: gast });
+  assert.equal(heen.status, 302);
+  assert.equal(heen.headers.get("location"), `/?trip=${reis.id}&tab=reisvragen`);
+
+  // Nu mag hij de vragen invullen — als meekijker zou dat niet mogen.
+  const na = await lees(gast, reis);
+  assert.equal(na.status, 200);
+  assert.equal(na.data.magVragenBeantwoorden, true, "de genodigde mag de vragen niet beantwoorden");
+  assert.equal(na.data.magDelen, false, "een genodigde kan zelf verder uitnodigen");
+  assert.equal(na.data.deelLink, null);
+
+  const ingevuld = await stuurVragen(gast, reis, { plaats: "Kyoto" });
+  assert.equal(ingevuld.status, 200);
+  assert.ok(ingevuld.data.uitslagVragen.find((v) => v.sleutel === "plaats").antwoorden.length === 1);
+
+  // En hij mag ook meestemmen over de foto's — dat mocht een meekijker al.
+  assert.equal((await stuurFotos(gast, reis, [fotos[0]])).status, 200);
+  // Zijn eigen antwoord weer wissen ook.
+  assert.equal((await wisVragen(gast, reis)).status, 200);
+
+  // Maar de rest van de reis blijft dicht: hij is geen reisgenoot geworden.
+  const planning = await S.req("POST", `/api/days/1/activities`, { gebruiker: gast, body: { title: "Stiekem" } });
+  assert.ok(planning.status >= 400, "een genodigde kon in de planning schrijven");
+});
+
+test("een ongeldige deel-link stuurt je weg, en delen is niet voor meekijkers", opties, async () => {
+  const { reis } = await maakReisMetFotos(1);
+  const gast = await S.maakGebruiker("gast");
+  const fout = await S.req("GET", "/evaluatie/bestaatniet", { gebruiker: gast });
+  assert.equal(fout.status, 302);
+  assert.equal(fout.headers.get("location"), "/?error=invalid-evaluatie");
+
+  const kijker = await S.maakGebruiker("meekijker");
+  await S.pool.query("INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING", [reis.id, kijker.id]);
+  const delen = await S.req("POST", `/api/trips/${reis.id}/evaluatie/deellink`, { gebruiker: kijker });
+  assert.ok(delen.status >= 400, "een meekijker kon een deel-link maken");
+});
+
 test("een buitenstaander komt er niet bij", opties, async () => {
   const { reis, fotos } = await maakReisMetFotos(1);
   const vreemde = await S.maakGebruiker("vreemde");

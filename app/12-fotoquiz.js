@@ -602,29 +602,10 @@ function PhotoQuizTab({ trip }) {
     finally { setStopping(false); }
   }
 
-  // navigator.clipboard.writeText() geeft geen enkele terugkoppeling als hij
-  // stilzwijgend weigert (geen HTTPS-context, geen clipboard-permissie in een
-  // ingesloten webview, iOS-eigenaardigheden) — de knop leek dan "niets te
-  // doen". Nu met een echte fallback via een verborgen textarea + execCommand,
-  // en zichtbare feedback zodra het (via welke weg dan ook) echt is gelukt.
   async function copyJoinLink() {
-    try {
-      await navigator.clipboard.writeText(session.joinLink);
-    } catch {
-      try {
-        const el = document.createElement("textarea");
-        el.value = session.joinLink;
-        el.style.position = "fixed";
-        el.style.opacity = "0";
-        document.body.appendChild(el);
-        el.focus();
-        el.select();
-        document.execCommand("copy");
-        document.body.removeChild(el);
-      } catch {
-        alert("Kopiëren is niet gelukt. Tik op de link hierboven om 'm handmatig te selecteren.");
-        return;
-      }
+    if (!await kopieerTekst(session.joinLink)) {
+      alert("Kopiëren is niet gelukt. Tik op de link hierboven om 'm handmatig te selecteren.");
+      return;
     }
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
