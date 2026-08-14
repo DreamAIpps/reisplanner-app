@@ -77,3 +77,61 @@ test("twee servers tegelijk op een lege database botsen niet", opties, async (t)
     assert.ok(tabellen.includes(nodig), `tabel ${nodig} ontbreekt na de migratie`);
   }
 });
+
+test("een tweede start raakt de tabellen niet meer aan", opties, async (t) => {
+  // Dit is wat de deadlock in CI veroorzaakte: server A was al klaar met
+  // migreren en beantwoordde verzoeken, terwijl server B nog CREATE/ALTER
+  // draaide. Die vraagt een exclusieve lock op tabellen waar A op dat moment
+  // uit staat te lezen, en dan gooit Postgres er eentje uit.
+  //
+  // Sinds er een vingerafdruk in de database staat slaat een tweede start het
+  // hele blok over. Dat is hier te zien aan het tijdstip: dat verspringt alleen
+  // als er echt gemigreerd is.
+  t.diagnostic("maakt een verse database aan; dit duurt even");
+  const url = await verseDatabase();
+  assert.equal((await draaiMigratie(url)).code, 0);
+
+  const pool = new pg.Pool({ connectionString: url });
+  const { rows: eerste } = await pool.query("SELECT vingerafdruk, bijgewerkt FROM schema_versie");
+  assert.equal(eerste.length, 1, "er hoort precies één regel in schema_versie te staan");
+
+  assert.equal((await draaiMigratie(url)).code, 0);
+  const { rows: tweede } = await pool.query("SELECT vingerafdruk, bijgewerkt FROM schema_versie");
+  await pool.end();
+
+  assert.equal(tweede[0].vingerafdruk, eerste[0].vingerafdruk);
+  assert.equal(tweede[0].bijgewerkt.getTime(), eerste[0].bijgewerkt.getTime(),
+    "de migratie draaide een tweede keer — dan pakt hij weer exclusieve locks terwijl een andere server bedient");
+});
+
+test("migreren terwijl een andere server bedient loopt niet vast", opties, async (t) => {
+  t.diagnostic("maakt een verse database aan; dit duurt even");
+  const url = await verseDatabase();
+  await draaiMigratie(url);
+
+  // Eén verbinding leest onafgebroken uit dezelfde tabellen die de migratie
+  // aanraakt — precies de rol van de server die al bedient.
+  const pool = new pg.Pool({ connectionString: url });
+  let lezen = true;
+  let leesfout = null;
+  const lezer = (async () => {
+    while (lezen) {
+      try {
+        await pool.query(`SELECT e.antwoorden, u.id, u.name
+                            FROM trip_evaluaties e JOIN users u ON u.id = e.user_id
+                           WHERE e.trip_id = 1`);
+        await pool.query("SELECT id, name FROM trips LIMIT 1");
+      } catch (err) { leesfout = err.message; lezen = false; }
+    }
+  })();
+
+  const starts = await Promise.all([draaiMigratie(url), draaiMigratie(url), draaiMigratie(url)]);
+  lezen = false;
+  await lezer;
+  await pool.end();
+
+  const gevallen = starts.filter((s) => s.code !== 0);
+  assert.equal(gevallen.length, 0,
+    `een start viel om terwijl er bediend werd:\n${gevallen.map((s) => s.uitvoer).join("\n")}`);
+  assert.equal(leesfout, null, `het bedienen liep stuk tijdens een start: ${leesfout}`);
+});
