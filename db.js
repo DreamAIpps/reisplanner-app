@@ -587,6 +587,20 @@ async function voerMigratiesUit() {
       PRIMARY KEY (trip_id, user_id)
     );
 
+    -- Snake en Pong voor onderweg. Eén rij per speler per spel: alleen je
+    -- beste score, want dat is het enige waar iemand naar kijkt. Een volledige
+    -- geschiedenis zou bij een kind dat een uur in de auto zit hard oplopen
+    -- zonder dat het iets toevoegt.
+    CREATE TABLE IF NOT EXISTS spel_scores (
+      trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      spel TEXT NOT NULL,
+      score INTEGER NOT NULL DEFAULT 0,
+      behaald_op TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (trip_id, user_id, spel)
+    );
+    CREATE INDEX IF NOT EXISTS spel_scores_trip_idx ON spel_scores(trip_id, spel, score DESC);
+
     CREATE TABLE IF NOT EXISTS quiz_answers (
       id SERIAL PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,
