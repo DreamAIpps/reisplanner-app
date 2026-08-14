@@ -92,3 +92,44 @@ test("elk bronbestand heeft het nummervoorvoegsel dat de volgorde bepaalt", () =
   const zonderNummer = bronBestanden().filter((f) => !/^\d{2}-/.test(f));
   assert.deepEqual(zonderNummer, [], `bestanden zonder nummervoorvoegsel: ${zonderNummer.join(", ")}`);
 });
+
+// Een venster hoort altijd bovenop te liggen. Sinds Modal en BottomSheet naar
+// document.body gaan, delen ze hun stapelcontext niet meer met de laag
+// waaruit ze geopend worden — en dan is de z-index het enige dat hen nog
+// boven een volscherm houdt. Een nieuwe volschermlaag met een hoger getal zou
+// het venster onzichtbaar maken zonder dat er iets stukgaat, dus dat is precies
+// het soort fout waar een test voor is.
+test("vensters gaan naar document.body en liggen boven elke andere laag", () => {
+  const bronnen = bronBestanden().map((f) => ({ naam: f, code: readFileSync(path.join(APP_DIR, f), "utf8") }));
+  const alles = bronnen.map((b) => b.code).join("\n");
+
+  const vensterLagen = [];
+  for (const naam of ["Modal", "BottomSheet"]) {
+    const begin = alles.indexOf(`function ${naam}(`);
+    assert.ok(begin !== -1, `${naam} niet gevonden`);
+    const romp = alles.slice(begin, begin + 2000);
+    assert.match(romp, /ReactDOM\.createPortal\(/,
+      `${naam} rendert niet via een portal — dan bepaalt zijn plek in de boom of hij zichtbaar is`);
+    assert.match(romp, /document\.body/, `${naam} portaleert niet naar document.body`);
+    const eigenZ = romp.match(/fixed inset-0 z-\[(\d+)\]/);
+    assert.ok(eigenZ, `${naam} heeft geen eigen hoge z-index — zonder gedeelde stapelcontext valt hij achter een volscherm`);
+    vensterLagen.push(Number(eigenZ[1]));
+  }
+
+  // De laagste van de twee is de grens: alles daarboven zou een venster bedekken.
+  const vensterLaag = Math.min(...vensterLagen);
+  assert.ok(vensterLaag >= 1000, `de vensterlaag (${vensterLaag}) ligt te laag om boven de volschermlagen te blijven`);
+
+  // Alles wat verder een eigen laag opspant. Tailwind schrijft dat als z-40 of
+  // z-[70]; beide vormen tellen mee.
+  const anderen = [];
+  for (const { naam, code } of bronnen) {
+    for (const m of code.matchAll(/\bz-(?:\[(\d+)\]|(\d+))\b/g)) {
+      const waarde = Number(m[1] ?? m[2]);
+      if (waarde >= vensterLaag) anderen.push(`${naam}: z-${waarde}`);
+    }
+  }
+  const teHoog = anderen.filter((r) => !/03-ui-bouwstenen/.test(r));
+  assert.deepEqual(teHoog, [],
+    `deze lagen komen boven of gelijk met een venster (${vensterLaag}) en zouden het bedekken:\n  ${teHoog.join("\n  ")}`);
+});

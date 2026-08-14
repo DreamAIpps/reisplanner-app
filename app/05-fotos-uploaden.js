@@ -686,7 +686,7 @@ function FotoLader({ mislukt }) {
   );
 }
 
-function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange }) {
+function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodationId, onChange, readOnly, days, transports, accommodations, large, comments, slotLikes, currentUserId, isOwner, onCommentsChange, onPlanningChange }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -775,6 +775,11 @@ function PhotoStrip({ photos, tripId, dayId, activityId, transportId, accommodat
     setShowActivityForm(false);
     setActivityPromptPhotos([]);
     onChange();
+    // onChange haalt alleen de foto's opnieuw op. De activiteit zelf komt uit
+    // de dagen, en die worden een niveau hoger bijgehouden — zonder dit stond
+    // de nieuwe activiteit wel in de database maar niet op het scherm, tot je
+    // het dagboek verliet en terugkwam.
+    onPlanningChange?.();
   }
 
   async function handleDelete(id) {
