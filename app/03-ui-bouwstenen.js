@@ -3,14 +3,22 @@
 // telefoon-app een lijstje acties aanbiedt dan een dialoog midden in beeld,
 // en het houdt de duim binnen bereik. Rijen komen als children binnen, zodat
 // dit alleen over presentatie gaat en niets over wat de acties doen.
+// Zelfde verhaal als bij Modal hieronder: naar document.body, zodat een
+// voorouder hem niet kan afknippen, verschuiven of het toetsenbord kan weren.
+// Ook als het blad vandaag nog nergens diep in de boom staat — dat is precies
+// het soort aanname dat later stilletjes sneuvelt.
 function BottomSheet({ title, subtitle, onClose, children }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center rp-veil"
+  return ReactDOM.createPortal(
+    // z-[3000]: hoger dan élke volschermlaag in de app (fotoquiz z-60,
+    // fotoboek z-70, fotoviewer z-200, kaart z-2000). Zolang het blad ín die
+    // laag gerenderd werd deelde hij zijn stapelcontext en kwam hij er vanzelf
+    // bovenop; nu hij aan document.body hangt moet dat er expliciet staan.
+    <div className="fixed inset-0 z-[3000] flex items-end sm:items-center justify-center rp-veil"
       style={{ background: "rgba(47,42,40,0.28)" }}
       onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="rp-sheet bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col"
@@ -25,7 +33,8 @@ function BottomSheet({ title, subtitle, onClose, children }) {
         </div>
         <div className="overflow-y-auto px-4 pb-4 pt-2">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -46,14 +55,26 @@ function SheetAction({ icon, label, description, onClick }) {
   );
 }
 
+// Een venster hoort niet af te hangen van waar in de boom hij toevallig
+// gerenderd wordt. Dat deed hij wel: het formulier "activiteit van deze foto
+// maken" hangt in de fotostrook, die weer in een dagkaart zit, en daar was er
+// in het venster niets in te typen. De fotoviewer had dezelfde ziekte en werd
+// destijds al naar document.body verhuisd; het venster bleef achter.
+//
+// Alles wat een voorouder kan aanrichten verdwijnt zo in één klap: een
+// transform of filter maakt van die voorouder het referentiekader voor
+// position:fixed (dan staat het venster niet meer over het scherm maar in dat
+// hoekje), overflow knipt hem af, -webkit-user-select: none laat iOS het
+// toetsenbord weigeren (zie de opmerking bij het tekstveld hieronder), en een
+// z-index elders in de boom kan er zomaar overheen komen.
 function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(55,52,50,0.28)" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(55,52,50,0.28)" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`bg-white rounded-3xl shadow-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between gap-4 px-6 pt-6 pb-4">
           <h2 className="font-display text-[21px] font-semibold text-gray-800">{title}</h2>
@@ -61,7 +82,8 @@ function Modal({ title, onClose, children, wide }) {
         </div>
         <div className="overflow-y-auto px-6 pb-6 flex-1">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

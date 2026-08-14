@@ -101,7 +101,7 @@ function JournalComments({ slot, comments, like, tripId, currentUserId, isOwner,
 }
 
 
-function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true, comments, slotLikes, opActiviteitVoorstel }) {
+function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave, onDelete, onCommentsChange, reactions, photos, tripId, dayId, activityId, transportId, accommodationId, onPhotosChange, readOnly, days, transports, accommodations, showPhotos = true, comments, slotLikes, opActiviteitVoorstel, onPlanningChange }) {
   const allEntries = entries || [];
   const myEntry = currentUserId ? allEntries.find((e) => e.user_id === currentUserId) : allEntries[0] || null;
   const othersEntries = currentUserId ? allEntries.filter((e) => e.user_id !== currentUserId) : [];
@@ -216,7 +216,8 @@ function JournalEntryBox({ entries, currentUserId, isOwner, placeholder, onSave,
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
           <PhotoStrip photos={photos || []} tripId={tripId} dayId={dayId} activityId={activityId} transportId={transportId} accommodationId={accommodationId} onChange={onPhotosChange} readOnly={readOnly}
             days={days} transports={transports} accommodations={accommodations} large
-            comments={comments} slotLikes={slotLikes} currentUserId={currentUserId} isOwner={isOwner} onCommentsChange={onCommentsChange} />
+            comments={comments} slotLikes={slotLikes} currentUserId={currentUserId} isOwner={isOwner} onCommentsChange={onCommentsChange}
+            onPlanningChange={onPlanningChange} />
         </div>
       )}
     </div>
@@ -650,6 +651,7 @@ function JournalTab({ trip, days, transports, accommodations, readOnly, currentU
                   onDelete={deleteEntry} onCommentsChange={loadEntries}
                   photos={tripPhotos.filter((p) => p.day_id === day.id && !p.activity_id && !p.transport_id && !p.accommodation_id)}
                   tripId={trip.id} dayId={day.id} onPhotosChange={loadPhotos} readOnly={readOnly}
+                  onPlanningChange={onRefresh}
                   reactions={reactionsFor({ day_id: day.id })}
                   comments={comments} slotLikes={slotLikes}
                   days={days} transports={transports} accommodations={accommodations} />
