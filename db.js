@@ -1,4 +1,5 @@
 require("dotenv").config();
+const crypto = require("crypto");
 const { Pool, types } = require("pg");
 
 // A DATE column is a calendar day, not an instant. pg's default parser turns it
@@ -73,11 +74,52 @@ async function transaction(fn) {
 // achter.
 const MIGRATIE_SLOT = 831_204; // willekeurig gekozen, maar vast: alleen wij gebruiken dit nummer
 
+// Maar dat was niet genoeg. De lock zet de starters onderling in de rij; hij
+// doet niets tegen een server die zijn migratie al áchter de rug heeft en
+// inmiddels verzoeken beantwoordt. Die twee lopen elkaar wél in de weg:
+//
+//   deadlock detected
+//   Process 119: CREATE TABLE IF NOT EXISTS trips (…)      ← wil een exclusieve lock
+//   Process 101: SELECT … FROM trip_evaluaties JOIN users  ← houdt een leeslock
+//
+// Een ALTER of CREATE vraagt een AccessExclusiveLock, en een lopend verzoek
+// houdt een AccessShareLock op dezelfde tabellen. Wachten ze op elkaars
+// tabellen, dan grijpt Postgres in en gooit er eentje uit. Met vijf
+// testbestanden die tegelijk een server starten gebeurde dat.
+//
+// De echte oplossing is niet nóg een lock maar de migratie niet draaien als er
+// niets te migreren valt. Dit bestand ís de migratie, dus een vingerafdruk van
+// dit bestand zegt precies of er iets veranderd is. Is hij gelijk aan wat er in
+// de database staat, dan slaat de server het hele blok over en pakt hij geen
+// enkele lock. Alleen ná een echte wijziging wordt er nog geschreven.
+const MIGRATIE_VINGERAFDRUK = crypto
+  .createHash("sha256")
+  .update(require("fs").readFileSync(__filename))
+  .digest("hex");
+
 async function initDb() {
   const slot = await pool.connect();
   try {
     await slot.query("SELECT pg_advisory_lock($1)", [MIGRATIE_SLOT]);
+
+    // Eén rij, altijd dezelfde: de CHECK op de sleutel maakt een tweede
+    // onmogelijk. Bestaat de tabel al, dan kost dit geen exclusieve lock.
+    await query(`
+      CREATE TABLE IF NOT EXISTS schema_versie (
+        id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+        vingerafdruk TEXT NOT NULL,
+        bijgewerkt TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    const { rows } = await query("SELECT vingerafdruk FROM schema_versie WHERE id");
+    if (rows[0]?.vingerafdruk === MIGRATIE_VINGERAFDRUK) return;
+
     await voerMigratiesUit();
+    await query(
+      `INSERT INTO schema_versie (id, vingerafdruk) VALUES (TRUE, $1)
+       ON CONFLICT (id) DO UPDATE SET vingerafdruk = EXCLUDED.vingerafdruk, bijgewerkt = NOW()`,
+      [MIGRATIE_VINGERAFDRUK]
+    );
   } finally {
     await slot.query("SELECT pg_advisory_unlock($1)", [MIGRATIE_SLOT]).catch(() => {});
     slot.release();
