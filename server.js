@@ -5495,6 +5495,65 @@ route("POST", "/api/trips/:id/evaluatie/deellink", async (req, res, params) => {
   sendJson(res, 200, { link: `${appUrl(req)}/evaluatie/${rows[0].token}` });
 }, { tripScope: "param" });
 
+// ---------- Spelletjes voor onderweg ----------
+//
+// Snake en Pong draaien helemaal in de browser; de server houdt alleen bij wie
+// de hoogste score heeft. Dat is het punt van spelletjes op een gedeelde reis:
+// niet het spelen zelf maar het verslaan van je broer.
+const SPELLEN = new Set(["snake", "pong"]);
+// Een bovengrens tegen onzin. Niet als beveiliging — de score komt uit de
+// browser en is dus per definitie niet te vertrouwen — maar zodat één grap met
+// de console de ranglijst niet voorgoed onbruikbaar maakt.
+const SPEL_MAX_SCORE = 100000;
+
+route("GET", "/api/trips/:id/spellen", async (req, res, params) => {
+  const { rows } = await query(
+    `SELECT s.spel, s.score, s.behaald_op, u.id AS user_id, u.name
+       FROM spel_scores s JOIN users u ON u.id = s.user_id
+      WHERE s.trip_id = $1
+      ORDER BY s.spel, s.score DESC, s.behaald_op ASC`,
+    [params.id]
+  );
+  const perSpel = {};
+  for (const spel of SPELLEN) perSpel[spel] = [];
+  for (const r of rows) {
+    if (!perSpel[r.spel]) continue;
+    perSpel[r.spel].push({
+      userId: r.user_id,
+      naam: firstName({ name: r.name }) || r.name || "Iemand",
+      score: r.score,
+      behaaldOp: r.behaald_op,
+    });
+  }
+  sendJson(res, 200, { ranglijsten: perSpel });
+}, { tripScope: "param", allowViewer: true });
+
+route("POST", "/api/trips/:id/spellen/:spel", async (req, res, params, body) => {
+  if (!SPELLEN.has(params.spel)) return sendError(res, 404, "Onbekend spel");
+  // Eerst het type, dan pas de waarde: Number(null) is 0 en zou als een keurige
+  // score van nul binnenkomen, terwijl er in werkelijkheid iets misging bij het
+  // versturen. Een echte nul (afgegaan zonder te scoren) komt als getal binnen.
+  const ruw = body?.score;
+  if (typeof ruw !== "number" || !Number.isFinite(ruw)) return sendError(res, 400, "Ongeldige score");
+  const score = Math.floor(ruw);
+  if (score < 0 || score > SPEL_MAX_SCORE) return sendError(res, 400, "Ongeldige score");
+  // GREATEST in plaats van een vergelijking vooraf: twee tabbladen die na
+  // elkaar iets insturen kunnen elkaar anders overschrijven, en dan verliest de
+  // hoogste van de twee. behaald_op verspringt alleen als de score echt beter
+  // is, zodat "wanneer haalde je dat" bij de juiste poging blijft staan.
+  const { rows } = await query(
+    `INSERT INTO spel_scores (trip_id, user_id, spel, score) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (trip_id, user_id, spel) DO UPDATE SET
+       score = GREATEST(spel_scores.score, EXCLUDED.score),
+       behaald_op = CASE WHEN EXCLUDED.score > spel_scores.score THEN NOW() ELSE spel_scores.behaald_op END
+     RETURNING score`,
+    [params.id, req.user.id, params.spel, score]
+  );
+  // Alleen de stand terug. Of dit een persoonlijk record was weet de app zelf
+  // het beste: die had de ranglijst al opgehaald voordat het spel begon.
+  sendJson(res, 200, { ok: true, beste: rows[0].score });
+}, { tripScope: "param", allowViewer: true });
+
 // ---------- Packing list ----------
 route("GET", "/api/trips/:id/packing", async (req, res, params) => {
   const { rows } = await query("SELECT * FROM packing_items WHERE trip_id = $1 ORDER BY category, created_at ASC", [params.id]);

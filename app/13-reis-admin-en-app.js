@@ -164,6 +164,9 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
     { key: "accommodation", label: "Verblijf", icon: "bed" },
     { key: "transport", label: "Vervoer", icon: "plane" },
     { key: "packing", label: "Paklijst", icon: "suitcase" },
+    // Snake en Pong. Hoort bij "onderweg" en niet bij "achteraf": je speelt ze
+    // in de rij en in de auto, niet als de reis voorbij is.
+    { key: "spelletjes", label: "Spelletjes", icon: "ball" },
     { key: "quiz", label: "Fotoquiz", icon: "sparkle" },
     // Het fotoboek is niet voor meekijkers: een deel-link laat de reis zien,
     // niet het boek dat je er achteraf van maakt. De server weigert het ook
@@ -193,6 +196,7 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
   const moreMenuGroups = [
     { titel: "Onderweg", items: [
       { key: "packing", icon: "suitcase", label: "Paklijst" },
+      { key: "spelletjes", icon: "ball", label: "Spelletjes" },
       ...(readOnly ? [] : [{ key: "budget", icon: "wallet", label: "Budget" }]),
     ] },
     { titel: "Boekingen", items: [
@@ -324,6 +328,8 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
           <PhotoQuizTab trip={viewTrip} />
         </QuizFullscreen>
       )}
+
+      {tab === "spelletjes" && <SpelletjesTab trip={viewTrip} currentUserId={currentUserId} />}
 
       {tab === "mooistefoto" && <MooisteFotoTab trip={viewTrip} />}
 
