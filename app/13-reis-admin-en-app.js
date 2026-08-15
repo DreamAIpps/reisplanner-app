@@ -215,6 +215,10 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
   const gastTabs = [
     { key: "journal", icon: "book", label: "Dagboek" },
     { key: "mooistefoto", icon: "star", label: "Mooiste foto" },
+    // Snake en Pong staan voor iedereen open. Een meekijker zit net zo goed in
+    // de auto of in de rij, en er valt niets mee stuk te maken — het enige wat
+    // hij achterlaat is zijn eigen score in de ranglijst.
+    { key: "spelletjes", icon: "ball", label: "Spelletjes" },
     ...(magQuiz ? [{ key: "quiz", icon: "sparkle", label: "Fotoquiz" }] : []),
     ...(magReisvragen ? [{ key: "reisvragen", icon: "chat", label: "Reisvragen" }] : []),
   ];
@@ -299,9 +303,10 @@ function TripDetail({ tripId, initialTab, startImport, onBack, onChanged, curren
               })}
             </div>
           )}
-          {/* De mooiste foto en de reisvragen tekenen zichzelf verderop, buiten
-              deze splitsing om — hier alleen niet ook nog het dagboek eronder. */}
-          {tab !== "mooistefoto" && tab !== "reisvragen" && (
+          {/* De mooiste foto, de reisvragen en de spelletjes tekenen zichzelf
+              verderop, buiten deze splitsing om — hier alleen niet ook nog het
+              dagboek eronder. */}
+          {tab !== "mooistefoto" && tab !== "reisvragen" && tab !== "spelletjes" && (
             <JournalTab trip={viewTrip} days={viewDays} transports={viewTransports} accommodations={viewAccommodations} readOnly={readOnly} currentUserId={currentUserId} onRefresh={load} onPreviewViewer={() => setPreviewViewer(true)} onShare={isOwnerActions ? () => setSharing("viewer") : null} onGoToPlanning={() => setTab("days")} />
           )}
         </>
