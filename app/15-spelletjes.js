@@ -21,7 +21,7 @@
 
 const SPEL_INFO = {
   snake: { naam: "Snake", uitleg: "Eet de appels, raak jezelf of de rand niet.", icon: "leaf" },
-  pong: { naam: "Pong", uitleg: "Win een bal van de tegenstander en ga een niveau hoger.", icon: "ball" },
+  pong: { naam: "Pong", uitleg: "Houd de bal in het spel. Elke tien ballen een niveau hoger.", icon: "ball" },
 };
 
 // Hoe hard het canvas mag worden ingezoomd. Zonder bovengrens tekent een
@@ -450,10 +450,11 @@ const PONG_PEDDEL_DIK = 0.02;
 // omkeerde, en dan zie je hem afketsen op niets.
 const PONG_SPELER_LIJN = 1 - PONG_PEDDEL_DIK - 0.04;
 const PONG_TEGEN_LIJN = PONG_PEDDEL_DIK + 0.04;
-// Het eerste balletje was met 0.62 te snel om te leren waar je moet staan.
-// Nu begint hij op ruim de helft daarvan en komt de snelheid er per niveau bij.
-const PONG_START_SNELHEID = 0.34;
-const PONG_PER_NIVEAU = 0.055;
+// Het eerste balletje was met 0.62 te snel om te leren waar je moet staan, maar
+// 0.34 bleek weer aan de trage kant. Hier ligt hij tussenin; de snelheid komt er
+// per niveau bij.
+const PONG_START_SNELHEID = 0.42;
+const PONG_PER_NIVEAU = 0.05;
 const PONG_MAX_SNELHEID = 1.5;
 // De tegenstander begint traag genoeg om te verslaan en wordt per niveau iets
 // scherper, maar nooit onfeilbaar — anders is er na niveau vijf geen doorkomen
@@ -470,6 +471,11 @@ const PONG_MIKFOUT_BASIS = 0.34;
 const PONG_MIKFOUT_PER_NIVEAU = 0.038;
 const PONG_SERVEER_SECONDEN = 1.2;   // adempauze vóór elke bal
 const PONG_FEEST_SECONDEN = 1.9;     // hoe lang de felicitatie blijft staan
+// Eerst ging je alleen omhoog als je een bal van de tegenstander won. Dat duurde
+// te lang: zolang je alleen maar heen en weer slaat gebeurt er niets. Nu telt
+// elke bal die je terugslaat mee, en na tien ervan ga je een niveau hoger. Een
+// gewonnen bal is nog steeds een niveau waard — dat is de prestatie.
+const PONG_BALLEN_PER_NIVEAU = 10;
 
 const pongSnelheid = (niveau) => Math.min(PONG_MAX_SNELHEID, PONG_START_SNELHEID + (niveau - 1) * PONG_PER_NIVEAU);
 const pongTegenstander = (niveau) => Math.min(PONG_TEGEN_MAX, PONG_TEGEN_BASIS + (niveau - 1) * PONG_TEGEN_PER_NIVEAU);
@@ -479,6 +485,10 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   const { canvasRef, maat } = useCanvas(null);
   const [niveau, setNiveau] = useState(1);
   const [gewonnen, setGewonnen] = useState(0);
+  // Hoe vaak je de bal hebt teruggeslagen. Dit is ook je score: het zegt hoe
+  // lang je het volhield, en het loopt gestaag op — "ballen gewonnen" bleef bij
+  // een gewone partij op nul of één steken en zei dus niets.
+  const [gespeeld, setGespeeld] = useState(0);
   // klaar → serveren → speelt → (gewonnen | af)
   const [staat, setStaat] = useState("klaar");
   const spel = useRef(null);
@@ -492,18 +502,52 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
       bal: { x: 0.5, y: 0.42, vx: zijwaarts, vy: Math.sqrt(Math.max(0.01, snelheid * snelheid - zijwaarts * zijwaarts)) },
       speler: spel.current?.speler ?? 0.5,
       computer: 0.5,
+      gespeeld: spel.current?.gespeeld ?? 0,
+      niveau: welkNiveau,
       snelheid,
       tegenTempo: pongTegenstander(welkNiveau),
       mikfoutMax: pongMikfout(welkNiveau),
       // Per keer opnieuw geloot, zodat hij niet elke bal dezelfde kant op mist.
       mikfout: 0,
+      // De lus draait nog een paar stappen door nadat hierboven setStaat is
+      // aangeroepen — state werkt pas bij de volgende render. Zonder deze vlag
+      // vuurde "bal gewonnen" twee of drie keer af en sprong het niveau van 1
+      // naar 3 naar 5.
+      afgelopen: false,
     };
     setStaat("serveren");
+  }, []);
+
+  // Het niveau volgt rechtstreeks uit het aantal gespeelde ballen: elke tien
+  // erbij is er één hoger. Geen optelling die ergens anders ook nog eens
+  // gebeurt — daar kwam de sprong van 1 naar 3 naar 5 vandaan.
+  //
+  // De echte stand staat in de ref en niet in state. Een setState-updater mag
+  // React meer dan eens aanroepen, en dat is precies de verkeerde plek om de
+  // bal te versnellen: dan gebeurt dat twee keer.
+  const stelNiveauBij = useCallback(() => {
+    const s = spel.current;
+    if (!s) return;
+    const nieuw = 1 + Math.floor(s.gespeeld / PONG_BALLEN_PER_NIVEAU);
+    if (nieuw === s.niveau) return;
+    s.niveau = nieuw;
+    // Midden in een rally versnellen, niet pas bij de volgende serveer — anders
+    // merk je van een nieuw niveau niets. Richting blijft, alleen de lengte van
+    // de snelheidsvector verandert.
+    const nieuweSnelheid = pongSnelheid(nieuw);
+    const huidig = Math.hypot(s.bal.vx, s.bal.vy) || 1;
+    s.bal.vx *= nieuweSnelheid / huidig;
+    s.bal.vy *= nieuweSnelheid / huidig;
+    s.snelheid = nieuweSnelheid;
+    s.tegenTempo = pongTegenstander(nieuw);
+    s.mikfoutMax = pongMikfout(nieuw);
+    setNiveau(nieuw);
   }, []);
 
   const begin = useCallback(() => {
     setNiveau(1);
     setGewonnen(0);
+    setGespeeld(0);
     spel.current = null;
     zetKlaar(1);
   }, [zetKlaar]);
@@ -525,7 +569,7 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   // hoeft te weten en op elk formaat hetzelfde speelt.
   useSpelLus(staat === "speelt", 1 / 120, (dt) => {
     const s = spel.current;
-    if (!s) return;
+    if (!s || s.afgelopen) return;
     s.bal.x += s.bal.vx * dt;
     s.bal.y += s.bal.vy * dt;
 
@@ -552,7 +596,11 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
         s.bal.vy = -Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
         // Nieuwe bal omhoog, dus opnieuw loten hoever hij ernaast mikt.
         s.mikfout = (Math.random() * 2 - 1) * s.mikfoutMax;
+        s.gespeeld++;
+        setGespeeld(s.gespeeld);
+        stelNiveauBij();
       } else if (s.bal.y > 1.05) {
+        s.afgelopen = true;
         setStaat("af");
       }
     }
@@ -564,8 +612,8 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
         s.bal.vy = Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
       } else if (s.bal.y < -0.05) {
         // Bal gewonnen: dit is het moment waar het spel om draait.
+        s.afgelopen = true;
         setGewonnen((g) => g + 1);
-        setNiveau((n) => n + 1);
         setStaat("gewonnen");
       }
     }
@@ -639,8 +687,8 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   useEffect(() => {
     if (staat !== "af" || gemeld.current) return;
     gemeld.current = true;
-    if (gewonnen > 0) onKlaar(gewonnen);
-  }, [staat, gewonnen, onKlaar]);
+    if (gespeeld > 0) onKlaar(gespeeld);
+  }, [staat, gespeeld, onKlaar]);
   useEffect(() => { if (staat === "speelt") gemeld.current = false; }, [staat]);
 
   usePauzeerBijWegklikken(() => setStaat((s) => (s === "speelt" ? "af" : s)));
@@ -648,8 +696,8 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   return (
     <SpelVolscherm onSluiten={onSluiten}
       titel="Pong"
-      links={`Niveau ${niveau}`}
-      rechts={`${gewonnen} ${gewonnen === 1 ? "bal" : "ballen"} · record ${beste}`}>
+      links={`Niveau ${niveau} · nog ${PONG_BALLEN_PER_NIVEAU - (gespeeld % PONG_BALLEN_PER_NIVEAU)} tot het volgende`}
+      rechts={`${gespeeld} ${gespeeld === 1 ? "bal" : "ballen"} · record ${beste}`}>
       <div ref={stuurRef} className="flex-1 min-h-0 flex flex-col"
         style={{ touchAction: "none" }}
         onTouchStart={(e) => stuur(e.touches[0].clientX)}
@@ -659,7 +707,7 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
           <canvas ref={canvasRef} className="block" />
           {staat === "klaar" && (
             <SpelOverlay titel="Pong"
-              uitleg="Beweeg met je vinger in de balk onderaan. Win een bal van de tegenstander en je gaat een niveau hoger."
+              uitleg={`Beweeg met je vinger in de balk onderaan. Elke ${PONG_BALLEN_PER_NIVEAU} ballen ga je een niveau hoger en wordt hij sneller.`}
               knop="Beginnen" onKnop={begin} />
           )}
           {staat === "serveren" && (
@@ -672,14 +720,17 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
               style={{ background: "rgba(47,42,40,0.62)" }}>
               <div className="rp-rise font-display text-[30px] text-white leading-snug">Bal gewonnen!</div>
               <div className="text-sm text-white/85">
-                {gewonnen === 1 ? "Je eerste bal binnen." : `Dat zijn er ${gewonnen}.`} Door naar niveau {niveau}.
+                {gewonnen === 1 ? "Je eerste bal van de tegenstander." : `Dat zijn er ${gewonnen}.`}
               </div>
             </div>
           )}
           {staat === "af" && (
             <SpelOverlay
-              titel={gewonnen === 0 ? "Helaas" : `${gewonnen} ${gewonnen === 1 ? "bal" : "ballen"} gewonnen`}
-              uitleg={gewonnen > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`}
+              titel={gespeeld === 0 ? "Helaas" : `${gespeeld} ${gespeeld === 1 ? "bal" : "ballen"}`}
+              uitleg={[
+                gewonnen > 0 ? `${gewonnen} van de tegenstander gewonnen.` : null,
+                gespeeld > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`,
+              ].filter(Boolean).join(" ")}
               knop="Nog een keer" onKnop={begin} />
           )}
         </div>
