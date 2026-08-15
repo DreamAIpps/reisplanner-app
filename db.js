@@ -663,6 +663,18 @@ async function voerMigratiesUit() {
       END IF;
     END $$;
 
+    -- En nog een keer, om dezelfde reden. Pong is nu een wedstrijd tot acht
+    -- punten en de score is het aantal punten dat je maakte; daarvoor telde hij
+    -- gespeelde ballen, wat al gauw in de tientallen liep. Die oude getallen
+    -- zouden voorgoed boven een eerlijke acht blijven staan.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM migratiestappen WHERE naam = 'pong-punten-tot-acht') THEN
+        DELETE FROM spel_scores WHERE spel = 'pong';
+        INSERT INTO migratiestappen (naam) VALUES ('pong-punten-tot-acht');
+      END IF;
+    END $$;
+
     CREATE TABLE IF NOT EXISTS quiz_answers (
       id SERIAL PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,
