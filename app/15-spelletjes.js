@@ -21,7 +21,7 @@
 
 const SPEL_INFO = {
   snake: { naam: "Snake", uitleg: "Eet de appels, raak jezelf of de rand niet.", icon: "leaf" },
-  pong: { naam: "Pong", uitleg: "Houd de bal in het spel. Elke tien ballen een niveau hoger.", icon: "ball" },
+  pong: { naam: "Pong", uitleg: "Wedstrijd tot acht punten. Elke tien ballen een niveau hoger.", icon: "ball" },
 };
 
 // Hoe hard het canvas mag worden ingezoomd. Zonder bovengrens tekent een
@@ -439,10 +439,11 @@ function Richtingknoppen({ onDraai }) {
 // Vandaar de veegstrook onder het veld — je stuurt daar, en het veld blijft
 // vrij.
 //
-// Het spel gaat per bal, niet per rally. Je begint rustig; win je een bal van
-// de computer, dan word je gefeliciteerd en ga je een niveau hoger, waar hij
-// sneller komt en de tegenstander beter oplet. Je score is het aantal ballen
-// dat je gewonnen hebt.
+// Het is een wedstrijd tot acht punten. Mis je de bal, dan is dat een punt voor
+// de tegenstander en niet meteen het einde — zo krijg je de kans terug te komen,
+// en heeft "tot acht" pas betekenis. Elke tien ballen die je terugslaat ga je
+// een niveau hoger: de bal wordt sneller en de tegenstander mikt nauwkeuriger.
+// Je score is het aantal punten dat je maakte, acht als je wint.
 const PONG_PEDDEL_BREED = 0.24;    // fractie van de breedte — iets ruimer dan de eerste versie
 const PONG_PEDDEL_DIK = 0.02;
 // De twee lijnen waarop de bal stuitert. Ook wat er getekend wordt gaat hierop
@@ -467,8 +468,22 @@ const PONG_TEGEN_MAX = 0.95;
 // winnen — gemeten, nul keer in vijfentwintig seconden. Daarom mikt hij per bal
 // een stukje naast, en dat stukje wordt met elk niveau kleiner. Rond niveau
 // tien staat hij er gewoon.
-const PONG_MIKFOUT_BASIS = 0.34;
-const PONG_MIKFOUT_PER_NIVEAU = 0.038;
+// Hoe vaak de tegenstander een bal weggeeft, als kans per bal.
+//
+// Eerst was dit een mikafwijking: hij richtte een willekeurig stukje naast, en
+// hoe groot dat stukje mocht zijn nam per niveau af. Dat rekent slecht. De
+// peddel is 0.24 breed, dus hij mist pas als de afwijking groter is dan 0.14 —
+// en met een afwijking van hooguit 0.13 vanaf niveau vier gebeurde dat nooit
+// meer. Gemeten liep een partij dan vast op 4–0: hij gaf niets meer weg en een
+// speler die zelf niet mist komt in een rally zonder einde terecht.
+//
+// Als kans is het meteen af te lezen en te sturen. Er blijft een bodem onder,
+// anders is de wedstrijd vanaf een bepaald niveau niet meer te winnen.
+const PONG_MISKANS_BASIS = 0.20;
+const PONG_MISKANS_PER_NIVEAU = 0.02;
+const PONG_MISKANS_BODEM = 0.06;
+// De wedstrijd is uit bij acht punten, voor wie ze het eerst heeft.
+const PONG_WINSTPUNTEN = 8;
 const PONG_SERVEER_SECONDEN = 1.2;   // adempauze vóór elke bal
 const PONG_FEEST_SECONDEN = 1.9;     // hoe lang de felicitatie blijft staan
 // Eerst ging je alleen omhoog als je een bal van de tegenstander won. Dat duurde
@@ -479,17 +494,29 @@ const PONG_BALLEN_PER_NIVEAU = 10;
 
 const pongSnelheid = (niveau) => Math.min(PONG_MAX_SNELHEID, PONG_START_SNELHEID + (niveau - 1) * PONG_PER_NIVEAU);
 const pongTegenstander = (niveau) => Math.min(PONG_TEGEN_MAX, PONG_TEGEN_BASIS + (niveau - 1) * PONG_TEGEN_PER_NIVEAU);
-const pongMikfout = (niveau) => Math.max(0, PONG_MIKFOUT_BASIS - (niveau - 1) * PONG_MIKFOUT_PER_NIVEAU);
+const pongMiskans = (niveau) =>
+  Math.max(PONG_MISKANS_BODEM, PONG_MISKANS_BASIS - (niveau - 1) * PONG_MISKANS_PER_NIVEAU);
+
+// Waar hij op mikt voor de bal die nu omhoog komt. Mist hij deze, dan zet hij
+// zich net buiten bereik neer; anders mikt hij goed, met een klein beetje
+// speling zodat het geen machine wordt.
+function pongMikpunt(niveau) {
+  if (Math.random() < pongMiskans(niveau)) {
+    const kant = Math.random() < 0.5 ? -1 : 1;
+    return kant * (PONG_PEDDEL_BREED / 2 + 0.06 + Math.random() * 0.12);
+  }
+  return (Math.random() * 2 - 1) * 0.03;
+}
 
 function PongSpel({ beste, onKlaar, onSluiten }) {
   const { canvasRef, maat } = useCanvas(null);
   const [niveau, setNiveau] = useState(1);
-  const [gewonnen, setGewonnen] = useState(0);
-  // Hoe vaak je de bal hebt teruggeslagen. Dit is ook je score: het zegt hoe
-  // lang je het volhield, en het loopt gestaag op — "ballen gewonnen" bleef bij
-  // een gewone partij op nul of één steken en zei dus niets.
+  // De stand. Jouw punten zijn ook je score: bij een wedstrijd tot acht is dat
+  // het enige getal dat iets zegt — hoe ver je kwam voordat hij er acht had.
+  const [punten, setPunten] = useState({ jij: 0, tegen: 0 });
+  // Hoe vaak je de bal hebt teruggeslagen. Bepaalt het niveau.
   const [gespeeld, setGespeeld] = useState(0);
-  // klaar → serveren → speelt → (gewonnen | af)
+  // klaar → serveren → speelt → (punt | tegenpunt) → serveren → … → af
   const [staat, setStaat] = useState("klaar");
   const spel = useRef(null);
 
@@ -506,8 +533,7 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
       niveau: welkNiveau,
       snelheid,
       tegenTempo: pongTegenstander(welkNiveau),
-      mikfoutMax: pongMikfout(welkNiveau),
-      // Per keer opnieuw geloot, zodat hij niet elke bal dezelfde kant op mist.
+      // Per bal opnieuw geloot, zodat hij niet elke keer dezelfde kant op mist.
       mikfout: 0,
       // De lus draait nog een paar stappen door nadat hierboven setStaat is
       // aangeroepen — state werkt pas bij de volgende render. Zonder deze vlag
@@ -540,13 +566,12 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
     s.bal.vy *= nieuweSnelheid / huidig;
     s.snelheid = nieuweSnelheid;
     s.tegenTempo = pongTegenstander(nieuw);
-    s.mikfoutMax = pongMikfout(nieuw);
     setNiveau(nieuw);
   }, []);
 
   const begin = useCallback(() => {
     setNiveau(1);
-    setGewonnen(0);
+    setPunten({ jij: 0, tegen: 0 });
     setGespeeld(0);
     spel.current = null;
     zetKlaar(1);
@@ -560,10 +585,11 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
     return () => clearTimeout(t);
   }, [staat]);
   useEffect(() => {
-    if (staat !== "gewonnen") return;
-    const t = setTimeout(() => zetKlaar(niveau), PONG_FEEST_SECONDEN * 1000);
+    if (staat !== "punt" && staat !== "tegenpunt") return;
+    const uit = punten.jij >= PONG_WINSTPUNTEN || punten.tegen >= PONG_WINSTPUNTEN;
+    const t = setTimeout(() => (uit ? setStaat("af") : zetKlaar(niveau)), PONG_FEEST_SECONDEN * 1000);
     return () => clearTimeout(t);
-  }, [staat, niveau, zetKlaar]);
+  }, [staat, niveau, punten, zetKlaar]);
 
   // Alles in fracties van 0 tot 1, zodat het spel niets van de schermgrootte
   // hoeft te weten en op elk formaat hetzelfde speelt.
@@ -594,14 +620,15 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
         const plek = (s.bal.x - s.speler) / (PONG_PEDDEL_BREED / 2);
         s.bal.vx = plek * s.snelheid * 0.7;
         s.bal.vy = -Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
-        // Nieuwe bal omhoog, dus opnieuw loten hoever hij ernaast mikt.
-        s.mikfout = (Math.random() * 2 - 1) * s.mikfoutMax;
+        // Nieuwe bal omhoog, dus opnieuw loten of hij hem deze keer laat gaan.
+        s.mikfout = pongMikpunt(s.niveau);
         s.gespeeld++;
         setGespeeld(s.gespeeld);
         stelNiveauBij();
       } else if (s.bal.y > 1.05) {
         s.afgelopen = true;
-        setStaat("af");
+        setPunten((p) => ({ ...p, tegen: p.tegen + 1 }));
+        setStaat("tegenpunt");
       }
     }
     if (s.bal.vy < 0 && s.bal.y <= computerLijn) {
@@ -611,10 +638,10 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
         s.bal.vx = plek * s.snelheid * 0.7;
         s.bal.vy = Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
       } else if (s.bal.y < -0.05) {
-        // Bal gewonnen: dit is het moment waar het spel om draait.
+        // Punt: dit is het moment waar het spel om draait.
         s.afgelopen = true;
-        setGewonnen((g) => g + 1);
-        setStaat("gewonnen");
+        setPunten((p) => ({ ...p, jij: p.jij + 1 }));
+        setStaat("punt");
       }
     }
   });
@@ -687,8 +714,8 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   useEffect(() => {
     if (staat !== "af" || gemeld.current) return;
     gemeld.current = true;
-    if (gespeeld > 0) onKlaar(gespeeld);
-  }, [staat, gespeeld, onKlaar]);
+    onKlaar(punten.jij);
+  }, [staat, punten.jij, onKlaar]);
   useEffect(() => { if (staat === "speelt") gemeld.current = false; }, [staat]);
 
   usePauzeerBijWegklikken(() => setStaat((s) => (s === "speelt" ? "af" : s)));
@@ -696,8 +723,8 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   return (
     <SpelVolscherm onSluiten={onSluiten}
       titel="Pong"
-      links={`Niveau ${niveau} · nog ${PONG_BALLEN_PER_NIVEAU - (gespeeld % PONG_BALLEN_PER_NIVEAU)} tot het volgende`}
-      rechts={`${gespeeld} ${gespeeld === 1 ? "bal" : "ballen"} · record ${beste}`}>
+      links={`Niveau ${niveau} · nog ${PONG_BALLEN_PER_NIVEAU - (gespeeld % PONG_BALLEN_PER_NIVEAU)} ballen`}
+      rechts={<span className="tnum"><b className="text-gray-800">{punten.jij}</b> – {punten.tegen} <span className="text-gray-400">tot {PONG_WINSTPUNTEN}</span></span>}>
       <div ref={stuurRef} className="flex-1 min-h-0 flex flex-col"
         style={{ touchAction: "none" }}
         onTouchStart={(e) => stuur(e.touches[0].clientX)}
@@ -707,7 +734,7 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
           <canvas ref={canvasRef} className="block" />
           {staat === "klaar" && (
             <SpelOverlay titel="Pong"
-              uitleg={`Beweeg met je vinger in de balk onderaan. Elke ${PONG_BALLEN_PER_NIVEAU} ballen ga je een niveau hoger en wordt hij sneller.`}
+              uitleg={`Wie het eerst ${PONG_WINSTPUNTEN} punten heeft, wint. Beweeg met je vinger in de balk onderaan; elke ${PONG_BALLEN_PER_NIVEAU} ballen ga je een niveau hoger en wordt hij sneller én scherper.`}
               knop="Beginnen" onKnop={begin} />
           )}
           {staat === "serveren" && (
@@ -715,22 +742,27 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
               <div className="rp-rise font-display text-[30px] text-white/90">Niveau {niveau}</div>
             </div>
           )}
-          {staat === "gewonnen" && (
+          {(staat === "punt" || staat === "tegenpunt") && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
               style={{ background: "rgba(47,42,40,0.62)" }}>
-              <div className="rp-rise font-display text-[30px] text-white leading-snug">Bal gewonnen!</div>
-              <div className="text-sm text-white/85">
-                {gewonnen === 1 ? "Je eerste bal van de tegenstander." : `Dat zijn er ${gewonnen}.`}
+              <div className="rp-rise font-display text-[30px] text-white leading-snug">
+                {staat === "punt" ? "Punt voor jou!" : "Punt voor de tegenstander"}
               </div>
+              <div className="text-lg text-white/90 tnum">{punten.jij} – {punten.tegen}</div>
+              {staat === "punt" && punten.jij === PONG_WINSTPUNTEN - 1 && punten.tegen < PONG_WINSTPUNTEN - 1 && (
+                <div className="text-sm text-white/85">Nog één en je hebt hem.</div>
+              )}
             </div>
           )}
           {staat === "af" && (
             <SpelOverlay
-              titel={gespeeld === 0 ? "Helaas" : `${gespeeld} ${gespeeld === 1 ? "bal" : "ballen"}`}
+              titel={punten.jij >= PONG_WINSTPUNTEN
+                ? `Gewonnen! ${punten.jij} – ${punten.tegen}`
+                : `Verloren, ${punten.jij} – ${punten.tegen}`}
               uitleg={[
-                gewonnen > 0 ? `${gewonnen} van de tegenstander gewonnen.` : null,
-                gespeeld > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`,
-              ].filter(Boolean).join(" ")}
+                `Je kwam tot niveau ${niveau}.`,
+                punten.jij > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`,
+              ].join(" ")}
               knop="Nog een keer" onKnop={begin} />
           )}
         </div>
