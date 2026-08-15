@@ -197,25 +197,6 @@ function Ranglijst({ rijen, currentUserId }) {
   );
 }
 
-// Kop met de score, het record en een knop terug — hetzelfde boven beide
-// spellen, zodat je bij het wisselen niet hoeft te zoeken.
-function SpelKop({ titel, score, beste, onSluiten }) {
-  return (
-    <div className="flex items-center gap-3 mb-3">
-      <button type="button" onClick={onSluiten}
-        className="rp-press shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
-        aria-label="Terug naar de spelletjes">
-        <Icon name="arrowLeft" size={18} />
-      </button>
-      <h2 className="font-display text-[20px] text-gray-800 flex-1 min-w-0 truncate">{titel}</h2>
-      <div className="text-right shrink-0">
-        <div className="font-display text-[22px] text-gray-800 leading-none tnum">{score}</div>
-        <div className="text-[10px] uppercase tracking-[0.1em] text-gray-400 mt-0.5 tnum">record {beste}</div>
-      </div>
-    </div>
-  );
-}
-
 // Het scherm dat over het spel valt als je af bent of nog moet beginnen.
 function SpelOverlay({ titel, uitleg, knop, onKnop }) {
   return (
@@ -235,7 +216,11 @@ const SNAKE_MIN_TEMPO = 0.055;    // sneller dan dit wordt het onspeelbaar op to
 const SNAKE_VERSNELLING = 0.004;  // per appel
 
 function SnakeSpel({ beste, onKlaar, onSluiten }) {
-  const { canvasRef, maat } = useCanvas(1);
+  // Vult het hele vak; het bord blijft vierkant en komt in het midden te staan.
+  // Snake stond eerst gewoon in de pagina, maar met een richtingkruis dat groot
+  // genoeg is om blind te bedienen paste dat niet meer op één scherm — en
+  // scrollen tussen het bord en de knoppen is erger dan kleine knoppen.
+  const { canvasRef, maat } = useCanvas(null);
   const [score, setScore] = useState(0);
   const [staat, setStaat] = useState("klaar");   // klaar | speelt | af
   const [tempo, setTempo] = useState(SNAKE_START_TEMPO);
@@ -308,31 +293,47 @@ function SnakeSpel({ beste, onKlaar, onSluiten }) {
     if (!canvas || !maat.breedte) return;
     let bezig = true;
     const ctx = canvas.getContext("2d");
-    const vak = maat.breedte / SNAKE_VAKJES;
 
     (function teken() {
       if (!bezig) return;
+      const B = maat.breedte, H = maat.hoogte;
+      // Vierkante vakjes, ongeacht de vorm van het vak: de kleinste zijde
+      // bepaalt het bord en de rest is marge links/rechts of boven/onder.
+      const vak = Math.floor(Math.min(B, H) / SNAKE_VAKJES);
+      const bord = vak * SNAKE_VAKJES;
+      const ox = Math.round((B - bord) / 2), oy = Math.round((H - bord) / 2);
+
+      // Alleen het bord donker, niet het hele canvas: het canvas is zo hoog als
+      // het scherm toelaat en het bord is vierkant, dus daar zit ruimte tussen.
+      // Vulde die ruimte mee, dan liep je tegen een muur die een eind vóór de
+      // zichtbare rand lag.
+      ctx.clearRect(0, 0, B, H);
       ctx.fillStyle = "#1F2A24";
-      ctx.fillRect(0, 0, maat.breedte, maat.hoogte);
+      ctx.beginPath();
+      ctx.roundRect(ox, oy, bord, bord, Math.min(18, vak));
+      ctx.fill();
       // Zwak raster, zoals het scherm van een oude telefoon.
+      ctx.save();
+      ctx.clip();
       ctx.strokeStyle = "rgba(255,255,255,0.04)";
       ctx.lineWidth = 1;
       for (let i = 1; i < SNAKE_VAKJES; i++) {
-        ctx.beginPath(); ctx.moveTo(i * vak, 0); ctx.lineTo(i * vak, maat.hoogte); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i * vak); ctx.lineTo(maat.breedte, i * vak); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ox + i * vak, oy); ctx.lineTo(ox + i * vak, oy + bord); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ox, oy + i * vak); ctx.lineTo(ox + bord, oy + i * vak); ctx.stroke();
       }
+      ctx.restore();
       const s = spel.current;
       if (s) {
         if (s.appel) {
           ctx.fillStyle = PALETTE.coral;
           ctx.beginPath();
-          ctx.arc((s.appel.x + 0.5) * vak, (s.appel.y + 0.5) * vak, vak * 0.32, 0, Math.PI * 2);
+          ctx.arc(ox + (s.appel.x + 0.5) * vak, oy + (s.appel.y + 0.5) * vak, vak * 0.32, 0, Math.PI * 2);
           ctx.fill();
         }
         s.slang.forEach((d, i) => {
           ctx.fillStyle = i === 0 ? "#EAF6EE" : PALETTE.success;
           const rand = vak * 0.12;
-          ctx.fillRect(d.x * vak + rand, d.y * vak + rand, vak - rand * 2, vak - rand * 2);
+          ctx.fillRect(ox + d.x * vak + rand, oy + d.y * vak + rand, vak - rand * 2, vak - rand * 2);
         });
       }
       requestAnimationFrame(teken);
@@ -378,30 +379,57 @@ function SnakeSpel({ beste, onKlaar, onSluiten }) {
 
   usePauzeerBijWegklikken(() => setStaat((s) => (s === "speelt" ? "af" : s)));
 
+  // Waar het bord binnen het canvas ligt. Dezelfde rekensom als in het tekenen
+  // hierboven, want de overlays horen op het bord te liggen en niet over de
+  // marge ernaast — anders staat er een grauwe band boven en onder je uitslag.
+  const bordVak = (() => {
+    const vak = Math.floor(Math.min(maat.breedte, maat.hoogte) / SNAKE_VAKJES) || 1;
+    const bord = vak * SNAKE_VAKJES;
+    return {
+      left: Math.round((maat.breedte - bord) / 2),
+      top: Math.round((maat.hoogte - bord) / 2),
+      width: bord,
+      height: bord,
+    };
+  })();
+
   return (
-    <div className="max-w-md mx-auto">
-      <SpelKop titel="Snake" score={score} beste={beste} onSluiten={onSluiten} />
-      <div className="relative rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-gray-900"
+    <SpelVolscherm onSluiten={onSluiten} titel="Snake"
+      links={`${score} ${score === 1 ? "appel" : "appels"}`}
+      rechts={`record ${beste}`}>
+      <div className="relative flex-1 min-h-0 flex items-center justify-center"
         onTouchStart={veegBegin} onTouchEnd={veegEind} style={{ touchAction: "none" }}>
-        <canvas ref={canvasRef} className="block w-full" />
-        {staat === "klaar" && (
-          <SpelOverlay titel="Snake" uitleg="Veeg of gebruik de knoppen hieronder. Raak de rand niet, en jezelf ook niet."
-            knop="Beginnen" onKnop={begin} />
-        )}
-        {staat === "af" && (
-          <SpelOverlay titel={`${score} ${score === 1 ? "appel" : "appels"}`}
-            uitleg={score > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`}
-            knop="Nog een keer" onKnop={begin} />
-        )}
+        <canvas ref={canvasRef} className="block" />
+        <div className="absolute rounded-2xl overflow-hidden pointer-events-none" style={bordVak}>
+          <div className="absolute inset-0 pointer-events-auto">
+            {staat === "klaar" && (
+              <SpelOverlay titel="Snake" uitleg="Veeg over het veld of gebruik de knoppen hieronder. Raak de rand niet, en jezelf ook niet."
+                knop="Beginnen" onKnop={begin} />
+            )}
+            {staat === "af" && (
+              <SpelOverlay titel={`${score} ${score === 1 ? "appel" : "appels"}`}
+                uitleg={score > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`}
+                knop="Nog een keer" onKnop={begin} />
+            )}
+          </div>
+        </div>
       </div>
       <Richtingknoppen onDraai={draai} />
-    </div>
+    </SpelVolscherm>
   );
 }
 
 // Vier knoppen als kruis. Op een telefoon veeg je, maar in een hobbelende auto
 // is een knop die op zijn plek blijft een stuk prettiger — en op een laptop
 // zonder aanraakscherm zijn ze de enige alternatief voor de pijltjestoetsen.
+// Het richtingkruis. Deze knoppen waren 56 pixels: net boven de gangbare
+// ondergrens voor een aanraakdoel, maar dit is geen knop die je één keer per
+// scherm indrukt — je roffelt erop terwijl je naar iets anders kijkt, met een
+// duim, in een rijdende auto. Ze schalen nu mee met de schermbreedte, met een
+// stevige bodem voor smalle toestellen en een plafond zodat ze op een tablet
+// geen borden worden.
+const SNAKE_KNOP = "clamp(4.75rem, 21vw, 6.25rem)";
+
 function Richtingknoppen({ onDraai }) {
   // justify-items-center: zonder dat plakt elke knop tegen de linkerkant van
   // zijn vak en staat het kruis scheef — links en rechts liggen dan niet even
@@ -413,13 +441,13 @@ function Richtingknoppen({ onDraai }) {
   const knop = (label, dx, dy, icoon, gedraaid) => (
     <button type="button" aria-label={label}
       onPointerDown={(e) => { e.preventDefault(); onDraai(dx, dy); }}
-      className="rp-press w-14 h-14 rounded-2xl bg-white border border-gray-200 text-gray-600 flex items-center justify-center hover:border-gray-300 transition-colors"
-      style={{ touchAction: "none" }}>
-      <Icon name={icoon} size={20} className={gedraaid ? "rotate-180" : ""} />
+      className="rp-press rounded-2xl bg-white border border-gray-200 text-gray-500 flex items-center justify-center hover:border-gray-300 active:bg-gray-50 transition-colors shadow-sm"
+      style={{ touchAction: "none", width: SNAKE_KNOP, height: SNAKE_KNOP }}>
+      <Icon name={icoon} size={26} strokeWidth={1.8} className={gedraaid ? "rotate-180" : ""} />
     </button>
   );
   return (
-    <div className="mt-4 grid grid-cols-3 gap-2 justify-items-center w-[13.5rem] mx-auto">
+    <div className="shrink-0 mt-3 grid grid-cols-3 gap-2 justify-items-center mx-auto w-fit">
       <div />{knop("Omhoog", 0, -1, "arrowUp")}<div />
       {knop("Naar links", -1, 0, "arrowLeft")}
       <div />
