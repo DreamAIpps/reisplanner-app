@@ -642,6 +642,26 @@ async function voerMigratiesUit() {
       PRIMARY KEY (trip_id, user_id, spel)
     );
     CREATE INDEX IF NOT EXISTS spel_scores_trip_idx ON spel_scores(trip_id, spel, score DESC);
+    -- Losse opruimacties die precies één keer mogen gebeuren. De migratie
+    -- hierboven draait bij elke wijziging van dit bestand opnieuw en moet dus
+    -- overal tegen kunnen; een "gooi dit weg"-stap kan dat per definitie niet.
+    -- Vandaar een regel per stap: staat hij er, dan is hij gedaan.
+    CREATE TABLE IF NOT EXISTS migratiestappen (
+      naam TEXT PRIMARY KEY,
+      gedaan_op TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Pong telde eerst hoe vaak je de bal raakte; nu telt het hoeveel ballen je
+    -- van de tegenstander wint. Dat zijn niet dezelfde getallen — een oude
+    -- twaalf zou een echte drie voorgoed van de eerste plek houden, dus de
+    -- ranglijst van pong begint opnieuw. Eén keer, en alleen die van pong.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM migratiestappen WHERE naam = 'pong-ranglijst-opnieuw') THEN
+        DELETE FROM spel_scores WHERE spel = 'pong';
+        INSERT INTO migratiestappen (naam) VALUES ('pong-ranglijst-opnieuw');
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS quiz_answers (
       id SERIAL PRIMARY KEY,

@@ -21,7 +21,7 @@
 
 const SPEL_INFO = {
   snake: { naam: "Snake", uitleg: "Eet de appels, raak jezelf of de rand niet.", icon: "leaf" },
-  pong: { naam: "Pong", uitleg: "Houd de bal in het spel. Elke keer raken telt.", icon: "ball" },
+  pong: { naam: "Pong", uitleg: "Win een bal van de tegenstander en ga een niveau hoger.", icon: "ball" },
 };
 
 // Hoe hard het canvas mag worden ingezoomd. Zonder bovengrens tekent een
@@ -32,6 +32,11 @@ const MAX_PIXELRATIO = 2;
 // Eén canvas dat zich aanpast aan zijn vak, met de tekenlaag in echte pixels.
 // Geeft een ref naar het element terug plus de logische maat waarop de spellen
 // rekenen.
+//
+// Met een verhouding volgt de hoogte uit de breedte — dat past bij Snake, dat
+// gewoon in de pagina staat. Zonder verhouding (null) neemt het canvas het hele
+// vak over, breedte én hoogte; dat is wat een volschermspel nodig heeft, waar
+// juist de beschikbare hoogte bepaalt hoe groot het veld mag worden.
 function useCanvas(verhouding) {
   const canvasRef = useRef(null);
   const [maat, setMaat] = useState({ breedte: 0, hoogte: 0 });
@@ -43,7 +48,7 @@ function useCanvas(verhouding) {
       const vak = canvas.parentElement;
       if (!vak) return;
       const breedte = Math.max(160, Math.floor(vak.clientWidth));
-      const hoogte = Math.round(breedte / verhouding);
+      const hoogte = verhouding ? Math.round(breedte / verhouding) : Math.max(160, Math.floor(vak.clientHeight));
       const ratio = Math.min(window.devicePixelRatio || 1, MAX_PIXELRATIO);
       canvas.width = Math.round(breedte * ratio);
       canvas.height = Math.round(hoogte * ratio);
@@ -427,34 +432,94 @@ function Richtingknoppen({ onDraai }) {
 }
 
 // ---------- Pong ----------
-// Eén speler tegen de computer. Geen wedstrijd tot elf punten maar een rally:
-// je score is het aantal keer dat je de bal geraakt hebt, en hij wordt steeds
-// sneller. Dat past bij een ranglijst — "tot elf" levert bij iedereen elf op.
-const PONG_VERHOUDING = 0.72;      // breedte gedeeld door hoogte; staand, past op een telefoon
-const PONG_PEDDEL_BREED = 0.22;    // fractie van de breedte
-const PONG_PEDDEL_DIK = 0.022;
-const PONG_START_SNELHEID = 0.62;  // fractie van de hoogte per seconde
-const PONG_VERSNELLING = 0.022;    // per keer raken
-const PONG_MAX_SNELHEID = 1.9;
-const PONG_COMPUTER_TEMPO = 0.55;  // hoe snel de tegenstander bijstuurt
+//
+// Volledig scherm, en niet omdat het mooier is: op een telefoon van vier duim
+// hoog was het veld zo klein dat de bal een stip was. En met een veld dat tot
+// onderaan doorloopt ligt je vinger precies op de plek waar je moet kijken.
+// Vandaar de veegstrook onder het veld — je stuurt daar, en het veld blijft
+// vrij.
+//
+// Het spel gaat per bal, niet per rally. Je begint rustig; win je een bal van
+// de computer, dan word je gefeliciteerd en ga je een niveau hoger, waar hij
+// sneller komt en de tegenstander beter oplet. Je score is het aantal ballen
+// dat je gewonnen hebt.
+const PONG_PEDDEL_BREED = 0.24;    // fractie van de breedte — iets ruimer dan de eerste versie
+const PONG_PEDDEL_DIK = 0.02;
+// De twee lijnen waarop de bal stuitert. Ook wat er getekend wordt gaat hierop
+// af: eerst stond de peddel een paar procent lager dan de lijn waar de bal
+// omkeerde, en dan zie je hem afketsen op niets.
+const PONG_SPELER_LIJN = 1 - PONG_PEDDEL_DIK - 0.04;
+const PONG_TEGEN_LIJN = PONG_PEDDEL_DIK + 0.04;
+// Het eerste balletje was met 0.62 te snel om te leren waar je moet staan.
+// Nu begint hij op ruim de helft daarvan en komt de snelheid er per niveau bij.
+const PONG_START_SNELHEID = 0.34;
+const PONG_PER_NIVEAU = 0.055;
+const PONG_MAX_SNELHEID = 1.5;
+// De tegenstander begint traag genoeg om te verslaan en wordt per niveau iets
+// scherper, maar nooit onfeilbaar — anders is er na niveau vijf geen doorkomen
+// meer aan.
+const PONG_TEGEN_BASIS = 0.34;
+const PONG_TEGEN_PER_NIVEAU = 0.045;
+const PONG_TEGEN_MAX = 0.95;
+// En dit is wat hem verslaanbaar maakt. Alleen aan zijn snelheid draaien werkt
+// niet: bij een trage bal haalt hij hem altijd, en dan is er nooit een bal te
+// winnen — gemeten, nul keer in vijfentwintig seconden. Daarom mikt hij per bal
+// een stukje naast, en dat stukje wordt met elk niveau kleiner. Rond niveau
+// tien staat hij er gewoon.
+const PONG_MIKFOUT_BASIS = 0.34;
+const PONG_MIKFOUT_PER_NIVEAU = 0.038;
+const PONG_SERVEER_SECONDEN = 1.2;   // adempauze vóór elke bal
+const PONG_FEEST_SECONDEN = 1.9;     // hoe lang de felicitatie blijft staan
+
+const pongSnelheid = (niveau) => Math.min(PONG_MAX_SNELHEID, PONG_START_SNELHEID + (niveau - 1) * PONG_PER_NIVEAU);
+const pongTegenstander = (niveau) => Math.min(PONG_TEGEN_MAX, PONG_TEGEN_BASIS + (niveau - 1) * PONG_TEGEN_PER_NIVEAU);
+const pongMikfout = (niveau) => Math.max(0, PONG_MIKFOUT_BASIS - (niveau - 1) * PONG_MIKFOUT_PER_NIVEAU);
 
 function PongSpel({ beste, onKlaar, onSluiten }) {
-  const { canvasRef, maat } = useCanvas(PONG_VERHOUDING);
-  const [score, setScore] = useState(0);
+  const { canvasRef, maat } = useCanvas(null);
+  const [niveau, setNiveau] = useState(1);
+  const [gewonnen, setGewonnen] = useState(0);
+  // klaar → serveren → speelt → (gewonnen | af)
   const [staat, setStaat] = useState("klaar");
   const spel = useRef(null);
 
-  const begin = useCallback(() => {
+  const zetKlaar = useCallback((welkNiveau) => {
+    // Recht naar beneden met een klein zijwaarts zetje, zodat de eerste bal te
+    // halen is zonder dat hij saai recht blijft.
+    const snelheid = pongSnelheid(welkNiveau);
+    const zijwaarts = (Math.random() < 0.5 ? -1 : 1) * snelheid * 0.35;
     spel.current = {
-      bal: { x: 0.5, y: 0.5, vx: (Math.random() < 0.5 ? -1 : 1) * 0.36, vy: PONG_START_SNELHEID },
-      speler: 0.5,
+      bal: { x: 0.5, y: 0.42, vx: zijwaarts, vy: Math.sqrt(Math.max(0.01, snelheid * snelheid - zijwaarts * zijwaarts)) },
+      speler: spel.current?.speler ?? 0.5,
       computer: 0.5,
-      snelheid: PONG_START_SNELHEID,
-      geraakt: 0,
+      snelheid,
+      tegenTempo: pongTegenstander(welkNiveau),
+      mikfoutMax: pongMikfout(welkNiveau),
+      // Per keer opnieuw geloot, zodat hij niet elke bal dezelfde kant op mist.
+      mikfout: 0,
     };
-    setScore(0);
-    setStaat("speelt");
+    setStaat("serveren");
   }, []);
+
+  const begin = useCallback(() => {
+    setNiveau(1);
+    setGewonnen(0);
+    spel.current = null;
+    zetKlaar(1);
+  }, [zetKlaar]);
+
+  // De adempauze vóór een bal, en het feestje erna. Allebei gewoon een klok:
+  // het spel staat zolang stil.
+  useEffect(() => {
+    if (staat !== "serveren") return;
+    const t = setTimeout(() => setStaat("speelt"), PONG_SERVEER_SECONDEN * 1000);
+    return () => clearTimeout(t);
+  }, [staat]);
+  useEffect(() => {
+    if (staat !== "gewonnen") return;
+    const t = setTimeout(() => zetKlaar(niveau), PONG_FEEST_SECONDEN * 1000);
+    return () => clearTimeout(t);
+  }, [staat, niveau, zetKlaar]);
 
   // Alles in fracties van 0 tot 1, zodat het spel niets van de schermgrootte
   // hoeft te weten en op elk formaat hetzelfde speelt.
@@ -467,28 +532,27 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
     if (s.bal.x < 0.02) { s.bal.x = 0.02; s.bal.vx = Math.abs(s.bal.vx); }
     if (s.bal.x > 0.98) { s.bal.x = 0.98; s.bal.vx = -Math.abs(s.bal.vx); }
 
-    // De computer stuurt bij met een maximumsnelheid; daardoor is hij te
+    // De tegenstander stuurt bij met een maximumsnelheid; daardoor is hij te
     // verslaan met een scherpe hoek in plaats van onfeilbaar.
-    const doel = s.bal.vy < 0 ? s.bal.x : 0.5;
-    s.computer += Math.max(-PONG_COMPUTER_TEMPO * dt, Math.min(PONG_COMPUTER_TEMPO * dt, doel - s.computer));
+    const doel = s.bal.vy < 0 ? s.bal.x + s.mikfout : 0.5;
+    s.computer += Math.max(-s.tegenTempo * dt, Math.min(s.tegenTempo * dt, doel - s.computer));
     s.computer = Math.max(PONG_PEDDEL_BREED / 2, Math.min(1 - PONG_PEDDEL_BREED / 2, s.computer));
 
     const raakt = (peddelX) => Math.abs(s.bal.x - peddelX) < PONG_PEDDEL_BREED / 2 + 0.02;
-    const spelerLijn = 1 - PONG_PEDDEL_DIK * 2 - 0.03;
-    const computerLijn = PONG_PEDDEL_DIK * 2 + 0.03;
+    const spelerLijn = PONG_SPELER_LIJN;
+    const computerLijn = PONG_TEGEN_LIJN;
 
     if (s.bal.vy > 0 && s.bal.y >= spelerLijn) {
       if (raakt(s.speler)) {
         s.bal.y = spelerLijn;
-        s.geraakt++;
-        setScore(s.geraakt);
-        s.snelheid = Math.min(PONG_MAX_SNELHEID, s.snelheid + PONG_VERSNELLING);
         // Waar op de peddel je hem raakt bepaalt de hoek — anders is het na
         // twintig keer dezelfde beweging.
         const plek = (s.bal.x - s.speler) / (PONG_PEDDEL_BREED / 2);
-        s.bal.vx = plek * s.snelheid * 0.75;
+        s.bal.vx = plek * s.snelheid * 0.7;
         s.bal.vy = -Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
-      } else if (s.bal.y > 1.02) {
+        // Nieuwe bal omhoog, dus opnieuw loten hoever hij ernaast mikt.
+        s.mikfout = (Math.random() * 2 - 1) * s.mikfoutMax;
+      } else if (s.bal.y > 1.05) {
         setStaat("af");
       }
     }
@@ -496,12 +560,13 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
       if (raakt(s.computer)) {
         s.bal.y = computerLijn;
         const plek = (s.bal.x - s.computer) / (PONG_PEDDEL_BREED / 2);
-        s.bal.vx = plek * s.snelheid * 0.75;
+        s.bal.vx = plek * s.snelheid * 0.7;
         s.bal.vy = Math.sqrt(Math.max(0.04, s.snelheid * s.snelheid - s.bal.vx * s.bal.vx));
-      } else if (s.bal.y < -0.02) {
-        // De computer mist ook: dan gaat de bal gewoon opnieuw van start,
-        // zonder dat jij daarvoor gestraft wordt.
-        s.bal = { x: 0.5, y: 0.5, vx: (Math.random() < 0.5 ? -1 : 1) * 0.36, vy: s.snelheid };
+      } else if (s.bal.y < -0.05) {
+        // Bal gewonnen: dit is het moment waar het spel om draait.
+        setGewonnen((g) => g + 1);
+        setNiveau((n) => n + 1);
+        setStaat("gewonnen");
       }
     }
   });
@@ -511,10 +576,10 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
     if (!canvas || !maat.breedte) return;
     let bezig = true;
     const ctx = canvas.getContext("2d");
-    const B = maat.breedte, H = maat.hoogte;
 
     (function teken() {
       if (!bezig) return;
+      const B = maat.breedte, H = maat.hoogte;
       ctx.fillStyle = "#1B2430";
       ctx.fillRect(0, 0, B, H);
       ctx.strokeStyle = "rgba(255,255,255,0.13)";
@@ -532,11 +597,11 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
           ctx.roundRect(midden * B - pb / 2, y, pb, pd, pd / 2);
           ctx.fill();
         };
-        peddel(s.computer, PONG_PEDDEL_DIK * H * 2, "rgba(255,255,255,0.45)");
-        peddel(s.speler, H - PONG_PEDDEL_DIK * H * 3, PALETTE.info);
+        peddel(s.computer, PONG_TEGEN_LIJN * H - pd, "rgba(255,255,255,0.45)");
+        peddel(s.speler, PONG_SPELER_LIJN * H, PALETTE.info);
         ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
-        ctx.arc(s.bal.x * B, s.bal.y * H, Math.max(4, B * 0.018), 0, Math.PI * 2);
+        ctx.arc(s.bal.x * B, s.bal.y * H, Math.max(6, Math.min(B, H) * 0.016), 0, Math.PI * 2);
         ctx.fill();
       }
       requestAnimationFrame(teken);
@@ -544,11 +609,13 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
     return () => { bezig = false; };
   }, [canvasRef, maat.breedte, maat.hoogte]);
 
-  // Slepen met de vinger of de muis; de peddel volgt waar je bent.
-  const vakRef = useRef(null);
+  // Slepen mag overal binnen het bedieningsvlak: op het veld én in de strook
+  // eronder. De peddel volgt alleen de horizontale plek van je vinger, dus waar
+  // je hem precies neerzet maakt niet uit.
+  const stuurRef = useRef(null);
   function stuur(clientX) {
     const s = spel.current;
-    const vak = vakRef.current;
+    const vak = stuurRef.current;
     if (!s || !vak) return;
     const r = vak.getBoundingClientRect();
     const x = (clientX - r.left) / r.width;
@@ -572,32 +639,87 @@ function PongSpel({ beste, onKlaar, onSluiten }) {
   useEffect(() => {
     if (staat !== "af" || gemeld.current) return;
     gemeld.current = true;
-    if (score > 0) onKlaar(score);
-  }, [staat, score, onKlaar]);
+    if (gewonnen > 0) onKlaar(gewonnen);
+  }, [staat, gewonnen, onKlaar]);
   useEffect(() => { if (staat === "speelt") gemeld.current = false; }, [staat]);
 
   usePauzeerBijWegklikken(() => setStaat((s) => (s === "speelt" ? "af" : s)));
 
   return (
-    <div className="max-w-sm mx-auto">
-      <SpelKop titel="Pong" score={score} beste={beste} onSluiten={onSluiten} />
-      <div ref={vakRef}
-        className="relative rounded-2xl overflow-hidden border border-gray-100 shadow-sm bg-gray-900"
+    <SpelVolscherm onSluiten={onSluiten}
+      titel="Pong"
+      links={`Niveau ${niveau}`}
+      rechts={`${gewonnen} ${gewonnen === 1 ? "bal" : "ballen"} · record ${beste}`}>
+      <div ref={stuurRef} className="flex-1 min-h-0 flex flex-col"
         style={{ touchAction: "none" }}
         onTouchStart={(e) => stuur(e.touches[0].clientX)}
         onTouchMove={(e) => stuur(e.touches[0].clientX)}
         onPointerMove={(e) => { if (e.pointerType === "mouse") stuur(e.clientX); }}>
-        <canvas ref={canvasRef} className="block w-full" />
-        {staat === "klaar" && (
-          <SpelOverlay titel="Pong" uitleg="Sleep met je vinger om je peddel te bewegen. Elke keer raken telt, en hij wordt steeds sneller."
-            knop="Beginnen" onKnop={begin} />
-        )}
-        {staat === "af" && (
-          <SpelOverlay titel={`${score} keer geraakt`}
-            uitleg={score > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`}
-            knop="Nog een keer" onKnop={begin} />
-        )}
+        <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-gray-900">
+          <canvas ref={canvasRef} className="block" />
+          {staat === "klaar" && (
+            <SpelOverlay titel="Pong"
+              uitleg="Beweeg met je vinger in de balk onderaan. Win een bal van de tegenstander en je gaat een niveau hoger."
+              knop="Beginnen" onKnop={begin} />
+          )}
+          {staat === "serveren" && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="rp-rise font-display text-[30px] text-white/90">Niveau {niveau}</div>
+            </div>
+          )}
+          {staat === "gewonnen" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
+              style={{ background: "rgba(47,42,40,0.62)" }}>
+              <div className="rp-rise font-display text-[30px] text-white leading-snug">Bal gewonnen!</div>
+              <div className="text-sm text-white/85">
+                {gewonnen === 1 ? "Je eerste bal binnen." : `Dat zijn er ${gewonnen}.`} Door naar niveau {niveau}.
+              </div>
+            </div>
+          )}
+          {staat === "af" && (
+            <SpelOverlay
+              titel={gewonnen === 0 ? "Helaas" : `${gewonnen} ${gewonnen === 1 ? "bal" : "ballen"} gewonnen`}
+              uitleg={gewonnen > beste ? "Je eigen record verbroken." : `Je record staat op ${beste}.`}
+              knop="Nog een keer" onKnop={begin} />
+          )}
+        </div>
+
+        {/* De veegstrook. Hij hoort bij hetzelfde bedieningsvlak als het veld,
+            dus sturen kan hier én daar — maar hier zit je vinger niet in de weg. */}
+        <div className="shrink-0 mt-2 rounded-2xl border border-dashed border-gray-200 bg-white/70 flex items-center justify-center select-none"
+          style={{ height: "clamp(4.5rem, 16vh, 8rem)" }}>
+          <span className="text-xs text-gray-400 flex items-center gap-2">
+            <Icon name="arrowLeft" size={14} />Beweeg hier met je vinger<Icon name="arrowRight" size={14} />
+          </span>
+        </div>
       </div>
-    </div>
+    </SpelVolscherm>
+  );
+}
+
+// Een spel over het hele scherm: kop bovenaan, de rest is speelveld. Bewust
+// niet de scrollende volschermschil van de fotoquiz — hier mag juist niets
+// schuiven, anders scrol je de pagina weg terwijl je stuurt.
+function SpelVolscherm({ titel, links, rechts, onSluiten, children }) {
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[60] bg-gray-50 flex flex-col"
+      style={{
+        paddingTop: "calc(0.5rem + env(safe-area-inset-top))",
+        paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom))",
+      }}>
+      <div className="shrink-0 flex items-center gap-3 px-3 pb-2">
+        <button type="button" onClick={onSluiten} aria-label="Spel sluiten"
+          className="rp-press shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors">
+          <Icon name="close" size={18} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[18px] text-gray-800 leading-none truncate">{titel}</div>
+          {links && <div className="text-[11px] uppercase tracking-[0.1em] text-gray-400 mt-1">{links}</div>}
+        </div>
+        {rechts && <div className="shrink-0 text-xs text-gray-500 tnum">{rechts}</div>}
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col px-3 pb-1">{children}</div>
+    </div>,
+    document.body
   );
 }
