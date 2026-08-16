@@ -4595,10 +4595,19 @@ function clampTextBoxRect(t) {
   };
 }
 
-function photobookBackground(page) {
+// De pixelmaat gaat mee, net als bij de foto's op de pagina: de scherptecheck
+// in de app kan er anders niets over zeggen, en juist een achtergrondfoto vult
+// de hele bladzijde en heeft dus de meeste pixels nodig.
+function photobookBackground(page, maten) {
   if (page.background_type === "color" && page.background_color) return { type: "color", value: page.background_color };
   if (page.background_type === "photo" && page.background_photo_id) {
-    return { type: "photo", photoId: page.background_photo_id, url: `/api/photos/${page.background_photo_id}/raw`, overlay: page.background_overlay || 0 };
+    const maat = maten?.get(page.background_photo_id);
+    return {
+      type: "photo", photoId: page.background_photo_id,
+      url: `/api/photos/${page.background_photo_id}/raw`,
+      overlay: page.background_overlay || 0,
+      nativeWidth: maat?.width ?? null, nativeHeight: maat?.height ?? null,
+    };
   }
   return null;
 }
@@ -4611,6 +4620,13 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     "SELECT * FROM photobook_pages WHERE photobook_id = $1 ORDER BY position ASC",
     [params.id]
   );
+  // Eén vraag voor alle achtergrondfoto's samen, niet één per pagina.
+  const achtergrondIds = [...new Set(pages.filter((p) => p.background_photo_id).map((p) => p.background_photo_id))];
+  const achtergrondMaten = new Map();
+  if (achtergrondIds.length) {
+    const { rows } = await query("SELECT id, width, height FROM photos WHERE id = ANY($1::int[])", [achtergrondIds]);
+    rows.forEach((r) => achtergrondMaten.set(r.id, { width: r.width, height: r.height }));
+  }
   const { rows: pagePhotos } = await query(
     `SELECT pgp.*, ph.width AS native_width, ph.height AS native_height
      FROM photobook_page_photos pgp
@@ -4652,7 +4668,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
     pages: pages.map((pg) => ({
       id: pg.id, title: pg.title, titleAlign: pg.title_align, role: pg.role || null,
       titleX: pg.title_x, titleY: pg.title_y, titleWidth: pg.title_width, titleHeight: pg.title_height,
-      background: photobookBackground(pg),
+      background: photobookBackground(pg, achtergrondMaten),
       photos: photosByPage.get(pg.id) || [],
       textBoxes: textBoxesByPage.get(pg.id) || [],
     })),

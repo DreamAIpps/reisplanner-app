@@ -484,6 +484,34 @@ function usePhotobookAutoGrow({ innerRef, getPageEl, height, onChangeRect, html,
 // ontbreken bij foto's die vóór deze functie zijn geüpload.
 const PHOTOBOOK_A4_WIDTH_MM = 210, PHOTOBOOK_A4_HEIGHT_MM = 297;
 const PHOTOBOOK_MIN_PRINT_DPI = 150;
+// Wat er van een foto op papier terechtkomt, in cijfers. De waarschuwing per
+// foto is een stip in de hoek — genoeg om te zien dát er iets is, te weinig om
+// te weten wat. Dit rekent het uit: hoe groot hij wordt afgedrukt, en hoeveel
+// pixels er dan per inch overblijven.
+//
+// Dat laatste getal is waar het om gaat. Onder de 150 wordt het zichtbaar
+// zacht, tussen 150 en 220 is het net goed, daarboven ziet niemand het verschil
+// meer op fotopapier.
+const PHOTOBOOK_GOED_DPI = 220;
+
+function fotoAfdruk(photo, orientation) {
+  const pageWidthMm = orientation === "landscape" ? PHOTOBOOK_A4_HEIGHT_MM : PHOTOBOOK_A4_WIDTH_MM;
+  const pageHeightMm = orientation === "landscape" ? PHOTOBOOK_A4_WIDTH_MM : PHOTOBOOK_A4_HEIGHT_MM;
+  const breedteMm = photo.width * pageWidthMm;
+  const hoogteMm = photo.height * pageHeightMm;
+  if (!photo.nativeWidth || !photo.nativeHeight) {
+    return { breedteMm, hoogteMm, dpi: null, oordeel: "onbekend" };
+  }
+  // De laagste van de twee telt: een foto die breed genoeg is maar te weinig
+  // hoogte heeft, wordt in die richting uitgerekt en dáár zie je het.
+  const dpi = Math.floor(Math.min(
+    photo.nativeWidth / (breedteMm / 25.4),
+    photo.nativeHeight / (hoogteMm / 25.4)
+  ));
+  const oordeel = dpi < PHOTOBOOK_MIN_PRINT_DPI ? "laag" : dpi < PHOTOBOOK_GOED_DPI ? "krap" : "goed";
+  return { breedteMm, hoogteMm, dpi, oordeel };
+}
+
 function isPhotoLowRes(photo, orientation) {
   if (!photo.nativeWidth || !photo.nativeHeight) return false;
   const pageWidthMm = orientation === "landscape" ? PHOTOBOOK_A4_HEIGHT_MM : PHOTOBOOK_A4_WIDTH_MM;
@@ -650,7 +678,14 @@ function PhotobookCanvasPhoto({ photo, selected, onSelect, onChangeRect, getPage
           zou uitsteken — en overflow-hidden op de buitenste div zou zelf weer
           de greep afsnijden, die er juist net buiten hoort te steken. */}
       <div className="w-full h-full overflow-hidden" style={{ borderRadius: photobookCornerCss(photo.cornerRadius) }}>
-        <img src={photo.thumbUrl || photo.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none"
+        {/* De volledige foto en niet de thumbnail. Die thumbnail is 600 pixels
+            op de lange kant — prima voor een strookje in het dagboek, maar op
+            een halve A4 uitgerekt ziet hij er wazig uit, en dan lijkt het alsof
+            je fotoboek straks zo van de drukker komt. Dat is niet zo: de PDF
+            gebruikt altijd de volledige foto. Nu de editor ook, zodat wat je
+            ziet klopt met wat je krijgt. */}
+        <img src={photo.url || photo.thumbUrl} alt="" draggable={false} decoding="async"
+          className="w-full h-full object-cover pointer-events-none"
           style={{
             opacity: photo.opacity ?? 1,
             objectPosition: `${(photo.cropX ?? 0.5) * 100}% ${(photo.cropY ?? 0.5) * 100}%`,
@@ -866,6 +901,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   const [toonBewaard, setToonBewaard] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showBookMenu, setShowBookMenu] = useState(false); // voorbeeld/PDF/verwijderen, achter één knop
+  const [toonScherpte, setToonScherpte] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null); // { page, photo } | null
   const [selectedTextBox, setSelectedTextBox] = useState(null); // { page, box } | null
   const [selectedTitle, setSelectedTitle] = useState(null); // { page } | null
@@ -1427,6 +1463,12 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     return <PhotobookPreview title={title} pages={pages} orientation={orientation} onClose={() => setShowPreview(false)} />;
   }
 
+  if (toonScherpte) {
+    return <ScherpteControle pages={pages} orientation={orientation}
+      onGaNaarPagina={(i) => { setToonScherpte(false); setCurrentPageIndex(i); }}
+      onClose={() => setToonScherpte(false)} />;
+  }
+
   // Welke pagina's (1-based) elke foto gebruikt — voor het waarschuwings-
   // label in de canvas ("Ook op pag. X") en het "Al in dit boek"-teken in de
   // kiezer. Dubbel gebruik mag; dit is puur een hint, geen blokkade.
@@ -1553,6 +1595,10 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 {/* Verwijderen staat niet meer hier maar in het overzicht met
                     alle fotoboeken: je gooit een boek weg omdát je het niet meer
                     wilt bewerken, dus dat hoort niet in de editor thuis. */}
+                <button type="button" onClick={() => { setShowBookMenu(false); setToonScherpte(true); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
+                  <Icon name="search" size={15} className="text-gray-400" />Scherpte controleren
+                </button>
                 <button type="button" onClick={() => { setShowBookMenu(false); handleDownloadPdf(); }}
                   className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                   <Icon name="doc" size={15} className="text-gray-400" />Downloaden als PDF
@@ -2245,6 +2291,112 @@ function PhotobookPageView({ page, orientation, className = "", titleClassName =
           <RichTextView html={schaalPunten(page.title, orientation)} align={page.titleAlign} className={titleClassName} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- Scherpte controleren ----------
+//
+// De stip in de hoek van een foto zegt dát er iets is; dit zegt wát. Per foto:
+// hoe groot hij op papier komt, hoeveel pixels er dan per inch overblijven, en
+// of dat genoeg is. Met een tik door naar de pagina waar hij staat, want een
+// waarschuwing zonder weg ernaartoe is een dood eind.
+//
+// Waarom het nodig is: op het scherm ziet alles er gelijk uit, ook een foto die
+// veel te klein is voor het kader waarin hij staat. Dat merk je pas als het boek
+// op de mat ligt, en dan is het te laat.
+function ScherpteControle({ pages, orientation, onGaNaarPagina, onClose }) {
+  const rijen = [];
+  pages.forEach((pg, i) => {
+    pg.photos.forEach((ph) => rijen.push({ pagina: i + 1, foto: ph, achtergrond: false, ...fotoAfdruk(ph, orientation) }));
+    // Een achtergrondfoto vult de hele pagina; dat is het zwaarste geval en
+    // juist daar valt een tekort het snelst op.
+    if (pg.background?.type === "photo") {
+      const vol = { ...pg.background, width: 1, height: 1, nativeWidth: pg.background.nativeWidth, nativeHeight: pg.background.nativeHeight };
+      rijen.push({ pagina: i + 1, foto: vol, achtergrond: true, ...fotoAfdruk(vol, orientation) });
+    }
+  });
+
+  const tellen = { laag: 0, krap: 0, goed: 0, onbekend: 0 };
+  rijen.forEach((r) => { tellen[r.oordeel]++; });
+
+  const KLEUR = {
+    laag: { vlak: "bg-red-50 border-red-100", tekst: "text-red-700", label: "Te laag" },
+    krap: { vlak: "bg-amber-50 border-amber-100", tekst: "text-amber-700", label: "Krap" },
+    goed: { vlak: "bg-green-50 border-green-100", tekst: "text-green-700", label: "Goed" },
+    onbekend: { vlak: "bg-gray-50 border-gray-100", tekst: "text-gray-500", label: "Onbekend" },
+  };
+  const cm = (mm) => (mm / 10).toFixed(1).replace(".", ",");
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-gray-50 overflow-y-auto">
+      <div className="sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md border-b border-gray-100 px-4 py-3 flex items-center gap-3"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
+        <button type="button" onClick={onClose} aria-label="Sluiten"
+          className="rp-press shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors">
+          <Icon name="close" size={18} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[18px] text-gray-800 leading-none">Scherpte</div>
+          <div className="text-[11px] text-gray-400 mt-1 tnum">{rijen.length} {rijen.length === 1 ? "foto" : "foto's"} in dit boek</div>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-4 py-4 space-y-3" style={{ paddingBottom: "calc(2rem + env(safe-area-inset-bottom))" }}>
+        {rijen.length === 0 ? (
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-6 text-center text-sm text-gray-400">
+            Er staan nog geen foto's in dit boek.
+          </div>
+        ) : (
+          <>
+            <div className="rounded-2xl border border-gray-100 bg-white p-4">
+              <div className="flex flex-wrap gap-2">
+                {["laag", "krap", "goed", "onbekend"].map((soort) => tellen[soort] > 0 && (
+                  <span key={soort} className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${KLEUR[soort].vlak} ${KLEUR[soort].tekst}`}>
+                    {tellen[soort]}× {KLEUR[soort].label.toLowerCase()}
+                  </span>
+                ))}
+              </div>
+              <p className="text-sm text-gray-500 mt-3 leading-relaxed">
+                {tellen.laag === 0
+                  ? "Geen foto valt onder de ondergrens. Wat op \u201ckrap\u201d staat wordt afgedrukt, maar wint aan scherpte als je het kader iets kleiner maakt."
+                  : `${tellen.laag} ${tellen.laag === 1 ? "foto is" : "foto's zijn"} te klein voor het kader waarin ${tellen.laag === 1 ? "hij" : "ze"} staat. Maak het kader kleiner of kies een andere foto.`}
+              </p>
+              <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                Onder de {PHOTOBOOK_MIN_PRINT_DPI} pixels per inch wordt het zichtbaar zacht, vanaf {PHOTOBOOK_GOED_DPI} ziet
+                niemand het verschil meer. Foto&rsquo;s worden bij het uploaden verkleind naar 2000 pixels op de lange
+                kant, dus een foto over de volle bladzijde haalt hooguit ongeveer 170.
+              </p>
+            </div>
+
+            {rijen.map((r, i) => {
+              const k = KLEUR[r.oordeel];
+              return (
+                <button key={i} type="button" onClick={() => onGaNaarPagina(r.pagina - 1)}
+                  className={`w-full text-left rounded-2xl border p-3 flex items-center gap-3 transition-colors hover:border-gray-300 ${k.vlak}`}>
+                  <img src={r.foto.thumbUrl || r.foto.url} alt="" loading="lazy" decoding="async"
+                    className="w-14 h-14 rounded-xl object-cover shrink-0 bg-white" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-gray-800">
+                      Pagina {r.pagina}{r.achtergrond ? " · achtergrond" : ""}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5 tnum">
+                      {r.foto.nativeWidth && r.foto.nativeHeight
+                        ? `${r.foto.nativeWidth} × ${r.foto.nativeHeight} pixels`
+                        : "pixelmaat onbekend"}
+                      {" · "}{cm(r.breedteMm)} × {cm(r.hoogteMm)} cm op papier
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className={`text-sm font-bold tnum ${k.tekst}`}>{r.dpi != null ? r.dpi : "?"}</div>
+                    <div className="text-[10px] uppercase tracking-[0.08em] text-gray-400">dpi</div>
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
+      </div>
     </div>
   );
 }
