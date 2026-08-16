@@ -286,6 +286,42 @@ const PHOTOBOOK_OVERLAY_PRESETS = [
   { value: 0.75, label: "75%" },
 ];
 
+// De ruimte tussen twee bladzijden van een opengeslagen boek. Geen echte vouw
+// nagebootst: één haarlijn is genoeg om te zien dat het twee vellen zijn.
+const SPREAD_KIER = 2;
+
+// Wat er als achtergrond op een pagina komt te staan. Een foto over beide
+// bladzijden zit hier niet bij: die krijgt een eigen laag (zie spreadLaag).
+function paginaAchtergrond(pg) {
+  const bg = pg.background;
+  if (bg?.type === "color") return bg.value;
+  if (bg?.type === "photo" && !bg.spread) return `url("${bg.url}") center/cover no-repeat`;
+  return PALETTE.background;
+}
+
+// Een achtergrondfoto over twee bladzijden is één foto die het hele opengeslagen
+// boek vult. In plaats van hem op de pagina zelf te zetten hangt hij in een laag
+// die twee bladzijden breed is; op de rechterpagina schuift die laag een
+// bladzijde naar links, en de pagina (overflow-hidden) knipt de rest weg. Zo
+// gaat het plaatje bij de vouw precies verder waar het ophield, en kan het
+// gewoon "cover" blijven — over de dubbele breedte gemeten, dus zonder
+// uitrekken. `kant` is 0 voor links en 1 voor rechts; een pagina die alleen
+// staat (de kaft) telt als links.
+function spreadLaag(pg, kant) {
+  const bg = pg.background;
+  if (bg?.type !== "photo" || !bg.spread) return null;
+  // De laag beslaat beide bladzijden én de kier ertussen: anders zou juist dat
+  // streepje uit de foto weggeknipt worden en verspringt het beeld bij de vouw.
+  return (
+    <div className="absolute top-0 bottom-0 pointer-events-none" aria-hidden="true"
+      style={{
+        left: kant ? `calc(-100% - ${SPREAD_KIER}px)` : 0,
+        width: `calc(200% + ${SPREAD_KIER}px)`,
+        background: `url("${bg.url}") center/cover no-repeat`,
+      }} />
+  );
+}
+
 // Kant-en-klare paginaindelingen, zoals "Pagina sjablonen" bij professionele
 // fotoboek-editors (Albelli e.d.) — één tik legt de al aanwezige foto's op
 // deze pagina in een verzorgde verhouding neer, in plaats van dat je zelf
@@ -981,6 +1017,9 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // meer nodig zoals toen alle pagina's onder elkaar stonden — telkens één
   // canvas/titel/beschrijving-veld gemonteerd.
   const canvasRef = useRef(null); // DOM-node van de A4-canvas, voor pixel->fractie omrekening tijdens verslepen
+  // Eén node per zichtbare bladzijde: bij een opengeslagen boek staan er twee
+  // naast elkaar en moet het verslepen weten in wélke pagina je bezig bent.
+  const paginaRefs = useRef({});
   const canvasAreaRef = useRef(null); // omringende vlak waarbinnen de canvas moet passen (voor canvasSize hieronder)
   const swipeRef = useRef(null); // beginpunt van een veeg over de lege pagina/marge, voor bladeren tussen pagina's
   const titleRef = useRef(null); // titel-tekstveld van de geselecteerde titel, voor de opmaakknoppen
@@ -998,6 +1037,28 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   // pixelwaarden toepassen; een ResizeObserver houdt dit bij als het vlak
   // van vorm verandert (kantelen, resizen, het paneel openen/sluiten).
   const [canvasSize, setCanvasSize] = useState(null);
+  // Eén of twee bladzijden in beeld. In een ref omdat de meetfunctie hieronder
+  // buiten React om draait (ResizeObserver), en in state zodat de meting
+  // opnieuw gebeurt zodra je van de kaft naar een dubbele pagina gaat.
+  // De twee bladzijden die tegenover elkaar liggen, in dezelfde indeling als
+  // het overzicht: de kaft alleen, daarna twee aan twee. Zit de pagina waar je
+  // in bezig bent in zo'n paar, dan staan ze allebei op het scherm.
+  //
+  // Bewust hierboven en niet vlak voor het tekenen: verderop staat een vroege
+  // return voor "Laden...", en een hook daaronder is er soms wel en soms niet.
+  const spreadPaginas = (() => {
+    const lijst = pages || [];
+    const huidige = lijst[currentPageIndex];
+    if (!huidige) return [];
+    const spread = photobookSpreads(lijst).find((sp) => sp.items.some((it) => it.index === currentPageIndex));
+    return spread ? spread.items : [{ page: huidige, index: currentPageIndex }];
+  })();
+  // Eén of twee bladzijden in beeld. In een ref omdat de meetfunctie hieronder
+  // buiten React om draait (ResizeObserver), en in state zodat de meting
+  // opnieuw gebeurt zodra je van de kaft naar een dubbele pagina gaat.
+  const spreadAantal = Math.max(1, spreadPaginas.length);
+  const spreadAantalRef = useRef(1);
+  spreadAantalRef.current = spreadAantal;
   const pagesLoaded = pages !== null; // canvasAreaRef bestaat pas zodra dit true wordt (zie "Laden..."-return hierboven) — zonder deze afhankelijkheid mist het effect die overgang als "orientation" ondertussen niet wijzigt
 
   // De opslag-functie draait uit een timer en zou anders de `pages` van het
@@ -1007,7 +1068,11 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
   useEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
-    const targetRatio = orientation === "landscape" ? 297 / 210 : 210 / 297;
+    // Bij een opengeslagen boek moeten twee bladzijden naast elkaar passen, dus
+    // rekent de verhouding met de dubbele breedte. Zonder dit werd elke pagina
+    // even groot als voorheen en viel het paar samen buiten beeld.
+    const paginaRatio = orientation === "landscape" ? 297 / 210 : 210 / 297;
+    const targetRatio = paginaRatio * spreadAantalRef.current;
     function recompute() {
       // el.clientWidth/Height omvat ook el's eigen padding (p-3); de canvas
       // wordt daarbinnen (in de content-box) gecentreerd, dus die padding
@@ -1031,7 +1096,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     // niet, dus zonder deze afhankelijkheid hing de observer zich nergens aan
     // en bleef canvasSize null zodra je daarna op een pagina inzoomde — de
     // canvas viel dan terug op de onbetrouwbare aspect-ratio-noodgreep.
-  }, [orientation, pagesLoaded, viewMode]);
+  }, [orientation, pagesLoaded, viewMode, spreadAantal]);
 
   // Blijft binnen de grenzen als de laatste pagina verwijderd wordt, en
   // wisselt van geselecteerd element als er naar een andere pagina genavigeerd
@@ -1221,6 +1286,23 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
     setSelectedPhoto((sel) => (sel && sel.page === pageIndex && sel.photo === photoIndex ? { page: pageIndex, photo: j } : sel));
     setDirty(true);
   }
+  // De foto over het opengeslagen paar leggen, of juist weer niet. Beide
+  // bladzijden krijgen dezelfde achtergrond en dezelfde vlag; alleen dan gaat
+  // het plaatje bij de vouw ook echt verder. Uitzetten laat de foto op deze
+  // pagina staan en haalt hem bij de buurman weg — dat is wat "niet meer
+  // overspannen" betekent, en niet "gooi mijn achtergrond weg".
+  function zetSpreadAchtergrond(aan) {
+    const bron = pages[currentPageIndex]?.background;
+    if (!bron || bron.type !== "photo") return;
+    const buur = spreadPaginas.find((it) => it.index !== currentPageIndex);
+    setPages((ps) => ps.map((p, i) => {
+      if (i === currentPageIndex) return { ...p, background: { ...bron, spread: aan } };
+      if (buur && i === buur.index) return { ...p, background: aan ? { ...bron, spread: true } : null };
+      return p;
+    }));
+    setDirty(true);
+  }
+
   function updatePhotoRect(pageIndex, photoIndex, patch) {
     pushHistory();
     setPages((ps) => ps.map((p, i) => (i !== pageIndex ? p : {
@@ -1401,7 +1483,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
         titleX: p.titleX, titleY: p.titleY, titleWidth: p.titleWidth, titleHeight: p.titleHeight,
         background: !p.background ? null
           : p.background.type === "color" ? { type: "color", value: p.background.value }
-          : { type: "photo", photo_id: p.background.photoId, overlay: p.background.overlay },
+          : { type: "photo", photo_id: p.background.photoId, overlay: p.background.overlay, spread: !!p.background.spread },
         photos: p.photos.map((ph) => ({
           photo_id: ph.photoId, x: ph.x, y: ph.y, width: ph.width, height: ph.height,
           opacity: ph.opacity, cornerRadius: ph.cornerRadius, cropX: ph.cropX, cropY: ph.cropY, cropZoom: ph.cropZoom,
@@ -1701,8 +1783,17 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
           </div>
         ) : (
           <>
+            {/* Het opengeslagen boek: de twee bladzijden die tegenover elkaar
+                liggen staan naast elkaar en zijn allebei te bewerken. Je hoefde
+                eerst heen en weer te bladeren om te zien of de linkerpagina bij
+                de rechter paste, en dat is precies wat je wél wilt zien terwijl
+                je bezig bent. De kaft blijft alleen staan — die ligt in het
+                echt ook niet naast iets. */}
+            <div className="flex items-stretch" style={{ gap: `${SPREAD_KIER}px` }}>
+            {spreadPaginas.map(({ page: pg, index: pIndex }, kant) => (
+            <React.Fragment key={pIndex}>
             <div
-              ref={canvasRef}
+              ref={(el) => { paginaRefs.current[pIndex] = el; if (pIndex === currentPageIndex) canvasRef.current = el; }}
               onPointerDown={() => { setSelectedPhoto(null); setSelectedTextBox(null); setSelectedTitle(null); }}
               className="relative overflow-hidden shadow-2xl"
               style={canvasSize ? {
@@ -1711,26 +1802,24 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 // in de praktijk niet betrouwbaar de juiste kant (breedte of
                 // hoogte) als bottleneck te kiezen zodra het beschikbare vlak
                 // zelf van vorm wisselt (bijv. de telefoon kantelen).
-                width: `${canvasSize.width}px`, height: `${canvasSize.height}px`,
+                width: `${(canvasSize.width - SPREAD_KIER * (spreadAantal - 1)) / spreadAantal}px`,
+                height: `${canvasSize.height}px`,
                 // Maakt de pagina de maatstaf voor cqmin, waarmee de hoeken van
                 // alle foto's even rond zijn. De maat staat hier al vast in
                 // pixels, dus de size-containment die hierbij hoort verandert
                 // niets aan de opmaak.
                 containerType: "size",
-                background: page.background?.type === "color" ? page.background.value
-                  : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
-                  : PALETTE.background,
+                background: paginaAchtergrond(pg),
               } : {
                 // Eerste render, vóórdat de ResizeObserver heeft kunnen meten —
                 // dezelfde oude aanpak als noodgreep, maar dan maar heel even.
                 aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
                 maxWidth: "100%", maxHeight: "100%",
                 containerType: "size",
-                background: page.background?.type === "color" ? page.background.value
-                  : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
-                  : PALETTE.background,
+                background: paginaAchtergrond(pg),
               }}
             >
+              {spreadLaag(pg, kant)}
               {/* Het raster echt laten zien zolang "Raster" aanstaat. Zonder
                   lijnen leek de knop niets te doen: het snappen werkte wel,
                   maar er was niets om op te mikken. De lijnen staan precies op
@@ -1747,46 +1836,46 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   ))}
                 </div>
               )}
-              {page.background?.type === "photo" && page.background.overlay > 0 && (
-                <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
+              {pg.background?.type === "photo" && pg.background.overlay > 0 && (
+                <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: pg.background.overlay }} />
               )}
-              {page.photos.map((ph, j) => (
+              {pg.photos.map((ph, j) => (
                 <PhotobookCanvasPhoto key={`${ph.photoId}-${j}`} photo={ph}
-                  selected={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j}
-                  onSelect={() => { setSelectedPhoto({ page: currentPageIndex, photo: j }); setSelectedTextBox(null); setSelectedTitle(null); }}
-                  onChangeRect={(patch) => updatePhotoRect(currentPageIndex, j, patch)}
-                  getPageEl={() => canvasRef.current}
+                  selected={selectedPhoto?.page === pIndex && selectedPhoto?.photo === j}
+                  onSelect={() => { setSelectedPhoto({ page: pIndex, photo: j }); setSelectedTextBox(null); setSelectedTitle(null); }}
+                  onChangeRect={(patch) => updatePhotoRect(pIndex, j, patch)}
+                  getPageEl={() => paginaRefs.current[pIndex]}
                   snap={snapEnabled}
-                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== currentPageIndex + 1)}
-                  cropActive={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j && cropMode}
-                  onToggleCrop={selectedPhoto?.page === currentPageIndex && selectedPhoto?.photo === j ? toggleCropMode : null}
+                  duplicatePages={[...(photoPageNumbers.get(ph.photoId) || [])].filter((n) => n !== pIndex + 1)}
+                  cropActive={selectedPhoto?.page === pIndex && selectedPhoto?.photo === j && cropMode}
+                  onToggleCrop={selectedPhoto?.page === pIndex && selectedPhoto?.photo === j ? toggleCropMode : null}
                   orientation={orientation} />
               ))}
-              {(page.textBoxes || []).map((box, k) => (
+              {(pg.textBoxes || []).map((box, k) => (
                 <PhotobookCanvasTextBox key={box.id ?? k} box={box}
-                  selected={selectedTextBox?.page === currentPageIndex && selectedTextBox?.box === k}
-                  onSelect={() => { setSelectedTextBox({ page: currentPageIndex, box: k }); setSelectedPhoto(null); setSelectedTitle(null); }}
-                  onChangeRect={(patch) => updateTextBoxRect(currentPageIndex, k, patch)}
-                  onChangeHtml={(html) => updateTextBoxRect(currentPageIndex, k, { html })}
-                  getPageEl={() => canvasRef.current}
+                  selected={selectedTextBox?.page === pIndex && selectedTextBox?.box === k}
+                  onSelect={() => { setSelectedTextBox({ page: pIndex, box: k }); setSelectedPhoto(null); setSelectedTitle(null); }}
+                  onChangeRect={(patch) => updateTextBoxRect(pIndex, k, patch)}
+                  onChangeHtml={(html) => updateTextBoxRect(pIndex, k, { html })}
+                  getPageEl={() => paginaRefs.current[pIndex]}
                   snap={snapEnabled}
                   richTextRef={textBoxRef} />
               ))}
-              {page.photos.length === 0 && !page.background && (page.textBoxes || []).length === 0 && (
+              {pg.photos.length === 0 && !pg.background && (pg.textBoxes || []).length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none">Nog geen foto's</div>
               )}
               {/* Altijd bovenop de foto's getekend (en met eigen achtergrond),
                   anders verdwijnt de titel achter een foto die er bovenop ligt
                   — bijv. bij één foto per pagina die bijna de hele pagina vult. */}
-              <PhotobookCanvasTitle page={page}
-                selected={selectedTitle?.page === currentPageIndex}
-                onSelect={() => { setSelectedTitle({ page: currentPageIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
-                onChangeRect={(patch) => updatePage(currentPageIndex, {
-                  titleX: patch.x ?? page.titleX, titleY: patch.y ?? page.titleY,
-                  titleWidth: patch.width ?? page.titleWidth, titleHeight: patch.height ?? page.titleHeight,
+              <PhotobookCanvasTitle page={pg}
+                selected={selectedTitle?.page === pIndex}
+                onSelect={() => { setSelectedTitle({ page: pIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
+                onChangeRect={(patch) => updatePage(pIndex, {
+                  titleX: patch.x ?? pg.titleX, titleY: patch.y ?? pg.titleY,
+                  titleWidth: patch.width ?? pg.titleWidth, titleHeight: patch.height ?? pg.titleHeight,
                 })}
-                onChangeHtml={(html) => updatePage(currentPageIndex, { title: html })}
-                getPageEl={() => canvasRef.current}
+                onChangeHtml={(html) => updatePage(pIndex, { title: html })}
+                getPageEl={() => paginaRefs.current[pIndex]}
                 snap={snapEnabled}
                 richTextRef={titleRef} />
 
@@ -1796,6 +1885,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                   dan het scherm kan staan) precies op de hoeken van de
                   pagina zelf blijven staan, niet ergens in de lege ruimte
                   eromheen. */}
+              {pIndex === currentPageIndex && (<>
               <button type="button" onClick={() => setShowPagePanel((s) => !s)} aria-label="Pagina-instellingen"
                 className={`absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg transition-colors ${showPagePanel ? "bg-sky-600 text-white" : "bg-white text-gray-600 hover:text-sky-600"}`}>
                 <Icon name="sliders" size={17} />
@@ -1806,27 +1896,31 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               </button>
               {showAddMenu && (
                 <div className="absolute top-16 left-3 z-20 bg-white rounded-xl shadow-2xl p-1.5 space-y-0.5">
-                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(currentPageIndex); }}
+                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(pIndex); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="frame" size={15} className="text-gray-400" />Foto's
                   </button>
-                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(currentPageIndex, "background"); }}
+                  <button type="button" onClick={() => { setShowAddMenu(false); openPicker(pIndex, "background"); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="camera" size={15} className="text-gray-400" />Achtergrondfoto
                   </button>
-                  <button type="button" onClick={() => { setShowAddMenu(false); addTextBox(currentPageIndex); }}
+                  <button type="button" onClick={() => { setShowAddMenu(false); addTextBox(pIndex); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="alignLeft" size={15} className="text-gray-400" />Tekstvak
                   </button>
                   {/* Titel toevoegen: selecteert het (nu nog lege) titelvak zodat
                       je meteen kunt typen. Een titel weghalen doe je met de
                       prullenbak in het titelpaneel. */}
-                  <button type="button" onClick={() => { setShowAddMenu(false); setSelectedTitle({ page: currentPageIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
+                  <button type="button" onClick={() => { setShowAddMenu(false); setSelectedTitle({ page: pIndex }); setSelectedPhoto(null); setSelectedTextBox(null); }}
                     className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap">
                     <Icon name="titleText" size={15} className="text-gray-400" />Titel
                   </button>
                 </div>
               )}
+              </>)}
+            </div>
+            </React.Fragment>
+            ))}
             </div>
 
             {showPagePanel && (
@@ -1881,6 +1975,20 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                           <Icon name="trash" size={14} />
                         </button>
                       </div>
+                      {/* Over twee bladzijden: zet dezelfde foto op de buurpagina
+                          en markeer allebei, want een pagina weet zelf niet wie
+                          zijn buurman is. Weghalen doet het omgekeerde. Alleen
+                          zichtbaar bij een opengeslagen paar — op de kaft valt er
+                          niets te overspannen. */}
+                      {spreadPaginas.length === 2 && (
+                        <button type="button" onClick={() => zetSpreadAchtergrond(!page.background.spread)}
+                          className={`w-full mb-2 px-3 h-9 rounded-lg text-xs font-semibold border transition-colors flex items-center justify-center gap-2 ${
+                            page.background.spread ? "border-sky-400 bg-sky-50 text-sky-700" : "border-gray-200 text-gray-600 hover:border-gray-300"
+                          }`}>
+                          <Icon name={page.background.spread ? "check" : "alignGrid"} size={14} />
+                          Over beide bladzijden
+                        </button>
+                      )}
                       <div className="flex items-center gap-1">
                         <span className="text-[11px] text-gray-400 mr-0.5">Witte sluier</span>
                         {PHOTOBOOK_OVERLAY_PRESETS.map((p) => (
@@ -2114,6 +2222,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
               <Icon name="grid" size={15} />
             </button>
             <button type="button" onClick={() => setCurrentPageIndex((p) => Math.max(0, p - 1))} disabled={currentPageIndex === 0}
+              title="Vorige pagina" aria-label="Vorige pagina"
               className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
               <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "none" : "rotate(-90deg)" }} />
             </button>
@@ -2124,6 +2233,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
                 : `Pagina ${currentPageIndex + 1} / ${pages.length}`}
             </span>
             <button type="button" onClick={() => setCurrentPageIndex((p) => Math.min(pages.length - 1, p + 1))} disabled={currentPageIndex >= pages.length - 1}
+              title="Volgende pagina" aria-label="Volgende pagina"
               className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors self-center">
               <Icon name="arrowUp" size={14} style={{ transform: barsAside ? "rotate(180deg)" : "rotate(90deg)" }} />
             </button>
@@ -2294,16 +2404,15 @@ function schaalPunten(html, orientation) {
   );
 }
 
-function PhotobookPageView({ page, orientation, className = "", titleClassName = "font-display text-base text-gray-800", textClassName = "text-sm" }) {
+function PhotobookPageView({ page, orientation, kant = 0, className = "", titleClassName = "font-display text-base text-gray-800", textClassName = "text-sm" }) {
   return (
     <div className={`overflow-hidden relative ${className}`}
       style={{
         aspectRatio: orientation === "landscape" ? "297 / 210" : "210 / 297",
         containerType: "size",
-        background: page.background?.type === "color" ? page.background.value
-          : page.background?.type === "photo" ? `url("${page.background.url}") center/cover no-repeat`
-          : PALETTE.background,
+        background: paginaAchtergrond(page),
       }}>
+      {spreadLaag(page, kant)}
       {page.background?.type === "photo" && page.background.overlay > 0 && (
         <div className="absolute inset-0 bg-white pointer-events-none" style={{ opacity: page.background.overlay }} />
       )}
@@ -2524,12 +2633,14 @@ function PhotobookOverview({ pages, orientation, onOpenPage, onAddPage }) {
               De kaft wordt als één vel gedrukt: achterkant links, voorkant rechts. Beide kanten ontwerp je zelf.
             </div>
           )}
-          <div className="flex gap-0.5">
-            {spread.items.map(({ page, index, label }) => (
+          {/* Dezelfde kier als in de editor, zodat een achtergrond over beide
+              bladzijden hier op precies dezelfde plek breekt. */}
+          <div className="flex" style={{ gap: `${SPREAD_KIER}px` }}>
+            {spread.items.map(({ page, index, label }, kant) => (
               <button key={index} type="button" onClick={() => onOpenPage(index)}
                 title={`${spread.kaft ? label : `Pagina ${label}`} bewerken`}
                 className="rp-press relative block flex-1 min-w-0 shadow-2xl hover:ring-2 hover:ring-sky-400 transition-shadow">
-                <PhotobookPageView page={page} orientation={orientation}
+                <PhotobookPageView page={page} orientation={orientation} kant={kant}
                   titleClassName="font-display text-[9px] text-gray-800"
                   textClassName="text-[7px]" />
                 {page.photos.length === 0 && !page.title && (page.textBoxes || []).length === 0 && (
