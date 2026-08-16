@@ -740,6 +740,11 @@ async function voerMigratiesUit() {
     -- Witte sluier over een achtergrondfoto (0 = geen, tot 0.75 = bijna wit),
     -- zodat voorgrondtekst/-foto's leesbaar blijven op een drukke achtergrond.
     ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_overlay REAL NOT NULL DEFAULT 0;
+    -- Loopt de achtergrondfoto door over de twee pagina's van een opengeslagen
+    -- boek? Dan toont de linkerpagina de linkerhelft en de rechter de rechter.
+    -- Het staat per pagina en niet per spread, want een pagina weet zelf niet
+    -- wie zijn buurman is — die volgt uit de volgorde, en die kan veranderen.
+    ALTER TABLE photobook_pages ADD COLUMN IF NOT EXISTS background_spread BOOLEAN NOT NULL DEFAULT false;
     -- Welke rol een pagina in het boek speelt: 'cover_front', 'cover_back' of
     -- leeg voor een gewone binnenpagina. Een kaft is geen gewone pagina — hij
     -- wordt op één vel gedrukt met de achterkant links en de voorkant rechts —

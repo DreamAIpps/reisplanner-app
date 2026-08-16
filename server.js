@@ -4606,6 +4606,7 @@ function photobookBackground(page, maten) {
       type: "photo", photoId: page.background_photo_id,
       url: `/api/photos/${page.background_photo_id}/raw`,
       overlay: page.background_overlay || 0,
+      spread: !!page.background_spread,
       nativeWidth: maat?.width ?? null, nativeHeight: maat?.height ?? null,
     };
   }
@@ -4739,18 +4740,19 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   // iets mis — een wegvallende verbinding, een fout op pagina twintig — dan bleef
   // je fotoboek half leeg achter, zonder weg terug.
   const paginaRijen = items.map((page, i) => {
-    let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0;
+    let bgType = null, bgColor = null, bgPhotoId = null, bgOverlay = 0, bgSpread = false;
     if (page.background?.type === "color" && typeof page.background.value === "string") {
       bgType = "color"; bgColor = page.background.value;
     } else if (page.background?.type === "photo") {
       bgType = "photo"; bgPhotoId = Number(page.background.photo_id);
       const overlay = Number(page.background.overlay);
       bgOverlay = Number.isFinite(overlay) ? Math.min(0.75, Math.max(0, overlay)) : 0;
+      bgSpread = !!page.background.spread;
     }
     return [
       params.id, i,
       sanitizePhotobookHtml(typeof page.title === "string" ? page.title.trim() : null),
-      bgType, bgColor, bgPhotoId, bgOverlay, validAlign(page.titleAlign),
+      bgType, bgColor, bgPhotoId, bgOverlay, bgSpread, validAlign(page.titleAlign),
       // Titel is vrij versleepbaar/vergrootbaar zoals een tekstvak — zelfde
       // klem-logica (fractie 0-1, met een minimale breedte/hoogte).
       Math.min(1, Math.max(0, n(page.titleX, 0.15))),
@@ -4774,14 +4776,14 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
     // teruggegeven id's horen bij items[0], items[1], ...
     const kolommen = (rijen, aantal) =>
       Array.from({ length: aantal }, (_, k) => rijen.map((r) => r[k]));
-    const pk = kolommen(paginaRijen, 13);
+    const pk = kolommen(paginaRijen, 14);
     const { rows: nieuwePaginas } = await client.query(
       `INSERT INTO photobook_pages
          (photobook_id, position, title, background_type, background_color, background_photo_id,
-          background_overlay, title_align, title_x, title_y, title_width, title_height, role)
+          background_overlay, background_spread, title_align, title_x, title_y, title_width, title_height, role)
        SELECT * FROM unnest(
          $1::int[], $2::int[], $3::text[], $4::text[], $5::text[], $6::int[],
-         $7::real[], $8::text[], $9::real[], $10::real[], $11::real[], $12::real[], $13::text[])
+         $7::real[], $8::boolean[], $9::text[], $10::real[], $11::real[], $12::real[], $13::real[], $14::text[])
        RETURNING id`,
       pk
     );
@@ -5003,6 +5005,18 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   const pageW = landscape ? PDF_PAGE_HEIGHT : PDF_PAGE_WIDTH;
   const pageH = landscape ? PDF_PAGE_WIDTH : PDF_PAGE_HEIGHT;
 
+  // Welke pagina ligt links en welke rechts in het opengeslagen boek? Dezelfde
+  // indeling als in de app: de kaft staat alleen, daarna liggen ze twee aan
+  // twee. Alleen nodig voor een achtergrondfoto die over beide bladzijden
+  // loopt — die moet weten welke helft hij hier laat zien.
+  const spreadKant = new Map();
+  {
+    const binnenwerk = pages.filter((p) => p.role !== "cover_front" && p.role !== "cover_back");
+    // Boeken van vóór de losse kaftpagina's: pagina één stond alleen.
+    const zonderKaft = binnenwerk.length === pages.length ? binnenwerk.slice(1) : binnenwerk;
+    zonderKaft.forEach((p, i) => spreadKant.set(p.id, i % 2 === 0 ? "links" : "rechts"));
+  }
+
   const doc = new PDFDocument({ size: "A4", layout: landscape ? "landscape" : "portrait", autoFirstPage: false, margin: 0 });
   // Eerst volledig in het geheugen opbouwen (in plaats van doc.pipe(res)) zodat
   // we een Content-Length kunnen meesturen — de client heeft dat nodig om een
@@ -5019,7 +5033,24 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
       const bgData = bgPhotosById.get(page.background_photo_id);
       if (bgData) {
         try {
-          doc.image(bgData, 0, 0, { cover: [pageW, pageH] });
+          if (page.background_spread) {
+            // Eén foto over het opengeslagen boek. Hij wordt over de dubbele
+            // breedte gelegd en per pagina schuift hij op, zodat de rechterhelft
+            // precies verdergaat waar de linker ophoudt. Buiten de bladzijde
+            // afknippen, anders loopt de andere helft over deze pagina heen.
+            // Gecentreerd, net als het "center/cover" op het scherm — anders
+            // valt de vouw hier op een andere plek in de foto dan in de editor.
+            const linkerpagina = spreadKant.get(page.id) !== "rechts";
+            doc.save();
+            doc.rect(0, 0, pageW, pageH).clip();
+            doc.image(bgData, linkerpagina ? 0 : -pageW, 0, { cover: [pageW * 2, pageH], align: "center", valign: "center" });
+            doc.restore();
+          } else {
+            doc.save();
+            doc.rect(0, 0, pageW, pageH).clip();
+            doc.image(bgData, 0, 0, { cover: [pageW, pageH], align: "center", valign: "center" });
+            doc.restore();
+          }
           if (page.background_overlay > 0) {
             doc.rect(0, 0, pageW, pageH).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
           }
