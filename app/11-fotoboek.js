@@ -291,6 +291,29 @@ const PHOTOBOOK_OVERLAY_PRESETS = [
 // deze pagina in een verzorgde verhouding neer, in plaats van dat je zelf
 // vanaf een stapel begint te schuiven. Vrij verslepen blijft daarna gewoon
 // mogelijk om het naar smaak bij te stellen.
+// Een net raster: gelijke vakken, overal dezelfde marge en dezelfde kier
+// ertussen. Met de hand uitschrijven gaat bij negen of twaalf vakken een keer
+// mis, en dan staat er één rij net iets anders dan de rest — precies het soort
+// scheefheid dat je pas ziet als het gedrukt is.
+const RASTER_MARGE = 0.05, RASTER_KIER = 0.02;
+function fotoRaster(kolommen, rijen, { bovenY = RASTER_MARGE, hoogte = 1 - RASTER_MARGE * 2 } = {}) {
+  const breedte = 1 - RASTER_MARGE * 2;
+  const vakB = (breedte - RASTER_KIER * (kolommen - 1)) / kolommen;
+  const vakH = (hoogte - RASTER_KIER * (rijen - 1)) / rijen;
+  const rond = (n) => Math.round(n * 10000) / 10000;
+  const uit = [];
+  for (let r = 0; r < rijen; r++) {
+    for (let k = 0; k < kolommen; k++) {
+      uit.push({
+        x: rond(RASTER_MARGE + k * (vakB + RASTER_KIER)),
+        y: rond(bovenY + r * (vakH + RASTER_KIER)),
+        width: rond(vakB), height: rond(vakH),
+      });
+    }
+  }
+  return uit;
+}
+
 const PHOTOBOOK_LAYOUTS = [
   { key: "1", label: "1 foto", slots: [
     { x: 0.05, y: 0.05, width: 0.9, height: 0.9 },
@@ -314,7 +337,27 @@ const PHOTOBOOK_LAYOUTS = [
     { x: 0.05, y: 0.51, width: 0.44, height: 0.44 },
     { x: 0.51, y: 0.51, width: 0.44, height: 0.44 },
   ] },
+  // Vanaf hier de volle pagina's, voor een dag waar je veel van hebt
+  // meegebracht. Ze staan bewust achteraan: dit is niet waar je een boek mee
+  // begint, maar wat je pakt als je twaalf foto's van dezelfde markt hebt en ze
+  // niet één voor één wilt neerleggen.
+  //
+  // Let op de scherpte bij deze: twaalf vakken op een A4 zijn elk zo'n zes bij
+  // vijf centimeter, dus daar komt bijna elke foto ruim doorheen — maar de
+  // controle in het boekmenu rekent het voor je uit.
+  { key: "6", label: "6 in raster", slots: fotoRaster(2, 3) },
+  { key: "9", label: "9 in raster", slots: fotoRaster(3, 3) },
+  { key: "10", label: "1 breed + 9", slots: [
+    { x: 0.05, y: 0.05, width: 0.9, height: 0.2 },
+    ...fotoRaster(3, 3, { bovenY: 0.27, hoogte: 0.68 }),
+  ] },
+  { key: "12", label: "12 in raster", slots: fotoRaster(3, 4) },
 ];
+
+// Op sleutel en niet op plek in de lijst: de presets verwezen met
+// PHOTOBOOK_LAYOUTS[4] naar "4 in raster", en dan wijst er stilletjes eentje
+// naar de verkeerde indeling zodra er een rij bij komt.
+const layoutMet = (sleutel) => PHOTOBOOK_LAYOUTS.find((l) => l.key === sleutel);
 
 // Welke foto hoort bij welk vak van de gekozen indeling? Dat ging op volgorde
 // van de fotolijst: foto 1 in vak 1, foto 2 in vak 2. De simpelste regel, maar
@@ -384,10 +427,11 @@ function PhotobookLayoutThumb({ slots, orientation }) {
 // layout en achtergrond samen als één stijl aanbieden. Zet je daarna nog
 // gewoon zelf verder naar smaak; puur een vertrekpunt.
 const PHOTOBOOK_DESIGN_PRESETS = [
-  { key: "clean", label: "Strak wit", layout: PHOTOBOOK_LAYOUTS[0], background: null },
-  { key: "warm", label: "Warm duo", layout: PHOTOBOOK_LAYOUTS[1], background: { type: "color", value: PALETTE.primarySoft } },
-  { key: "dark", label: "Donker elegant", layout: PHOTOBOOK_LAYOUTS[3], background: { type: "color", value: PALETTE.textPrimary } },
-  { key: "ocean", label: "Oceaan raster", layout: PHOTOBOOK_LAYOUTS[4], background: { type: "color", value: PALETTE.info } },
+  { key: "clean", label: "Strak wit", layout: layoutMet("1"), background: null },
+  { key: "warm", label: "Warm duo", layout: layoutMet("2h"), background: { type: "color", value: PALETTE.primarySoft } },
+  { key: "dark", label: "Donker elegant", layout: layoutMet("3"), background: { type: "color", value: PALETTE.textPrimary } },
+  { key: "ocean", label: "Oceaan raster", layout: layoutMet("4"), background: { type: "color", value: PALETTE.info } },
+  { key: "album", label: "Volle bladzijde", layout: layoutMet("9"), background: { type: "color", value: PALETTE.surfaceSecondary } },
 ];
 function PhotobookDesignPresetThumb({ layout, background }) {
   return (
