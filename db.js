@@ -366,6 +366,59 @@ async function voerMigratiesUit() {
     -- krijgt een negatief getal — zo hoeft de rest niet hernummerd te worden en
     -- blijft de bestaande volgorde intact.
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS sort_key INTEGER NOT NULL DEFAULT 0;
+    -- Waar de bytes staan. NULL = nog gewoon in de kolom data hierboven; een
+    -- waarde = het pad in de objectopslag (S3/R2), en dan is data leeggemaakt.
+    -- Twee sleutels, want de thumbnail is een eigen object: die wordt los
+    -- opgehaald door elke rasterweergave en hoort niet aan de volle foto vast.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS storage_key TEXT;
+    -- Na de verhuizing wordt data leeggemaakt; zonder dit blokkeert de NOT NULL
+    -- van het oorspronkelijke ontwerp dat. (Catalogusregel, geen herschrijving.)
+    ALTER TABLE photos ALTER COLUMN data DROP NOT NULL;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_key TEXT;
+    -- De maat in bytes, apart bewaard. Zolang de bytes in de database staan is
+    -- length(data) genoeg, maar zodra ze in de bucket liggen kan de database dat
+    -- niet meer optellen — en dan zou het beheerscherm plotseling melden dat er
+    -- nauwelijks foto's zijn. Dit houdt die cijfers kloppend na de verhuizing.
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS byte_size INTEGER;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumb_size INTEGER;
+    UPDATE photos SET byte_size = length(data) WHERE byte_size IS NULL AND data IS NOT NULL;
+    UPDATE photos SET thumb_size = length(thumb_data) WHERE thumb_size IS NULL AND thumb_data IS NOT NULL;
+    -- Zoekt de verhuizer: welke foto's staan nog in de database? Een gedeeltelijke
+    -- index, want zodra alles verhuisd is staat hij leeg en kost hij niets.
+    CREATE INDEX IF NOT EXISTS photos_nog_in_db_idx ON photos(id) WHERE storage_key IS NULL;
+
+    -- Een foto weggooien is niet meer één handeling zodra de bytes buiten de
+    -- database staan: de rij verdwijnt binnen de transactie, het object in de
+    -- bucket moet daarna nog apart weg. En dat gebeurt lang niet altijd via een
+    -- route die dat weet — een reis verwijderen sleept via ON DELETE CASCADE al
+    -- haar foto's mee, en zo zijn er meer paden.
+    --
+    -- Daarom niet in de code maar in de database: een trigger schrijft bij elke
+    -- verdwenen fotorij op welke objecten daarbij hoorden, en een opruimronde
+    -- werkt dat lijstje af. Blijft de bucket even onbereikbaar, dan blijft het
+    -- lijstje gewoon staan tot het wel lukt.
+    CREATE TABLE IF NOT EXISTS opslag_opruimen (
+      id BIGSERIAL PRIMARY KEY,
+      sleutel TEXT NOT NULL,
+      aangemeld TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      pogingen SMALLINT NOT NULL DEFAULT 0
+    );
+
+    CREATE OR REPLACE FUNCTION meld_fotoobjecten_aan() RETURNS TRIGGER AS $$
+    BEGIN
+      IF OLD.storage_key IS NOT NULL THEN
+        INSERT INTO opslag_opruimen (sleutel) VALUES (OLD.storage_key);
+      END IF;
+      IF OLD.thumb_key IS NOT NULL THEN
+        INSERT INTO opslag_opruimen (sleutel) VALUES (OLD.thumb_key);
+      END IF;
+      RETURN OLD;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS photos_objecten_opruimen ON photos;
+    CREATE TRIGGER photos_objecten_opruimen AFTER DELETE ON photos
+      FOR EACH ROW EXECUTE FUNCTION meld_fotoobjecten_aan();
     CREATE INDEX IF NOT EXISTS photos_trip_idx ON photos(trip_id);
     CREATE INDEX IF NOT EXISTS days_trip_idx ON days(trip_id);
     CREATE INDEX IF NOT EXISTS activities_trip_idx ON activities(trip_id);

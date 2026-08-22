@@ -435,6 +435,8 @@ const api = {
   getApiStatus: () => apiFetch("/api/admin/api-status"),
   getAiVerbruik: (dagen = 30) => apiFetch(`/api/admin/ai-verbruik?dagen=${dagen}`),
   shrinkPhotos: (afterId) => apiFetch("/api/admin/shrink-photos", { method: "POST", body: JSON.stringify({ afterId: afterId || 0 }) }),
+  verhuisFotos: (naId, aantal) => apiFetch("/api/admin/fotos-verhuizen", { method: "POST", body: JSON.stringify({ naId: naId || 0, aantal: aantal || 25 }) }),
+  ruimOpslagOp: () => apiFetch("/api/admin/opslag-opruimen", { method: "POST", body: "{}" }),
   getPackingItems: (tripId) => _guestMode ? guestApi.getPackingItems(tripId) : apiFetch(`/api/trips/${tripId}/packing`),
   addPackingItem: (tripId, d) => _guestMode ? guestApi.addPackingItem(tripId, d) : apiFetch(`/api/trips/${tripId}/packing`, { method: "POST", body: JSON.stringify(d) }),
   updatePackingItem: (id, d) => _guestMode ? guestApi.updatePackingItem(id, d) : apiFetch(`/api/packing/${id}`, { method: "PUT", body: JSON.stringify(d) }),
