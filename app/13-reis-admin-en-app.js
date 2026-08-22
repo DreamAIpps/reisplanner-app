@@ -938,6 +938,79 @@ function GebruikerReizen({ userId }) {
   );
 }
 
+// De verhuizing van foto's uit de database naar de objectopslag. Eén knop die
+// batch na batch afwerkt, want in één verzoek zou dit bij een echte hoeveelheid
+// foto's ruim over elke proxy-timeout heen gaan. De voortgang staat in beeld
+// zodat het geen minutenlang zwart gat is, en stoppen kan altijd: wat verhuisd
+// is blijft verhuisd, de volgende ronde pakt de rest.
+function FotoVerhuizing({ storage, onKlaar }) {
+  const [bezig, setBezig] = React.useState(false);
+  const [gestopt, setGestopt] = React.useState(false);
+  const stopRef = React.useRef(false);
+  const [voortgang, setVoortgang] = React.useState(null);
+  const [fout, setFout] = React.useState(null);
+
+  const nogInDatabase = storage.inDatabaseBytes > 0;
+
+  async function verhuis() {
+    setBezig(true); setFout(null); setGestopt(false);
+    stopRef.current = false;
+    let naId = 0, totaal = 0, bytes = 0;
+    try {
+      // Doorgaan tot een ronde niet meer vol zit — dan was dat de laatste.
+      for (;;) {
+        const r = await api.verhuisFotos(naId, 25);
+        totaal += r.verhuisd;
+        bytes += r.bytes;
+        naId = r.laatsteId;
+        setVoortgang({ totaal, bytes, resterend: r.resterend, mislukt: r.mislukt });
+        if (!r.nogTeGaan || stopRef.current) break;
+      }
+      if (stopRef.current) setGestopt(true);
+    } catch (err) {
+      setFout(err.message || "Verhuizen mislukt");
+    } finally {
+      setBezig(false);
+      onKlaar?.();
+    }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="text-xs text-gray-500 max-w-lg">
+        Foto's gaan naar de objectopslag: {storage.inObjectopslag} van de {storage.photoCount} staan er al.
+        {nogInDatabase
+          ? ` Er staat nog ${fmtBytes(storage.inDatabaseBytes)} aan foto's in de database zelf.`
+          : " De database bevat geen fotobytes meer — na een VACUUM FULL komt die ruimte ook echt vrij."}
+      </div>
+      {nogInDatabase && (
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          <button type="button" onClick={verhuis} disabled={bezig}
+            className="px-3 h-9 rounded-lg text-xs font-semibold bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 transition-colors">
+            {bezig ? "Bezig met verhuizen..." : "Rest verhuizen"}
+          </button>
+          {bezig && (
+            <button type="button" onClick={() => { stopRef.current = true; }}
+              className="px-3 h-9 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-gray-300 transition-colors">
+              Stoppen na deze ronde
+            </button>
+          )}
+        </div>
+      )}
+      {voortgang && (
+        <div className="text-xs text-gray-500 mt-2 tnum">
+          {voortgang.totaal} foto's verhuisd ({fmtBytes(voortgang.bytes)}), nog {voortgang.resterend} in de database.
+          {gestopt && " Gestopt — je kunt zo verder."}
+          {voortgang.mislukt?.length > 0 && (
+            <span className="text-red-600"> {voortgang.mislukt.length} mislukt (zie de serverlog).</span>
+          )}
+        </div>
+      )}
+      {fout && <div className="text-xs text-red-600 mt-2">{fout}</div>}
+    </div>
+  );
+}
+
 function AdminView({ onBack, currentUserId }) {
   const [trips, setTrips] = useState([]);
   const [users, setUsers] = useState([]);
@@ -1033,11 +1106,15 @@ function AdminView({ onBack, currentUserId }) {
               </div>
             )}
           </div>
-          <div className="text-xs text-gray-400 mt-2 max-w-md">
-            Foto's staan als data in de database zelf. Loopt dit vol ("Niet gelukt: ... No space left on
-            device" bij uploaden), dan helpt alleen oude foto's verwijderen of de Postgres-schijf op Railway
-            groter maken — dit scherm ververst niet vanzelf, herlaad de pagina om een nieuw cijfer te zien.
-          </div>
+          {storage.objectopslag ? (
+            <FotoVerhuizing storage={storage} onKlaar={() => api.getStorageInfo().then(setStorage).catch(() => {})} />
+          ) : (
+            <div className="text-xs text-gray-400 mt-2 max-w-md">
+              Foto's staan als data in de database zelf. Loopt dit vol ("Niet gelukt: ... No space left on
+              device" bij uploaden), dan helpt alleen oude foto's verwijderen of de Postgres-schijf op Railway
+              groter maken — dit scherm ververst niet vanzelf, herlaad de pagina om een nieuw cijfer te zien.
+            </div>
+          )}
         </div>
       )}
 

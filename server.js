@@ -15,6 +15,7 @@ const jpegJs = require("jpeg-js");
 const heicDecode = require("heic-decode");
 const { query, transaction, initDb, pool } = require("./db");
 const printapi = require("./printapi");
+const opslag = require("./opslag");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
 const PDFDocument = require("pdfkit");
@@ -1306,12 +1307,14 @@ route("PATCH", "/api/admin/trips/:id/assign", async (req, res, params, body) => 
 // nog steeds zonder locatie, er is niets meer uit terug te halen.
 route("POST", "/api/admin/backfill-photo-gps", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
-  const { rows } = await query("SELECT id, mime_type, data FROM photos WHERE latitude IS NULL");
+  const { rows } = await query("SELECT id, mime_type, data, storage_key FROM photos WHERE latitude IS NULL");
   let updated = 0;
   for (const row of rows) {
     let gps = null;
     try {
-      gps = looksLikeHeic(row.data, row.mime_type) ? readHeicGps(row.data) : readJpegGps(row.data);
+      const bytes = await fotoBytes(row);
+      if (!bytes) continue;
+      gps = looksLikeHeic(bytes, row.mime_type) ? readHeicGps(bytes) : readJpegGps(bytes);
     } catch (err) {
       console.error(`GPS-nabewerking mislukt voor foto ${row.id}:`, err.message);
     }
@@ -1334,7 +1337,7 @@ route("POST", "/api/admin/shrink-photos", async (req, res, params, body) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const afterId = Number(body?.afterId) || 0;
   const { rows } = await query(
-    "SELECT id, mime_type, data FROM photos WHERE id > $1 ORDER BY id LIMIT $2",
+    "SELECT id, mime_type, data, storage_key, byte_size FROM photos WHERE id > $1 ORDER BY id LIMIT $2",
     [afterId, SHRINK_BATCH_SIZE + 1]
   );
   const hasMore = rows.length > SHRINK_BATCH_SIZE;
@@ -1342,7 +1345,9 @@ route("POST", "/api/admin/shrink-photos", async (req, res, params, body) => {
   let resized = 0, bytesBefore = 0, bytesAfter = 0;
   for (const row of batch) {
     try {
-      let buffer = row.data, mediaType = row.mime_type;
+      let buffer = await fotoBytes(row), mediaType = row.mime_type;
+      if (!buffer) continue;
+      const origineleMaat = buffer.length;
       // Nog niet-omgezette HEIC eerst via dezelfde route als bij upload: die
       // bakt de EXIF-rotatie correct in de pixels. resizeFullPhoto gebruikt
       // sharp, dat voor HEIC alleen de container-rotatie kent, niet de
@@ -1353,14 +1358,12 @@ route("POST", "/api/admin/shrink-photos", async (req, res, params, body) => {
         ({ buffer, mediaType } = await normalizeImage(buffer, mediaType));
       }
       const out = await resizeFullPhoto(buffer, mediaType);
-      if (out.buffer.length < row.data.length) {
-        const thumb = await makeThumbnail(out.buffer);
-        const contentHash = crypto.createHash("md5").update(out.buffer).digest("hex");
-        await query(
-          "UPDATE photos SET data=$1, mime_type=$2, thumb_data=COALESCE($3, thumb_data), thumb_rev=$4, content_hash=$5 WHERE id=$6",
-          [out.buffer, out.mediaType, thumb, thumb ? THUMB_REV : 0, contentHash, row.id]
-        );
-        bytesBefore += row.data.length;
+      if (out.buffer.length < origineleMaat) {
+        // vervangFotoBytes zet de bytes op de juiste plek (bucket of kolom),
+        // ruimt het oude object op en gooit de thumbnail weg — die wordt bij de
+        // eerstvolgende weergave opnieuw gemaakt van de verkleinde foto.
+        await vervangFotoBytes(row.id, out.mediaType, out.buffer);
+        bytesBefore += origineleMaat;
         bytesAfter += out.buffer.length;
         resized++;
       }
@@ -1375,6 +1378,87 @@ route("POST", "/api/admin/shrink-photos", async (req, res, params, body) => {
   });
 });
 
+// De verhuizing van bestaande foto's naar de objectopslag. In batches, want dit
+// is precies het soort werk dat in één verzoek over elke proxy-timeout heen
+// gaat: per foto een lees uit Postgres, een PUT naar de bucket en een UPDATE.
+// De beheerder roept dit herhaald aan tot "resterend" nul is.
+//
+// Volgorde per foto: eerst naar de bucket, dan pas de rij bijwerken, en de bytes
+// in de database gaan in diezelfde UPDATE leeg. Klapt het ertussenin, dan staat
+// er hooguit een object in de bucket waar nog niets naar wijst — die wordt bij
+// een volgende poging gewoon overschreven, want de sleutel volgt uit de inhoud.
+// Andersom (rij eerst leegmaken) zou een foto onherstelbaar kwijtmaken.
+const VERHUIS_BATCH = 25;
+route("POST", "/api/admin/fotos-verhuizen", async (req, res, params, body) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  if (!opslag.actief()) return sendError(res, 400, "Er is geen objectopslag ingesteld (S3_BUCKET en verwanten ontbreken)");
+  const aantal = Math.min(Math.max(Number(body?.aantal) || VERHUIS_BATCH, 1), 200);
+  // Een cursor in plaats van steeds vooraan beginnen: een foto die om wat voor
+  // reden dan ook niet mee wil zou anders elke ronde weer bovenaan staan en de
+  // hele verhuizing tegenhouden. Nu schuift hij door; wat bleef liggen is
+  // achteraf te zien aan het aantal dat nog in de database staat.
+  const naId = Number(body?.naId) || 0;
+
+  const { rows } = await query(
+    `SELECT id, trip_id, mime_type, content_hash, data, thumb_data
+       FROM photos WHERE storage_key IS NULL AND id > $1 ORDER BY id LIMIT $2`,
+    [naId, aantal]
+  );
+
+  let verhuisd = 0, bytes = 0;
+  const mislukt = [];
+  for (const rij of rows) {
+    try {
+      if (!rij.data) {
+        // Geen bytes en geen sleutel: hier valt niets te verhuizen. Zo'n rij zou
+        // anders elke ronde opnieuw bovenaan komen en de verhuizing ophouden.
+        mislukt.push({ id: rij.id, reden: "geen bytes" });
+        continue;
+      }
+      const hash = rij.content_hash || crypto.createHash("md5").update(rij.data).digest("hex");
+      const vol = await fotoVelden(rij.trip_id, rij.data, hash, { mediaType: rij.mime_type });
+      const thumb = rij.thumb_data
+        ? await fotoVelden(rij.trip_id, rij.thumb_data, hash, { soort: "thumb" })
+        : { thumb_key: null, thumb_size: null };
+      await query(
+        `UPDATE photos SET data = NULL, storage_key = $1, byte_size = $2,
+                thumb_data = NULL, thumb_key = $3, thumb_size = $4
+          WHERE id = $5`,
+        [vol.storage_key, vol.byte_size, thumb.thumb_key, thumb.thumb_size, rij.id]
+      );
+      bytes += rij.data.length + (rij.thumb_data ? rij.thumb_data.length : 0);
+      verhuisd++;
+    } catch (err) {
+      console.error(`Verhuizen van foto ${rij.id} mislukt:`, err.message);
+      mislukt.push({ id: rij.id, reden: err.message.slice(0, 120) });
+    }
+  }
+
+  // Via de gedeeltelijke index photos_nog_in_db_idx, zodat dit een index-scan
+  // over de rest blijft en niet elke ronde de hele fototabel doorloopt.
+  const { rows: telling } = await query("SELECT COUNT(*)::int AS resterend FROM photos WHERE storage_key IS NULL");
+  sendJson(res, 200, {
+    bekeken: rows.length, verhuisd, bytes, mislukt,
+    laatsteId: rows.length ? rows[rows.length - 1].id : naId,
+    nogTeGaan: rows.length === aantal,
+    resterend: telling[0].resterend,
+  });
+});
+
+// De opruimronde nu draaien in plaats van bij de volgende ronde. Handig als je
+// net veel hebt weggegooid en wilt zien dat de bucket ook echt leegloopt.
+route("POST", "/api/admin/opslag-opruimen", async (req, res) => {
+  if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
+  await ruimObjectenOp();
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS wachtend,
+            COUNT(*) FILTER (WHERE pogingen >= $1)::int AS opgegeven
+       FROM opslag_opruimen`,
+    [OPRUIM_MAX_POGINGEN]
+  );
+  sendJson(res, 200, rows[0]);
+});
+
 // Foto's staan als bytea in Postgres zelf, dus "geen ruimte meer" is een
 // database-schijf die vol loopt, niet een losstaande foto-opslag. Dit geeft
 // een beheerder zicht op wat daar de ruimte inneemt, zodat duidelijk is of
@@ -1384,8 +1468,12 @@ route("GET", "/api/admin/storage", async (req, res) => {
   const { rows } = await query(`
     SELECT
       COUNT(*)::int AS photo_count,
-      COALESCE(SUM(length(data)), 0)::bigint AS photos_bytes,
-      COALESCE(SUM(length(thumb_data)), 0)::bigint AS thumbs_bytes
+      -- byte_size is de waarheid zodra een foto in de objectopslag ligt (dan is
+      -- data leeg); length(data) is de terugval voor rijen van voor die kolom.
+      COALESCE(SUM(COALESCE(byte_size, length(data))), 0)::bigint AS photos_bytes,
+      COALESCE(SUM(COALESCE(thumb_size, length(thumb_data))), 0)::bigint AS thumbs_bytes,
+      COUNT(*) FILTER (WHERE storage_key IS NOT NULL)::int AS in_objectopslag,
+      COALESCE(SUM(length(data)), 0)::bigint AS in_database_bytes
     FROM photos
   `);
   let databaseBytes = null;
@@ -1403,6 +1491,11 @@ route("GET", "/api/admin/storage", async (req, res) => {
     photosBytes: Number(rows[0].photos_bytes),
     thumbsBytes: Number(rows[0].thumbs_bytes),
     databaseBytes,
+    // Waar de foto's staan. Zolang hier nog bytes in de database zitten loopt de
+    // verhuizing nog, en dan zegt de omvang van de database niets over de foto's.
+    objectopslag: opslag.actief(),
+    inObjectopslag: rows[0].in_objectopslag,
+    inDatabaseBytes: Number(rows[0].in_database_bytes),
   });
 });
 
@@ -1430,7 +1523,7 @@ route("GET", "/api/admin/fotodubbels", async (req, res) => {
   if (!req.user.is_admin) return sendError(res, 403, "Geen toegang");
   const { rows } = await query(`
     SELECT p.id, p.trip_id, t.name AS trip_name, p.taken_at, p.width, p.height,
-           length(p.data) AS bytes, p.caption, d.date AS day_date
+           COALESCE(p.byte_size, length(p.data)) AS bytes, p.caption, d.date AS day_date
       FROM photos p
       JOIN trips t ON t.id = p.trip_id
       LEFT JOIN days d ON d.id = p.day_id
@@ -2112,6 +2205,123 @@ route("DELETE", "/api/transports/:id", async (req, res, params) => {
 
 // ---------- Photos ----------
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+// ---------- Waar de bytes van een foto staan ----------
+//
+// Twee mogelijkheden, en elke foto kan in een andere staan:
+//
+//   storage_key IS NULL  -> de bytes staan in photos.data, zoals altijd
+//   storage_key gevuld   -> de bytes staan in de objectopslag, data is leeg
+//
+// Dat moet naast elkaar kunnen, want een bestaande installatie verhuist niet in
+// één klap: de bucket wordt aangezet, nieuwe foto's gaan er meteen heen, en de
+// oude schuiven er in eigen tempo achteraan (zie de verhuisroute). Zolang die
+// twee door elkaar lopen mag geen enkel scherm het verschil merken.
+//
+// Alles wat fotobytes nodig heeft gaat daarom door fotoBytes(); alles wat ze
+// wegschrijft door bewaarFotoBytes(). Rechtstreeks photos.data lezen is vanaf
+// hier een fout, want dat werkt alleen zolang de bucket uit staat.
+
+// Een lijst afwerken met hooguit zoveel dingen tegelijk. Nodig zodra de bytes
+// buiten de database staan: een Promise.all over alle foto's van een fotoboek
+// zet in één klap honderd verbindingen naar de bucket open.
+async function parallelBeperkt(lijst, tegelijk, doe) {
+  let volgende = 0;
+  const werkers = Array.from({ length: Math.min(tegelijk, lijst.length) }, async () => {
+    while (volgende < lijst.length) {
+      const i = volgende++;
+      await doe(lijst[i], i);
+    }
+  });
+  await Promise.all(werkers);
+}
+
+// Haal de volle foto op, waar hij ook ligt. `rij` moet minstens data en
+// storage_key bevatten.
+async function fotoBytes(rij) {
+  if (!rij) return null;
+  if (rij.data) return rij.data;
+  if (!rij.storage_key) return null;
+  return opslag.haal(rij.storage_key);
+}
+
+// Idem voor de thumbnail.
+async function thumbBytes(rij) {
+  if (!rij) return null;
+  if (rij.thumb_data) return rij.thumb_data;
+  if (!rij.thumb_key) return null;
+  return opslag.haal(rij.thumb_key);
+}
+
+// Schrijf nieuwe bytes voor een bestaande foto weg en geef terug wat er in de
+// kolommen moet komen. Staat de bucket aan, dan gaat het daarheen en blijft de
+// database leeg; staat hij uit, dan andersom. Eén functie, zodat elke plek die
+// een foto vervangt (conversie, draaien, samenvoegen) automatisch meegaat.
+async function fotoVelden(tripId, buffer, contentHash, { soort = "vol", mediaType = "image/jpeg" } = {}) {
+  if (!opslag.actief()) {
+    return soort === "thumb"
+      ? { thumb_data: buffer, thumb_key: null, thumb_size: buffer ? buffer.length : null }
+      : { data: buffer, storage_key: null, byte_size: buffer ? buffer.length : null };
+  }
+  const sleutel = opslag.fotoSleutel(tripId, contentHash, soort);
+  await opslag.bewaar(sleutel, buffer, soort === "thumb" ? "image/jpeg" : mediaType);
+  return soort === "thumb"
+    ? { thumb_data: null, thumb_key: sleutel, thumb_size: buffer.length }
+    : { data: null, storage_key: sleutel, byte_size: buffer.length };
+}
+
+// Een object aanmelden voor opruiming. Niet meteen weggooien: dat zou een
+// gebruikershandeling laten wachten op een externe dienst, en mislukken als die
+// dienst even weg is — terwijl er in de database dan al niets meer naar wijst.
+// De opruimronde hieronder werkt het lijstje af, en blijft het proberen.
+//
+// Voor rijen die verdwijnen doet een trigger in de database dit al (zie db.js);
+// deze functie is voor het andere geval: de rij blijft, maar wijst naar andere
+// bytes dan eerst.
+async function meldObjectenAan(sleutels) {
+  const echte = sleutels.filter(Boolean);
+  if (!echte.length) return;
+  await query(
+    "INSERT INTO opslag_opruimen (sleutel) SELECT unnest($1::text[])",
+    [echte]
+  ).catch((err) => console.error("Objectopslag: opruimen aanmelden mislukt:", err.message));
+}
+
+// Werk het opruimlijstje af. Draait vanuit dezelfde ronde als de
+// notificatie-sweep, maar achter een advisory lock: draaien er meerdere
+// instances, dan doet er precies één dit werk in plaats van dat ze elkaar
+// dezelfde objecten uit handen trekken.
+const OPRUIM_SLOT = 831_205;
+const OPRUIM_BATCH = 200;
+// Zoveel keer proberen; daarna blijft de rij staan met een hoog aantal pogingen
+// zodat hij te vinden is, maar wordt hij niet meer opgepakt. Anders zou één
+// object met een structureel probleem elke ronde vullen.
+const OPRUIM_MAX_POGINGEN = 5;
+
+async function ruimObjectenOp() {
+  if (!opslag.actief()) return;
+  const slot = await pool.connect();
+  try {
+    const { rows: gepakt } = await slot.query("SELECT pg_try_advisory_lock($1) AS gelukt", [OPRUIM_SLOT]);
+    if (!gepakt[0].gelukt) return;
+    const { rows } = await slot.query(
+      "SELECT id, sleutel FROM opslag_opruimen WHERE pogingen < $1 ORDER BY id LIMIT $2",
+      [OPRUIM_MAX_POGINGEN, OPRUIM_BATCH]
+    );
+    for (const rij of rows) {
+      try {
+        await opslag.verwijder(rij.sleutel);
+        await slot.query("DELETE FROM opslag_opruimen WHERE id = $1", [rij.id]);
+      } catch (err) {
+        console.error(`Objectopslag: ${rij.sleutel} kon niet worden opgeruimd:`, err.message);
+        await slot.query("UPDATE opslag_opruimen SET pogingen = pogingen + 1 WHERE id = $1", [rij.id]);
+      }
+    }
+  } finally {
+    await slot.query("SELECT pg_advisory_unlock($1)", [OPRUIM_SLOT]).catch(() => {});
+    slot.release();
+  }
+}
 // Only these are ever echoed back as Content-Type — an upload may claim any
 // mediaType, and serving e.g. "text/html" from this origin would be stored XSS.
 const SAFE_IMAGE_TYPES = new Set([
@@ -2124,7 +2334,10 @@ const SAFE_IMAGE_TYPES = new Set([
 // to JPEG on upload so stored photos render everywhere.
 function looksLikeHeic(buffer, mediaType) {
   if (/hei[cf]/i.test(mediaType || "")) return true;
-  if (buffer.length < 12 || buffer.toString("ascii", 4, 8) !== "ftyp") return false;
+  // Zonder bytes valt er alleen op het opgegeven type te oordelen: dat is het
+  // geval bij een foto die in de objectopslag ligt en waarvan we (nog) niets
+  // hebben opgehaald.
+  if (!buffer || buffer.length < 12 || buffer.toString("ascii", 4, 8) !== "ftyp") return false;
   const brand = buffer.toString("ascii", 8, 12);
   return ["heic", "heix", "heim", "heis", "hevc", "hevx", "hevm", "hevs", "mif1", "msf1"].includes(brand);
 }
@@ -2552,11 +2765,26 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
   const thumb = await makeThumbnail(buffer);
   const { width: imgWidth, height: imgHeight } = await getImageDimensions(buffer, mimeType);
+  // De bytes gaan naar de objectopslag als die aanstaat, en anders gewoon mee in
+  // de INSERT hieronder. Eerst schrijven, dan pas de rij: gaat de bucket mis,
+  // dan is er nog niets aangemaakt en krijgt de gebruiker een echte fout in
+  // plaats van een foto die wel in de lijst staat maar nergens te bekijken is.
+  // Andersom (rij eerst) zou een half aangemaakte foto achterlaten.
+  let volVeld, thumbVeld;
+  try {
+    volVeld = await fotoVelden(params.id, buffer, contentHash, { mediaType: mimeType });
+    thumbVeld = thumb
+      ? await fotoVelden(params.id, thumb, contentHash, { soort: "thumb" })
+      : { thumb_data: null, thumb_key: null, thumb_size: null };
+  } catch (err) {
+    console.error("Objectopslag: foto kon niet worden weggeschreven:", err.message);
+    return sendError(res, 503, "De foto kon niet worden opgeslagen. Probeer het zo nog eens.");
+  }
   let rows;
   try {
     ({ rows } = await query(
-      `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev, width, height)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      `INSERT INTO photos (trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, data, caption, taken_at, latitude, longitude, content_hash, thumb_data, thumb_rev, width, height, storage_key, byte_size, thumb_key, thumb_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (trip_id, content_hash) WHERE content_hash IS NOT NULL DO UPDATE SET
          day_id = COALESCE(photos.day_id, EXCLUDED.day_id),
          activity_id = COALESCE(photos.activity_id, EXCLUDED.activity_id),
@@ -2566,12 +2794,24 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
          taken_at = COALESCE(photos.taken_at, EXCLUDED.taken_at),
          latitude = COALESCE(photos.latitude, EXCLUDED.latitude),
          longitude = COALESCE(photos.longitude, EXCLUDED.longitude),
-         thumb_data = COALESCE(EXCLUDED.thumb_data, photos.thumb_data),
-         thumb_rev = CASE WHEN EXCLUDED.thumb_data IS NOT NULL THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END,
+         -- Dezelfde foto nog eens: de bytes zijn per definitie identiek (de
+         -- inhoudshash is de sleutel van dit conflict), dus de opslagplek van de
+         -- volle foto blijft staan zoals hij stond. De miniatuur wél vervangen,
+         -- maar alleen als er deze keer echt een gemaakt is — dat is precies wat
+         -- thumb_rev > 0 zegt. Zo blijft een bestaande miniatuur staan als het
+         -- maken nu mislukte, en schuift een miniatuur van een oudere generator
+         -- wél op naar de nieuwe, mét het bijbehorende revisienummer.
+         thumb_data = CASE WHEN EXCLUDED.thumb_rev > 0 THEN EXCLUDED.thumb_data ELSE photos.thumb_data END,
+         thumb_key = CASE WHEN EXCLUDED.thumb_rev > 0 THEN EXCLUDED.thumb_key ELSE photos.thumb_key END,
+         thumb_size = CASE WHEN EXCLUDED.thumb_rev > 0 THEN EXCLUDED.thumb_size ELSE photos.thumb_size END,
+         thumb_rev = CASE WHEN EXCLUDED.thumb_rev > 0 THEN EXCLUDED.thumb_rev ELSE photos.thumb_rev END,
          width = COALESCE(photos.width, EXCLUDED.width),
          height = COALESCE(photos.height, EXCLUDED.height)
        RETURNING id, trip_id, day_id, activity_id, transport_id, accommodation_id, mime_type, caption, taken_at, latitude, longitude, created_at, width, height, (xmax = 0) AS inserted`,
-      [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType, buffer, caption || null, taken_at || null, lat, lon, contentHash, thumb, thumb ? THUMB_REV : 0, imgWidth, imgHeight]
+      [params.id, day_id || null, activity_id || null, transport_id || null, accommodation_id || null, mimeType,
+       volVeld.data ?? null, caption || null, taken_at || null, lat, lon, contentHash,
+       thumbVeld.thumb_data ?? null, thumb ? THUMB_REV : 0, imgWidth, imgHeight,
+       volVeld.storage_key ?? null, volVeld.byte_size ?? null, thumbVeld.thumb_key ?? null, thumbVeld.thumb_size ?? null]
     ));
   } catch (err) {
     // Postgres geeft hier een letterlijke bestandssysteemfout terug ("could not
@@ -2597,22 +2837,89 @@ route("POST", "/api/trips/:id/photos", async (req, res, params, body) => {
 // a NULL hash — excluded from the partial index — keeps the converted JPEG
 // instead of leaving the row as HEIC and re-converting it on every single view.
 async function persistConvertedPhoto(id, mediaType, buffer) {
+  await vervangFotoBytes(id, mediaType, buffer);
+}
+
+// De bytes van een bestaande foto vervangen (omzetten van HEIC, draaien,
+// verkleinen). Andere bytes betekent een andere inhoudshash, dus in de
+// objectopslag ook een ander object: het nieuwe wordt weggeschreven, de rij
+// wijst ernaar, en pas daarna gaat het oude weg — die volgorde, want een foto
+// die even dubbel in de bucket staat is niets, en een rij die naar een al
+// verwijderd object wijst is een kapotte foto.
+//
+// De thumbnail wordt hoe dan ook weggegooid: die was van de oude bytes gemaakt,
+// dus hem laten staan levert een correct origineel naast een verouderde (of
+// scheve) miniatuur.
+async function vervangFotoBytes(id, mediaType, buffer) {
+  const { rows } = await query("SELECT trip_id, storage_key, thumb_key FROM photos WHERE id = $1", [id]);
+  if (!rows.length) return;
+  const { trip_id, storage_key: oudeSleutel, thumb_key: oudeThumbSleutel } = rows[0];
   const contentHash = crypto.createHash("md5").update(buffer).digest("hex");
-  // Clear the thumbnail too: it was derived from the bytes being replaced, so
-  // keeping it leaves a correct original next to a stale, differently-oriented
-  // thumbnail.
+  const veld = await fotoVelden(trip_id, buffer, contentHash, { mediaType });
+
+  const zet = async (hash) => query(
+    `UPDATE photos SET mime_type=$1, data=$2, storage_key=$3, byte_size=$4, content_hash=$5,
+            thumb_data=NULL, thumb_key=NULL, thumb_size=NULL, thumb_rev=0
+      WHERE id=$6`,
+    [mediaType, veld.data ?? null, veld.storage_key ?? null, veld.byte_size ?? null, hash, id]
+  );
   try {
-    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=$3, thumb_data=NULL, thumb_rev=0 WHERE id=$4", [mediaType, buffer, contentHash, id]);
+    await zet(contentHash);
   } catch (err) {
+    // Botst de nieuwe hash met een andere foto in dezelfde reis (dezelfde plaat
+    // was al eens omgezet geüpload), dan blijft de hash leeg — die staat buiten
+    // de gedeeltelijke unieke index. Beter dan de rij als HEIC laten staan en
+    // hem bij elke weergave opnieuw omzetten.
     if (err.code !== "23505") throw err;
-    await query("UPDATE photos SET mime_type=$1, data=$2, content_hash=NULL, thumb_data=NULL, thumb_rev=0 WHERE id=$3", [mediaType, buffer, id]);
+    await zet(null);
   }
+  // Het oude object alleen aanmelden als het echt een ander object was — bij
+  // identieke bytes wijst de nieuwe sleutel naar hetzelfde bestand.
+  await meldObjectenAan([
+    oudeSleutel && oudeSleutel !== veld.storage_key ? oudeSleutel : null,
+    oudeThumbSleutel,
+  ]);
+}
+
+// Ligt de foto in de objectopslag, dan stuurt de app de browser daarheen in
+// plaats van de bytes zelf door te geven. Dat is de hele winst van de
+// verhuizing: het serverproces raakt megabytes aan foto's niet meer aan, en het
+// verkeer gaat via de bucket (of het CDN ervoor) rechtstreeks naar het toestel.
+//
+// De rechtencontrole gebeurt nog steeds hier — je komt alleen bij deze route
+// als je bij de reis mag — en de getekende URL die je dan krijgt is tijdelijk.
+// De omleiding zelf mag korter gecachet worden dan de handtekening geldig is,
+// anders wijst een uit de browsercache opgediepte omleiding naar een
+// handtekening die al verlopen is.
+function stuurNaarOpslag(req, res, sleutel, { contentType = null, etag = null } = {}) {
+  const geldig = opslag.geldigheidSeconden();
+  const url = opslag.getekendeUrl(sleutel, { contentType });
+  const headers = {
+    Location: url,
+    "Cache-Control": `private, max-age=${Math.max(60, Math.floor(geldig / 2))}`,
+  };
+  if (etag) headers.ETag = etag;
+  res.writeHead(302, headers);
+  res.end();
 }
 
 route("GET", "/api/photos/:id/raw", async (req, res, params) => {
-  const { rows } = await query("SELECT data, mime_type, content_hash FROM photos WHERE id = $1", [params.id]);
+  const { rows } = await query("SELECT data, mime_type, content_hash, storage_key FROM photos WHERE id = $1", [params.id]);
   if (!rows.length) { res.writeHead(404); res.end(); return; }
+  if (rows[0].storage_key) {
+    const type = SAFE_IMAGE_TYPES.has(rows[0].mime_type) ? rows[0].mime_type : "application/octet-stream";
+    // HEIC dat nog in de bucket ligt hoort niet doorverwezen te worden: de
+    // browser kan er niets mee. Die valt terug op het gewone pad hieronder, dat
+    // hem omzet en het resultaat bewaart — daarna is hij wel gewoon te sturen.
+    if (!looksLikeHeic(null, rows[0].mime_type)) {
+      const etag = rows[0].content_hash ? `"${rows[0].content_hash}"` : null;
+      if (etag && req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
+      return stuurNaarOpslag(req, res, rows[0].storage_key, { contentType: type, etag });
+    }
+  }
   let { data, mime_type, content_hash } = rows[0];
+  data = await fotoBytes(rows[0]);
+  if (!data) { res.writeHead(404); res.end(); return; }
   // Safety net: convert on first view for any HEIC photo the upload-time
   // conversion or startup backfill missed (e.g. a legacy row whose stored
   // mime_type didn't look HEIC even though its bytes are), and persist the
@@ -2643,25 +2950,47 @@ route("GET", "/api/photos/:id/raw", async (req, res, params) => {
 }, { tripScope: "photos" });
 
 route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
-  const { rows } = await query("SELECT thumb_data, thumb_rev, content_hash FROM photos WHERE id = $1", [params.id]);
+  const { rows } = await query(
+    "SELECT trip_id, thumb_data, thumb_key, thumb_rev, content_hash FROM photos WHERE id = $1",
+    [params.id]
+  );
   if (!rows.length) { res.writeHead(404); res.end(); return; }
-  let thumb = rows[0].thumb_data;
+  const etag = rows[0].content_hash ? `"t${rows[0].content_hash}"` : null;
+  const actueel = rows[0].thumb_rev >= THUMB_REV;
+
+  // Ligt de miniatuur al in de objectopslag en is hij van de huidige generator,
+  // dan hoeft er hier niets meer te gebeuren dan de weg wijzen.
+  if (actueel && rows[0].thumb_key) {
+    if (etag && req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
+    return stuurNaarOpslag(req, res, rows[0].thumb_key, { contentType: "image/jpeg", etag });
+  }
+
+  let thumb = actueel ? rows[0].thumb_data : null;
   // Generated lazily for photos that predate thumbnails, whose generation failed
   // at upload, or that were built by an older generator. Only the first viewer
   // after the change pays for it.
-  if (!thumb || rows[0].thumb_rev < THUMB_REV) {
-    const full = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
-    let { data, mime_type } = full.rows[0];
+  if (!thumb) {
+    const full = await query("SELECT data, mime_type, storage_key FROM photos WHERE id = $1", [params.id]);
+    let data = await fotoBytes(full.rows[0]);
+    if (!data) { res.writeHead(404); res.end(); return; }
+    const mime_type = full.rows[0].mime_type;
     if (looksLikeHeic(data, mime_type)) {
       const converted = await normalizeImage(data, mime_type);
       data = converted.buffer;
     }
     thumb = await makeThumbnail(data);
     if (!thumb) { res.writeHead(302, { Location: `/api/photos/${params.id}/raw` }); res.end(); return; }
-    await query("UPDATE photos SET thumb_data = $1, thumb_rev = $2 WHERE id = $3", [thumb, THUMB_REV, params.id])
+    // De verse miniatuur belandt op dezelfde plek als de foto zelf: in de bucket
+    // als die aanstaat, anders in de kolom. Mislukt dat, dan gaat hij hieronder
+    // gewoon één keer rechtstreeks de deur uit en probeert de volgende kijker
+    // het opnieuw — vervelend, niet fataal.
+    await fotoVelden(rows[0].trip_id, thumb, rows[0].content_hash, { soort: "thumb" })
+      .then((veld) => query(
+        "UPDATE photos SET thumb_data = $1, thumb_key = $2, thumb_size = $3, thumb_rev = $4 WHERE id = $5",
+        [veld.thumb_data ?? null, veld.thumb_key ?? null, veld.thumb_size ?? null, THUMB_REV, params.id]
+      ))
       .catch((err) => console.error(`Failed to persist thumbnail for photo ${params.id}:`, err.message));
   }
-  const etag = rows[0].content_hash ? `"t${rows[0].content_hash}"` : null;
   if (etag && req.headers["if-none-match"] === etag) { res.writeHead(304); res.end(); return; }
   const headers = { "Content-Type": "image/jpeg", "Content-Length": thumb.length, "Cache-Control": "private, max-age=31536000" };
   if (etag) headers.ETag = etag;
@@ -2676,9 +3005,11 @@ route("GET", "/api/photos/:id/thumb", async (req, res, params) => {
 route("POST", "/api/photos/:id/rotate", async (req, res, params, body) => {
   const quarterTurns = ((Number(body?.turns) || 1) % 4 + 4) % 4;
   if (!quarterTurns) return sendJson(res, 200, { ok: true });
-  const { rows } = await query("SELECT data, mime_type FROM photos WHERE id = $1", [params.id]);
+  const { rows } = await query("SELECT data, storage_key, mime_type FROM photos WHERE id = $1", [params.id]);
   if (!rows.length) return sendError(res, 404, "Foto niet gevonden");
-  let { data, mime_type } = rows[0];
+  let data = await fotoBytes(rows[0]);
+  if (!data) return sendError(res, 404, "Foto niet gevonden");
+  let mime_type = rows[0].mime_type;
   if (looksLikeHeic(data, mime_type)) {
     const converted = await normalizeImage(data, mime_type);
     data = converted.buffer; mime_type = converted.mediaType;
@@ -2689,15 +3020,7 @@ route("POST", "/api/photos/:id/rotate", async (req, res, params, body) => {
     let cur = { data: Buffer.from(img.data), width: img.width, height: img.height };
     for (let i = 0; i < quarterTurns; i++) cur = applyOrientation(cur.data, cur.width, cur.height, 6);
     const rotated = Buffer.from(jpegJs.encode({ data: cur.data, width: cur.width, height: cur.height }, 90).data);
-    const contentHash = crypto.createHash("md5").update(rotated).digest("hex");
-    try {
-      await query("UPDATE photos SET data=$1, mime_type='image/jpeg', content_hash=$2, thumb_data=NULL, thumb_rev=0 WHERE id=$3",
-        [rotated, contentHash, params.id]);
-    } catch (err) {
-      if (err.code !== "23505") throw err;
-      await query("UPDATE photos SET data=$1, mime_type='image/jpeg', content_hash=NULL, thumb_data=NULL, thumb_rev=0 WHERE id=$2",
-        [rotated, params.id]);
-    }
+    await vervangFotoBytes(params.id, "image/jpeg", rotated);
     sendJson(res, 200, { ok: true });
   } catch (err) {
     console.error(`Rotating photo ${params.id} failed:`, err.message);
@@ -2737,6 +3060,12 @@ route("PUT", "/api/photos/:id", async (req, res, params, body) => {
 }, { tripScope: "photos" });
 
 route("DELETE", "/api/photos/:id", async (req, res, params) => {
+  // Eerst de rij weg, dan pas het object: valt het opruimen van de bucket om,
+  // dan blijft er hooguit een verweesd bestand achter (op te ruimen), terwijl
+  // andersom een foto in de lijst zou blijven staan die nergens meer te zien is.
+  // De objecten in de bucket worden door een trigger aangemeld voor opruiming
+  // (zie db.js) — ook als deze foto langs een heel ander pad verdwijnt, zoals
+  // het weggooien van de hele reis.
   await query("DELETE FROM photos WHERE id = $1", [params.id]);
   res.writeHead(204); res.end();
 }, { tripScope: "photos" });
@@ -4965,15 +5294,22 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   );
   const { rows: pagePhotoRows } = await query(
     `SELECT pgp.page_id, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
-            pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.width AS native_width, p.height AS native_height
+            pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.storage_key, p.width AS native_width, p.height AS native_height
      FROM photobook_page_photos pgp
      JOIN photobook_pages pp ON pp.id = pgp.page_id
      JOIN photos p ON p.id = pgp.photo_id
      WHERE pp.photobook_id = $1 ORDER BY pgp.page_id ASC, pgp.position ASC`,
     [params.id]
   );
+  // Foto's die in de objectopslag liggen moeten hier wel echt opgehaald worden:
+  // een PDF verwijst nergens heen, die bevat de bytes zelf. Naast elkaar, want
+  // achter elkaar duurt een boek van veertig pagina's onnodig lang — maar niet
+  // allemaal tegelijk, want dan opent een boek van honderdtwintig foto's ook
+  // honderdtwintig verbindingen naar de bucket.
+  await parallelBeperkt(pagePhotoRows, 8, async (p) => { p.data = await fotoBytes(p); });
   const photosByPage = new Map();
   for (const p of pagePhotoRows) {
+    if (!p.data) continue;
     if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
     photosByPage.get(p.page_id).push(p);
   }
@@ -4983,8 +5319,11 @@ route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
   const bgPhotoIds = pages.filter((p) => p.background_type === "photo" && p.background_photo_id).map((p) => p.background_photo_id);
   const bgPhotosById = new Map();
   if (bgPhotoIds.length) {
-    const { rows: bgRows } = await query("SELECT id, data FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
-    for (const r of bgRows) bgPhotosById.set(r.id, r.data);
+    const { rows: bgRows } = await query("SELECT id, data, storage_key FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
+    await parallelBeperkt(bgRows, 8, async (r) => {
+      const bytes = await fotoBytes(r);
+      if (bytes) bgPhotosById.set(r.id, bytes);
+    });
   }
   const { rows: pageTextBoxRows } = await query(
     `SELECT tb.* FROM photobook_page_textboxes tb
@@ -5851,7 +6190,11 @@ initDb()
     setInterval(() => {
       flushNotifications().catch((err) => console.error("Notification sweep failed:", err.message));
       flushPushes().catch((err) => console.error("Push sweep failed:", err.message));
+      ruimObjectenOp().catch((err) => console.error("Opruimen objectopslag mislukt:", err.message));
     }, NOTIFY_SWEEP_MS).unref();
+    console.log(opslag.actief()
+      ? `Foto's gaan naar de objectopslag (${opslag.config().bucket}).`
+      : "Foto's staan in de database (geen S3_BUCKET ingesteld).");
   })
   .catch((err) => {
     console.error("Database init failed:", err.message);
