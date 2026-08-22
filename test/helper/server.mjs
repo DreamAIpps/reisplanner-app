@@ -104,11 +104,32 @@ export async function startServer({ env = {} } = {}) {
     return { status: r.status, data, headers: r.headers };
   }
 
+  // Het fotoboek als PDF. Dat is geen verzoek meer maar een taak (zie taken.js),
+  // dus: klaarzetten, wachten tot de werker klaar is, en dan het bestand
+  // ophalen. Hier gebundeld zodat elke test die de inhoud van een PDF nakijkt
+  // dat niet opnieuw hoeft uit te schrijven.
+  async function maakPdf(gebruiker, boekId, tijdslimiet = 90000) {
+    const start = await req("POST", `/api/photobooks/${boekId}/pdf`, { gebruiker, body: {} });
+    if (start.status !== 202) throw new Error(`PDF starten gaf ${start.status}: ${JSON.stringify(start.data)}`);
+    const eind = Date.now() + tijdslimiet;
+    let taak = start.data;
+    while (Date.now() < eind && (taak.status === "wachtend" || taak.status === "bezig")) {
+      await new Promise((k) => setTimeout(k, 150));
+      taak = (await req("GET", `/api/taken/${taak.id}`, { gebruiker })).data;
+    }
+    if (taak.status !== "klaar") throw new Error(`PDF-taak bleef op ${taak.status}: ${taak.fout || ""}`);
+    const r = await fetch(`${basis}/api/taken/${taak.id}/bestand`, {
+      headers: { Cookie: `session=${gebruiker.token}` }, redirect: "follow",
+    });
+    if (!r.ok) throw new Error(`PDF ophalen gaf ${r.status}`);
+    return { taak, status: r.status, pdf: Buffer.from(await r.arrayBuffer()) };
+  }
+
   async function stop() {
     await pool.end().catch(() => {});
     kind.kill();
     await new Promise((k) => kind.on("exit", k));
   }
 
-  return { basis, req, maakGebruiker, pool, stop, logregels, hash: (s) => createHash("md5").update(s).digest("hex") };
+  return { basis, req, maakGebruiker, maakPdf, pool, stop, logregels, hash: (s) => createHash("md5").update(s).digest("hex") };
 }

@@ -242,9 +242,8 @@ test("het fotoboek-PDF haalt de foto's uit de bucket", opties, async () => {
     }] },
   });
 
-  const r = await fetch(`${S.basis}/api/photobooks/${boek.id}/pdf`, { headers: { Cookie: `session=${u.token}` } });
-  assert.equal(r.status, 200);
-  const pdf = Buffer.from(await r.arrayBuffer());
+  const { status, pdf } = await S.maakPdf(u, boek.id);
+  assert.equal(status, 200);
   // Een PDF verwijst nergens heen: staan de bytes er niet in, dan zijn ze bij
   // het ophalen uit de bucket blijven liggen en is het boek leeg gedrukt.
   assert.ok(pdf.length > 3000, `de PDF is verdacht klein (${pdf.length} bytes)`);
@@ -290,4 +289,33 @@ test("opnieuw uploaden herstelt een ontbrekende miniatuur, mét het juiste revis
   assert.equal(na.thumb_rev, rev, "en met het revisienummer van de huidige generator");
   assert.ok(na.thumb_size > 0);
   assert.ok(nep.objecten.has(na.thumb_key));
+});
+
+test("een klaargezet bestand komt als download binnen, niet als tabblad", opties, async () => {
+  const { u, reis, dag } = await maakReis("bestandnaam");
+  const foto = await upload(u, reis, dag.id, "#6c5ce7");
+  const { data: boek } = await S.req("POST", `/api/trips/${reis.id}/photobooks`, { gebruiker: u, body: {} });
+  await S.req("PUT", `/api/photobooks/${boek.id}/pages`, {
+    gebruiker: u,
+    body: { pages: [{ title: "Een", photos: [{ photo_id: foto.id, x: 0.1, y: 0.1, width: 0.6, height: 0.4 }] }] },
+  });
+  const { taak } = await S.maakPdf(u, boek.id);
+
+  // De app verwijst door naar de bucket. Het download-attribuut op een link
+  // telt daar niet meer (dat werkt alleen binnen dezelfde herkomst), dus de
+  // naam en "attachment" moeten in de getekende URL zitten — anders opent de
+  // PDF in een tabblad met een onleesbare naam.
+  const omleiding = await S.req("GET", `/api/taken/${taak.id}/bestand`, { gebruiker: u });
+  assert.equal(omleiding.status, 302);
+  const doel = omleiding.headers.get("location");
+  assert.match(doel, /response-content-disposition/, "de bestandsnaam hoort meegetekend te zijn");
+
+  const bestand = await fetch(doel);
+  assert.equal(bestand.status, 200);
+  assert.equal(bestand.headers.get("content-type"), "application/pdf");
+  assert.match(bestand.headers.get("content-disposition") || "", /attachment; filename="Fotoboek.pdf"/);
+
+  // En sleutelen aan de naam in de URL hoort de handtekening ongeldig te maken.
+  const geknoeid = doel.replace(/response-content-disposition=[^&]*/, "response-content-disposition=inline");
+  assert.notEqual(geknoeid, doel);
 });

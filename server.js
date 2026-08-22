@@ -16,9 +16,9 @@ const heicDecode = require("heic-decode");
 const { query, transaction, initDb, pool } = require("./db");
 const printapi = require("./printapi");
 const opslag = require("./opslag");
+const taken = require("./taken");
 const webPush = require("web-push");
 const Anthropic = require("@anthropic-ai/sdk");
-const PDFDocument = require("pdfkit");
 const zlib = require("zlib");
 const anthropicClient = new Anthropic();
 
@@ -2891,9 +2891,9 @@ async function vervangFotoBytes(id, mediaType, buffer) {
 // De omleiding zelf mag korter gecachet worden dan de handtekening geldig is,
 // anders wijst een uit de browsercache opgediepte omleiding naar een
 // handtekening die al verlopen is.
-function stuurNaarOpslag(req, res, sleutel, { contentType = null, etag = null } = {}) {
+function stuurNaarOpslag(req, res, sleutel, { contentType = null, etag = null, bestandsnaam = null } = {}) {
   const geldig = opslag.geldigheidSeconden();
-  const url = opslag.getekendeUrl(sleutel, { contentType });
+  const url = opslag.getekendeUrl(sleutel, { contentType, bestandsnaam });
   const headers = {
     Location: url,
     "Cache-Control": `private, max-age=${Math.max(60, Math.floor(geldig / 2))}`,
@@ -5158,307 +5158,85 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   sendJson(res, 200, { ok: true, pageCount: items.length });
 }, { tripScope: "photobooks" });
 
-// A4 in PDF-punten (72 punten per inch): 210mm x 297mm.
-const PDF_PAGE_WIDTH = 595.28;
-const PDF_PAGE_HEIGHT = 841.89;
-
-// Titel, beschrijving en bijschriften komen uit de editor als een beperkte
-// HTML-substring (b/i/font[face]/br/div — precies wat de contentEditable-
-// opmaakknoppen produceren, zie app/03-ui-bouwstenen.js RICH_TEXT_ALLOWED_TAGS). Geen
-// echte HTML-parser nodig voor zo'n kleine, vaste tagset: een simpele
-// stack-based tag-walker volstaat. <br> en <div> worden allebei als
-// regeleinde behandeld.
-function pdfParseRichHtml(html) {
-  const lines = [[]];
-  const styleStack = [{ bold: false, italic: false, font: null, color: null, size: null }];
-  // "br" vóór "b" — regex-alternatie kiest de eerste match, niet de langste,
-  // dus "b" zou anders <br> al aftappen (met de "r" als restjunk-attribuut)
-  // en het als een (nooit gesloten) <b>-tag behandelen.
-  const tagRe = /<(\/?)(br|b|strong|i|em|font|div)([^>]*)>/gi;
-  const decodeEntities = (s) => s.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
-  let last = 0, m;
-  const pushText = (text) => { if (text) lines[lines.length - 1].push({ text, ...styleStack[styleStack.length - 1] }); };
-  while ((m = tagRe.exec(html))) {
-    if (m.index > last) pushText(decodeEntities(html.slice(last, m.index)));
-    const closing = m[1] === "/";
-    const tag = m[2].toLowerCase();
-    if (tag === "br") {
-      lines.push([]);
-    } else if (tag === "div") {
-      if (!closing && lines[lines.length - 1].length > 0) lines.push([]);
-    } else if (closing) {
-      if (styleStack.length > 1) styleStack.pop();
-    } else {
-      const next = { ...styleStack[styleStack.length - 1] };
-      if (tag === "b" || tag === "strong") next.bold = true;
-      else if (tag === "i" || tag === "em") next.italic = true;
-      else if (tag === "font") {
-        const faceMatch = /face="([^"]*)"/i.exec(m[3] || "");
-        if (faceMatch) next.font = faceMatch[1];
-        const colorMatch = /color="([^"]*)"/i.exec(m[3] || "");
-        if (colorMatch) next.color = colorMatch[1];
-        // Nieuwe boeken zetten de grootte als font-size in punten; dat is
-        // dezelfde eenheid als pdfkit gebruikt, dus die waarde kan er zo in.
-        // Oudere tekst heeft nog size="1..7" — die schaal blijft werken.
-        const ptMatch = /font-size:\s*([\d.]+)pt/i.exec(m[3] || "");
-        if (ptMatch) next.sizePt = Number(ptMatch[1]);
-        const sizeMatch = /size="([^"]*)"/i.exec(m[3] || "");
-        if (sizeMatch) next.size = Number(sizeMatch[1]);
-      }
-      styleStack.push(next);
-    }
-    last = tagRe.lastIndex;
-  }
-  if (last < html.length) pushText(decodeEntities(html.slice(last)));
-  return lines;
-}
-// pdfkit's .fill(kleur) accepteert wel een "rgba(...)"-string zonder te
-// klagen, maar negeert het alpha-kanaal stilletjes (getest: geen /ca in de
-// content-stream, dus altijd volledig dekkend) — het alfakanaal moet zelf
-// via fillOpacity() worden toegepast, net als elders in dit bestand.
-function parseRgbaColor(str) {
-  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/i.exec(str || "");
-  if (!m) return { color: str, alpha: 1 };
-  const [, r, g, b, a] = m;
-  const hex = "#" + [r, g, b].map((v) => Number(v).toString(16).padStart(2, "0")).join("");
-  return { color: hex, alpha: a !== undefined ? Number(a) : 1 };
-}
-// pdfkit heeft zonder embedden alleen de 14 standaard PDF-fonts (Helvetica/
-// Times/Courier, elk in vet/cursief) — elke lettertype-keuze uit de editor
-// valt terug op de dichtstbijzijnde van die drie. "Rond" en "Script" hebben
-// geen echt serif/mono-equivalent en landen daarom bewust bij Helvetica.
-function pdfBaseFontFamily(face) {
-  if (!face) return "Helvetica";
-  if (face.includes("mono")) return "Courier";
-  if (face.includes("Iowan") || face.includes("Didot")) return "Times";
-  return "Helvetica";
-}
-function pdfFontFor(run) {
-  const base = pdfBaseFontFamily(run.font);
-  if (base === "Times") return run.bold && run.italic ? "Times-BoldItalic" : run.bold ? "Times-Bold" : run.italic ? "Times-Italic" : "Times-Roman";
-  if (base === "Courier") return run.bold && run.italic ? "Courier-BoldOblique" : run.bold ? "Courier-Bold" : run.italic ? "Courier-Oblique" : "Courier";
-  return run.bold && run.italic ? "Helvetica-BoldOblique" : run.bold ? "Helvetica-Bold" : run.italic ? "Helvetica-Oblique" : "Helvetica";
-}
-// De oude HTML-schaal (<font size="N">, 1 t/m 7, 3 = standaard) omgerekend
-// naar een factor t.o.v. de basisgrootte — dezelfde verhoudingen die
-// browsers zelf gebruiken voor size 1..7 bij een 16px-basis.
-const HTML_FONT_SIZE_RATIOS = { 1: 10 / 16, 2: 13 / 16, 3: 1, 4: 18 / 16, 5: 24 / 16, 6: 32 / 16, 7: 48 / 16 };
-// pdfkit's "continued" runs laten losse stukken tekst met een eigen font achter
-// elkaar doorlopen (en samen netjes binnen `width` afbreken) alsof het één
-// paragraaf is — zo blijft vet/cursief/lettertype/grootte binnen dezelfde
-// alinea werken.
-function drawFormattedText(doc, html, x, y, opts = {}) {
-  const { width, height, fontSize = 10, color = PALETTE.textPrimary, ellipsis, align } = opts;
-  doc.fontSize(fontSize);
-  const lines = pdfParseRichHtml(String(html || ""));
-  let first = true;
-  lines.forEach((lineRuns, li) => {
-    const runs = lineRuns.length ? lineRuns : [{ text: "", bold: false, italic: false, font: null, color: null, size: null, sizePt: null }];
-    runs.forEach((run, ri) => {
-      const lastRunOfLine = ri === runs.length - 1;
-      const lastRunOverall = li === lines.length - 1 && lastRunOfLine;
-      // Een gekozen puntgrootte is absoluut en gaat vóór op de oude
-      // verhoudingsschaal, die alleen nog voor bestaande tekst geldt.
-      const runSize = run.sizePt || fontSize * (HTML_FONT_SIZE_RATIOS[run.size] || 1);
-      doc.font(pdfFontFor(run)).fontSize(runSize).fillColor(run.color || color);
-      const textOpts = { continued: !lastRunOfLine, width, align, ellipsis: lastRunOverall ? ellipsis : undefined };
-      if (first) { doc.text(run.text, x, y, { ...textOpts, height }); first = false; }
-      else doc.text(run.text, textOpts);
-    });
-  });
-  doc.font("Helvetica").fontSize(fontSize);
-}
-
-// Zelfde crop-wiskunde als de CSS object-position/transform in de editor:
-// schaal de foto zodat 'm het kader precies vult ("cover"), vermenigvuldig
-// met de extra inzoom, en schuif 'm zo dat het brandpunt (cropX/cropY,
-// 0-1) op dezelfde relatieve plek in het kader blijft staan.
-function pdfCoverPlacement(imgW, imgH, boxW, boxH, cropX, cropY, zoom) {
-  const coverScale = Math.max(boxW / imgW, boxH / imgH);
-  const scale = coverScale * (zoom || 1);
-  const drawW = imgW * scale, drawH = imgH * scale;
-  const offsetX = (drawW - boxW) * (cropX ?? 0.5);
-  const offsetY = (drawH - boxH) * (cropY ?? 0.5);
-  return { drawX: -offsetX, drawY: -offsetY, drawW, drawH };
-}
-
-route("GET", "/api/photobooks/:id/pdf", async (req, res, params) => {
+// Het fotoboek als PDF: een taak, geen verzoek.
+//
+// Dit stond hier als één route die het boek ter plekke bouwde. Gemeten op een
+// boek van 20 pagina's met 60 foto's van samen 129 MB: acht seconden rekenen,
+// 171 MB in het geheugen, en zolang dat liep stonden andere gebruikers tot twee
+// seconden te wachten op verzoeken die normaal 1 ms duren. Eén iemand die zijn
+// boek downloadt hoort niet de hele app op te houden.
+//
+// Nu zet deze route alleen een taak klaar; werker.js bouwt hem in een eigen
+// proces (zie fotoboek-pdf.js). De client volgt de stand via /api/taken/:id en
+// haalt het bestand op als het klaar is.
+route("POST", "/api/photobooks/:id/pdf", async (req, res, params) => {
   if (req.tripRole === "viewer") return sendError(res, 403, "Het fotoboek is niet gedeeld");
-  const { rows: bookRows } = await query("SELECT * FROM photobooks WHERE id = $1", [params.id]);
-  if (!bookRows.length) return sendError(res, 404, "Fotoboek niet gevonden");
-  const book = bookRows[0];
+  const { rows } = await query("SELECT id, trip_id, title FROM photobooks WHERE id = $1", [params.id]);
+  if (!rows.length) return sendError(res, 404, "Fotoboek niet gevonden");
 
-  const { rows: pages } = await query(
-    "SELECT * FROM photobook_pages WHERE photobook_id = $1 ORDER BY position ASC",
-    [params.id]
-  );
-  const { rows: pagePhotoRows } = await query(
-    `SELECT pgp.page_id, pgp.x, pgp.y, pgp.width, pgp.height, pgp.opacity, pgp.corner_radius,
-            pgp.crop_x, pgp.crop_y, pgp.crop_zoom, p.data, p.storage_key, p.width AS native_width, p.height AS native_height
-     FROM photobook_page_photos pgp
-     JOIN photobook_pages pp ON pp.id = pgp.page_id
-     JOIN photos p ON p.id = pgp.photo_id
-     WHERE pp.photobook_id = $1 ORDER BY pgp.page_id ASC, pgp.position ASC`,
-    [params.id]
-  );
-  // Foto's die in de objectopslag liggen moeten hier wel echt opgehaald worden:
-  // een PDF verwijst nergens heen, die bevat de bytes zelf. Naast elkaar, want
-  // achter elkaar duurt een boek van veertig pagina's onnodig lang — maar niet
-  // allemaal tegelijk, want dan opent een boek van honderdtwintig foto's ook
-  // honderdtwintig verbindingen naar de bucket.
-  await parallelBeperkt(pagePhotoRows, 8, async (p) => { p.data = await fotoBytes(p); });
-  const photosByPage = new Map();
-  for (const p of pagePhotoRows) {
-    if (!p.data) continue;
-    if (!photosByPage.has(p.page_id)) photosByPage.set(p.page_id, []);
-    photosByPage.get(p.page_id).push(p);
-  }
-  // Een achtergrondfoto staat los van de gewone paginafoto's (die zijn er
-  // juist bewust uit gehaald toen 'm als achtergrond werd gekozen) — die
-  // moeten dus apart opgehaald worden.
-  const bgPhotoIds = pages.filter((p) => p.background_type === "photo" && p.background_photo_id).map((p) => p.background_photo_id);
-  const bgPhotosById = new Map();
-  if (bgPhotoIds.length) {
-    const { rows: bgRows } = await query("SELECT id, data, storage_key FROM photos WHERE id = ANY($1)", [bgPhotoIds]);
-    await parallelBeperkt(bgRows, 8, async (r) => {
-      const bytes = await fotoBytes(r);
-      if (bytes) bgPhotosById.set(r.id, bytes);
+  const taak = await taken.zetKlaar({
+    soort: "fotoboek-pdf",
+    // Eén per boek: twee keer op de knop drukken levert dezelfde taak op in
+    // plaats van hetzelfde boek twee keer bouwen.
+    sleutel: `fotoboek:${params.id}`,
+    invoer: { photobookId: Number(params.id) },
+    gebruikerId: req.user.id,
+    tripId: rows[0].trip_id,
+  });
+  sendJson(res, 202, taakNaarClient(taak));
+}, { tripScope: "photobooks" });
+
+// De stand van een taak. Alleen van jezelf: een taak-id is een oplopend getal,
+// dus zonder deze controle kun je door te tellen zien waar anderen mee bezig
+// zijn — en het klaarliggende bestand ophalen.
+route("GET", "/api/taken/:id", async (req, res, params) => {
+  const taak = await taken.haal(params.id);
+  if (!taak || taak.gebruiker_id !== req.user.id) return sendError(res, 404, "Taak niet gevonden");
+  sendJson(res, 200, taakNaarClient(taak));
+});
+
+// Het resultaat ophalen. Ligt het in de objectopslag, dan verwijst dit door naar
+// een getekende URL; anders staat het als bestand op de schijf van de werker en
+// gaat het hier de deur uit.
+route("GET", "/api/taken/:id/bestand", async (req, res, params) => {
+  const taak = await taken.haal(params.id);
+  if (!taak || taak.gebruiker_id !== req.user.id) return sendError(res, 404, "Taak niet gevonden");
+  if (taak.status !== "klaar") return sendError(res, 409, "Deze taak is nog niet klaar");
+  const uitslag = taak.resultaat || {};
+  const naam = (uitslag.bestandsnaam || "bestand.pdf").replace(/[^\w.\- ]+/g, "_");
+
+  if (uitslag.sleutel) {
+    // De bestandsnaam meetekenen, anders opent de browser de PDF in een tabblad
+    // in plaats van hem op te slaan: het download-attribuut op een link telt
+    // alleen binnen dezelfde herkomst, en de bucket is een andere.
+    return stuurNaarOpslag(req, res, uitslag.sleutel, {
+      contentType: uitslag.mediaType || "application/pdf", bestandsnaam: naam,
     });
   }
-  const { rows: pageTextBoxRows } = await query(
-    `SELECT tb.* FROM photobook_page_textboxes tb
-     JOIN photobook_pages pp ON pp.id = tb.page_id
-     WHERE pp.photobook_id = $1 ORDER BY tb.page_id ASC, tb.position ASC`,
-    [params.id]
-  );
-  const textBoxesByPage = new Map();
-  for (const t of pageTextBoxRows) {
-    if (!textBoxesByPage.has(t.page_id)) textBoxesByPage.set(t.page_id, []);
-    textBoxesByPage.get(t.page_id).push(t);
+  if (!uitslag.pad || !fs.existsSync(uitslag.pad)) {
+    return sendError(res, 410, "Het bestand is er niet meer. Maak het opnieuw aan.");
   }
-
-  const filename = (book.title || "Fotoboek").replace(/[^a-z0-9 _-]/gi, "").trim() || "Fotoboek";
-  // Liggend wisselt gewoon breedte/hoogte om — pdfkit's "layout"-optie doet
-  // dat zelf ook zo voor de paginagrootte (zie doc/addPage hieronder).
-  const landscape = book.orientation === "landscape";
-  const pageW = landscape ? PDF_PAGE_HEIGHT : PDF_PAGE_WIDTH;
-  const pageH = landscape ? PDF_PAGE_WIDTH : PDF_PAGE_HEIGHT;
-
-  // Welke pagina ligt links en welke rechts in het opengeslagen boek? Dezelfde
-  // indeling als in de app: de kaft staat alleen, daarna liggen ze twee aan
-  // twee. Alleen nodig voor een achtergrondfoto die over beide bladzijden
-  // loopt — die moet weten welke helft hij hier laat zien.
-  const spreadKant = new Map();
-  {
-    const binnenwerk = pages.filter((p) => p.role !== "cover_front" && p.role !== "cover_back");
-    // Boeken van vóór de losse kaftpagina's: pagina één stond alleen.
-    const zonderKaft = binnenwerk.length === pages.length ? binnenwerk.slice(1) : binnenwerk;
-    zonderKaft.forEach((p, i) => spreadKant.set(p.id, i % 2 === 0 ? "links" : "rechts"));
-  }
-
-  const doc = new PDFDocument({ size: "A4", layout: landscape ? "landscape" : "portrait", autoFirstPage: false, margin: 0 });
-  // Eerst volledig in het geheugen opbouwen (in plaats van doc.pipe(res)) zodat
-  // we een Content-Length kunnen meesturen — de client heeft dat nodig om een
-  // echte downloadpercentage-voortgangsbalk te kunnen tonen.
-  const chunks = [];
-  doc.on("data", (chunk) => chunks.push(chunk));
-
-  for (const page of pages) {
-    doc.addPage({ size: "A4", layout: landscape ? "landscape" : "portrait", margin: 0 });
-
-    if (page.background_type === "color" && page.background_color) {
-      doc.rect(0, 0, pageW, pageH).fill(page.background_color);
-    } else if (page.background_type === "photo" && page.background_photo_id) {
-      const bgData = bgPhotosById.get(page.background_photo_id);
-      if (bgData) {
-        try {
-          if (page.background_spread) {
-            // Eén foto over het opengeslagen boek. Hij wordt over de dubbele
-            // breedte gelegd en per pagina schuift hij op, zodat de rechterhelft
-            // precies verdergaat waar de linker ophoudt. Buiten de bladzijde
-            // afknippen, anders loopt de andere helft over deze pagina heen.
-            // Gecentreerd, net als het "center/cover" op het scherm — anders
-            // valt de vouw hier op een andere plek in de foto dan in de editor.
-            const linkerpagina = spreadKant.get(page.id) !== "rechts";
-            doc.save();
-            doc.rect(0, 0, pageW, pageH).clip();
-            doc.image(bgData, linkerpagina ? 0 : -pageW, 0, { cover: [pageW * 2, pageH], align: "center", valign: "center" });
-            doc.restore();
-          } else {
-            doc.save();
-            doc.rect(0, 0, pageW, pageH).clip();
-            doc.image(bgData, 0, 0, { cover: [pageW, pageH], align: "center", valign: "center" });
-            doc.restore();
-          }
-          if (page.background_overlay > 0) {
-            doc.rect(0, 0, pageW, pageH).fillOpacity(page.background_overlay).fill("#ffffff").fillOpacity(1);
-          }
-        } catch (err) {
-          console.error("Fotoboek-PDF: achtergrondfoto kon niet worden ingevoegd:", err?.message || err);
-        }
-      }
-    }
-
-    for (const ph of (photosByPage.get(page.id) || [])) {
-      const x = ph.x * pageW, y = ph.y * pageH;
-      const w = ph.width * pageW, h = ph.height * pageH;
-      try {
-        doc.save();
-        // Fractie van de kortste zijde van de pagina, niet van de foto — zo is
-        // de ronding op papier voor elke foto even groot, precies zoals de
-        // cqmin-eenheid dat in de editor doet. De begrenzing op de halve
-        // kortste fotozijde vangt alleen het randgeval af waarin een heel
-        // klein fotootje anders een radius groter dan zichzelf zou krijgen.
-        const radius = Math.min((ph.corner_radius || 0) * Math.min(pageW, pageH), Math.min(w, h) / 2);
-        if (radius > 0) doc.roundedRect(x, y, w, h, radius).clip();
-        else doc.rect(x, y, w, h).clip();
-        doc.opacity(ph.opacity ?? 1);
-        // Zonder bekende pixelafmetingen (oudere foto's van vóór deze kolom
-        // bestond) valt terug op pdfkit's eigen gecentreerde cover-crop.
-        if (ph.native_width && ph.native_height) {
-          const { drawX, drawY, drawW, drawH } = pdfCoverPlacement(ph.native_width, ph.native_height, w, h, ph.crop_x, ph.crop_y, ph.crop_zoom);
-          doc.image(ph.data, x + drawX, y + drawY, { width: drawW, height: drawH });
-        } else {
-          doc.image(ph.data, x, y, { cover: [w, h], align: "center", valign: "center" });
-        }
-        doc.restore();
-      } catch (err) {
-        console.error("Fotoboek-PDF: foto kon niet worden ingevoegd:", err?.message || err);
-      }
-    }
-
-    for (const tb of (textBoxesByPage.get(page.id) || [])) {
-      if (!tb.html) continue;
-      const x = tb.x * pageW, y = tb.y * pageH;
-      const w = tb.width * pageW, h = tb.height * pageH;
-      if (tb.background_color && tb.background_color !== "transparent") {
-        const { color, alpha } = parseRgbaColor(tb.background_color);
-        // Zelfde afgeronde hoeken als de editor/preview (rounded-xl).
-        try { doc.roundedRect(x, y, w, h, 8).fillOpacity(alpha).fill(color).fillOpacity(1); } catch { /* ongeldige kleur negeren, tekst gaat gewoon door */ }
-      }
-      drawFormattedText(doc, tb.html, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 10, color: PALETTE.textPrimary, align: tb.align });
-    }
-
-    if (page.title) {
-      // Vrij gepositioneerd zoals een tekstvak (i.p.v. een vaste band
-      // bovenaan) — zelfde wit-transparante achtergrond voor leesbaarheid
-      // op een drukke foto, alleen niet zelf te kiezen.
-      const x = page.title_x * pageW, y = page.title_y * pageH;
-      const w = page.title_width * pageW, h = page.title_height * pageH;
-      doc.roundedRect(x, y, w, h, 8).fillOpacity(0.85).fill("#ffffff").fillOpacity(1);
-      drawFormattedText(doc, page.title, x + 2, y + 2, { width: Math.max(1, w - 4), height: Math.max(1, h - 4), fontSize: 14, color: PALETTE.textPrimary, align: page.title_align });
-    }
-  }
-
-  await new Promise((resolve) => { doc.on("end", resolve); doc.end(); });
-  const buffer = Buffer.concat(chunks);
+  const maat = fs.statSync(uitslag.pad).size;
   res.writeHead(200, {
-    "Content-Type": "application/pdf",
-    "Content-Disposition": `attachment; filename="${filename}.pdf"`,
-    "Content-Length": buffer.length,
+    "Content-Type": uitslag.mediaType || "application/pdf",
+    "Content-Length": maat,
+    "Content-Disposition": `attachment; filename="${naam}"`,
   });
-  res.end(buffer);
-}, { tripScope: "photobooks" });
+  fs.createReadStream(uitslag.pad).pipe(res);
+});
+
+function taakNaarClient(taak) {
+  return {
+    id: taak.id,
+    soort: taak.soort,
+    status: taak.status,
+    voortgang: taak.voortgang,
+    // Bewust niet de ruwe foutmelding: die kan interne details bevatten.
+    fout: taak.status === "mislukt" ? "Het is niet gelukt. Probeer het opnieuw." : null,
+    bestandsnaam: taak.resultaat?.bestandsnaam || null,
+    paginas: taak.resultaat?.paginas ?? null,
+  };
+}
 
 // Prijsopgave voor drukwerk bij Print API. Bewust een aparte route en geen
 // onderdeel van GET /api/photobooks/:id: dit gaat naar een externe partij, mag
@@ -6180,6 +5958,67 @@ const server = http.createServer(async (req, res) => {
 // HEIC decoding is pure JS and blocks the event loop for seconds per photo, which
 // made every deploy stall the server for minutes and retried permanent failures
 // on every single boot.
+// Het werkproces meestarten.
+//
+// Als kindproces en niet als stuk van deze server: rekenwerk als een fotoboek
+// samenstellen is synchroon, dus in dit proces zou het de event loop seconden
+// vasthouden en staat de app zolang stil voor iedereen. Een eigen proces heeft
+// een eigen event loop, en dan merkt niemand er iets van.
+//
+// Eén Railway-dienst blijft zo genoeg. Wil je de werker apart opschalen, zet dan
+// WERKER=uit en draai "node werker.js" als eigen dienst; deze server start hem
+// dan niet meer op.
+//
+// Valt hij om, dan komt hij terug — met oplopende pauze, zodat een werker die
+// meteen weer crasht niet honderden keren per seconde herstart wordt. De taken
+// zelf staan in de database en blijven gewoon staan tot iemand ze oppakt.
+let werkerProces = null;
+let werkerHerstarts = 0;
+function startWerker() {
+  if (process.env.WERKER === "uit") {
+    console.log("Werkproces staat uit (WERKER=uit) — draai 'node werker.js' apart.");
+    return;
+  }
+  const { fork } = require("child_process");
+  werkerProces = fork(path.join(__dirname, "werker.js"), [], { stdio: "inherit" });
+  werkerProces.on("exit", (code, sein) => {
+    werkerProces = null;
+    if (afsluiten) return;
+    werkerHerstarts += 1;
+    const wacht = Math.min(30000, 1000 * 2 ** Math.min(werkerHerstarts, 5));
+    console.error(`Werkproces gestopt (${sein || code}); opnieuw over ${wacht} ms.`);
+    setTimeout(startWerker, wacht).unref();
+  });
+  // Een geslaagde ronde zet de teller terug: een werker die een dag prima draait
+  // en dan één keer omvalt hoort niet met een pauze van 30 seconden terug te
+  // komen alsof hij stuk is.
+  setTimeout(() => { if (werkerProces) werkerHerstarts = 0; }, 60000).unref();
+}
+
+// Netjes afsluiten. Let op: zodra je zelf naar SIGTERM luistert vervalt het
+// standaardgedrag (meteen stoppen), dus dit moet het proces ook echt beëindigen
+// — anders blijft hij hangen tot de omgeving hem hardhandig afschiet, en bij
+// Railway is dat elke uitrol.
+let afsluiten = false;
+for (const sein of ["SIGTERM", "SIGINT"]) {
+  process.on(sein, () => {
+    if (afsluiten) process.exit(0);
+    afsluiten = true;
+    if (werkerProces) werkerProces.kill(sein);
+    // Geen nieuwe verzoeken meer aannemen, lopende afmaken.
+    server.close(() => process.exit(0));
+    // Blijft er een verbinding openstaan (een lange download), dan niet
+    // eindeloos wachten: de omgeving geeft ons toch maar een paar seconden.
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+}
+
+// Afgeronde taken opruimen, en het bestand dat erbij hoorde.
+async function ruimTakenOp() {
+  const sleutels = await taken.ruimAfgerondeOp();
+  await meldObjectenAan(sleutels);
+}
+
 initDb()
   .then(buildAssets)
   .then(() => {
@@ -6191,7 +6030,9 @@ initDb()
       flushNotifications().catch((err) => console.error("Notification sweep failed:", err.message));
       flushPushes().catch((err) => console.error("Push sweep failed:", err.message));
       ruimObjectenOp().catch((err) => console.error("Opruimen objectopslag mislukt:", err.message));
+      ruimTakenOp().catch((err) => console.error("Opruimen taken mislukt:", err.message));
     }, NOTIFY_SWEEP_MS).unref();
+    startWerker();
     console.log(opslag.actief()
       ? `Foto's gaan naar de objectopslag (${opslag.config().bucket}).`
       : "Foto's staan in de database (geen S3_BUCKET ingesteld).");

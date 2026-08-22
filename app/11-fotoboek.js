@@ -1549,35 +1549,39 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
 
   // Het fotoboek zelf weggooien gebeurt in het overzicht, niet hier.
 
+  // Het boek wordt niet meer hier en nu gebouwd maar door een werkproces: een
+  // boek van twintig pagina's kostte acht seconden rekenen, en zolang dat liep
+  // stond de server stil voor iedereen. Deze knop zet dus een taak klaar en
+  // volgt de stand; de voortgang gaat nu per pagina in plaats van per
+  // gedownloade byte, wat ook eerlijker is — het wachten zat in het samenstellen.
   async function handleDownloadPdf() {
-    if (!confirm("Fotoboek als PDF downloaden?")) return;
-    setPdfProgress({ phase: "generating", percent: null });
+    if (!confirm("Fotoboek als PDF maken? Je krijgt hem zodra hij klaar is.")) return;
+    setPdfProgress({ phase: "generating", percent: 0 });
     try {
-      const resp = await appFetch(`/api/photobooks/${bookId}/pdf`);
-      if (!resp.ok) throw new Error("Downloaden mislukt");
-      const total = Number(resp.headers.get("Content-Length")) || 0;
-      const reader = resp.body.getReader();
-      const chunks = [];
-      let received = 0;
-      setPdfProgress({ phase: "downloading", percent: total ? 0 : null });
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        setPdfProgress({ phase: "downloading", percent: total ? Math.min(100, Math.round((received / total) * 100)) : null });
+      let taak = await api.startFotoboekPdf(bookId);
+      // Wachten tot hij klaar is. Rustig aan: een boek duurt seconden, geen
+      // milliseconden, en tien keer per seconde vragen levert niets op.
+      while (taak.status === "wachtend" || taak.status === "bezig") {
+        await new Promise((k) => setTimeout(k, 800));
+        taak = await api.haalTaak(taak.id);
+        setPdfProgress({
+          phase: taak.status === "wachtend" ? "generating" : "downloading",
+          percent: Math.round((taak.voortgang || 0) * 100),
+        });
       }
-      const blob = new Blob(chunks, { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
+      if (taak.status !== "klaar") throw new Error(taak.fout || "Het maken van de PDF is niet gelukt");
+
+      // Het bestand ligt klaar; de browser haalt hem zelf op. Geen blob in het
+      // geheugen: een fotoboek kan honderden megabytes zijn en dat hoeft niet
+      // eerst helemaal in dit tabblad te passen.
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `${title || "Fotoboek"}.pdf`;
+      a.href = `/api/taken/${taak.id}/bestand`;
+      a.download = taak.bestandsnaam || `${title || "Fotoboek"}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
     } catch (err) {
-      alert(err.message || "Downloaden mislukt");
+      alert(err.message || "Het maken van de PDF is niet gelukt");
     } finally {
       setPdfProgress(null);
     }
@@ -2365,7 +2369,7 @@ function PhotobookEditor({ tripId, bookId, onBack }) {
       {pdfProgress && (
         <Modal title="Fotoboek downloaden" onClose={() => {}}>
           <p className="text-sm text-gray-500 mb-4">
-            {pdfProgress.phase === "generating" ? "Bezig met samenstellen..." : "Downloaden..."}
+            {pdfProgress.phase === "generating" ? "In de rij gezet..." : "Bezig met samenstellen..."}
           </p>
           <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
             {pdfProgress.percent == null ? (

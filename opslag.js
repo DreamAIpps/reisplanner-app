@@ -16,6 +16,7 @@
 // (`actief()` is false) en blijft alles werken zoals het werkte: bytes in de
 // database. Zo kan de overstap per omgeving en stap voor stap.
 const crypto = require("crypto");
+const fs = require("fs");
 const https = require("https");
 const http = require("http");
 const { URL } = require("url");
@@ -155,6 +156,50 @@ async function ondertekendVerzoek(methode, sleutelpad, { lichaam = null, content
   return verstuur(url, { method: methode, headers }, lichaam);
 }
 
+// Hetzelfde, maar dan vanaf een bestand op schijf. Nodig voor grote dingen: een
+// fotoboek-PDF van tweehonderd megabyte hoeft dan niet eerst helemaal in het
+// geheugen te passen om verstuurd te worden. De maat moet vooraf bekend zijn —
+// S3 wil een Content-Length, en die zit in de handtekening.
+async function bewaarStroom(sleutelpad, bestandspad, maat, contentType) {
+  const c = config();
+  if (!c) throw new Error("Objectopslag is niet ingesteld");
+  const url = bucketUrl(c, sleutelpad);
+  const stempel = stempels(new Date());
+  // De inhoud niet meetekenen: dat zou het hele bestand alsnog door een hash
+  // moeten halen vóór het versturen, en dan is er niets gewonnen. UNSIGNED-PAYLOAD
+  // is hiervoor bedoeld en wordt door S3 en R2 geaccepteerd.
+  const lichaamHash = "UNSIGNED-PAYLOAD";
+  const headers = {
+    Host: url.host,
+    "x-amz-content-sha256": lichaamHash,
+    "x-amz-date": stempel.lang,
+    "Content-Type": contentType,
+    "Content-Length": String(maat),
+  };
+  const { handtekening, ondertekendeHeaders, bereik } = ondertekening({
+    methode: "PUT", host: url.host, pad: url.pathname, query: {}, headers,
+    lichaamHash, stempel, regio: c.regio, dienst: "s3", sleutel: c.sleutel, geheim: c.geheim,
+  });
+  headers.Authorization = `AWS4-HMAC-SHA256 Credential=${c.sleutel}/${bereik}, SignedHeaders=${ondertekendeHeaders}, Signature=${handtekening}`;
+
+  const vervoer = url.protocol === "http:" ? http : https;
+  const antwoord = await new Promise((klaar, mis) => {
+    const req = vervoer.request(url, { method: "PUT", headers }, (res) => {
+      const stukken = [];
+      res.on("data", (s) => stukken.push(s));
+      res.on("end", () => klaar({ status: res.statusCode, lichaam: Buffer.concat(stukken) }));
+    });
+    req.on("error", mis);
+    const bron = fs.createReadStream(bestandspad);
+    bron.on("error", mis);
+    bron.pipe(req);
+  });
+  if (antwoord.status < 200 || antwoord.status >= 300) {
+    throw new Error(`Objectopslag weigerde het bewaren van ${sleutelpad} (${antwoord.status}): ${antwoord.lichaam.toString().slice(0, 200)}`);
+  }
+  return sleutelpad;
+}
+
 async function bewaar(sleutelpad, buffer, contentType) {
   const r = await ondertekendVerzoek("PUT", sleutelpad, { lichaam: buffer, contentType });
   if (r.status < 200 || r.status >= 300) {
@@ -187,10 +232,12 @@ async function verwijder(sleutelpad) {
 
 // Een URL waarmee de browser het object zelf ophaalt, zonder sleutel en zonder
 // dat de bytes door dit proces gaan. Dat is het hele punt van de overstap.
-function getekendeUrl(sleutelpad, { geldigheid = null, contentType = null } = {}) {
+function getekendeUrl(sleutelpad, { geldigheid = null, contentType = null, bestandsnaam = null } = {}) {
   const c = config();
   if (!c) throw new Error("Objectopslag is niet ingesteld");
-  // Staat er een CDN voor met publieke toegang, dan is er niets te tekenen.
+  // Staat er een CDN voor met publieke toegang, dan is er niets te tekenen — en
+  // dan kan er ook geen bestandsnaam meegegeven worden; die moet daar uit de
+  // opgeslagen metadata van het object komen.
   if (c.publiekeBasis) return `${c.publiekeBasis}/${codeerPad(sleutelpad)}`;
 
   const url = bucketUrl(c, sleutelpad);
@@ -204,6 +251,12 @@ function getekendeUrl(sleutelpad, { geldigheid = null, contentType = null } = {}
     "X-Amz-SignedHeaders": "host",
   };
   if (contentType) query["response-content-type"] = contentType;
+  // Een naam meegeven zodat de browser hem opslaat in plaats van opent. Kan niet
+  // met het download-attribuut op de link: dat werkt alleen binnen dezelfde
+  // herkomst, en de bucket is een andere. S3 en R2 laten je deze twee headers
+  // via de query overschrijven, en ze worden meegetekend — dus niemand anders
+  // kan er een andere naam of type van maken.
+  if (bestandsnaam) query["response-content-disposition"] = `attachment; filename="${bestandsnaam.replace(/["\\]/g, "")}"`;
 
   const { handtekening } = ondertekening({
     methode: "GET", host: url.host, pad: url.pathname, query,
@@ -245,7 +298,7 @@ function fotoSleutel(tripId, contentHash, soort = "vol") {
 
 module.exports = {
   actief, config, vergeetConfiguratie,
-  bewaar, haal, verwijder,
+  bewaar, bewaarStroom, haal, verwijder,
   getekendeUrl, geldigheidSeconden, fotoSleutel,
   // Voor de tests:
   ondertekening, codeer, codeerPad, stempels,

@@ -38,7 +38,16 @@ export async function startNepS3({ bucket = "reisfotos" } = {}) {
     if (req.method === "GET") {
       const o = objecten.get(sleutel);
       if (!o) { res.writeHead(404); res.end(); return; }
-      res.writeHead(200, { "Content-Type": o.contentType || "application/octet-stream", "Content-Length": o.body.length });
+      // S3 laat de client het type en de bestandsnaam overschrijven via de
+      // query. De app gebruikt dat om een PDF te laten downloaden in plaats van
+      // openen, dus dat moet hier ook werken.
+      const headers = {
+        "Content-Type": url.searchParams.get("response-content-type") || o.contentType || "application/octet-stream",
+        "Content-Length": o.body.length,
+      };
+      const disp = url.searchParams.get("response-content-disposition");
+      if (disp) headers["Content-Disposition"] = disp;
+      res.writeHead(200, headers);
       res.end(o.body);
       return;
     }

@@ -425,6 +425,44 @@ async function voerMigratiesUit() {
       pogingen SMALLINT NOT NULL DEFAULT 0
     );
 
+    -- Werk dat te lang duurt om een verzoek op te laten wachten. Het fotoboek
+    -- als PDF is het voorbeeld: bij een boek van twintig pagina's met echte
+    -- foto's is dat acht seconden rekenen en honderden megabytes geheugen, en
+    -- zolang dat loopt staat de webserver stil voor iedereen — gemeten: andere
+    -- verzoeken die normaal 1 ms duren liepen op tot twee seconden.
+    --
+    -- Zo'n taak komt hier in de rij te staan en wordt door een apart proces
+    -- opgepakt (werker.js). Een wachtrij in de database en niet in het geheugen,
+    -- want dan overleeft hij een herstart en kunnen er meerdere werkers naast
+    -- elkaar draaien zonder dat ze elkaar in de weg zitten.
+    CREATE TABLE IF NOT EXISTS taken (
+      id BIGSERIAL PRIMARY KEY,
+      soort TEXT NOT NULL,
+      -- Waar de taak over gaat, bijvoorbeeld "fotoboek:12". Twee keer op
+      -- dezelfde knop drukken hoort niet twee keer hetzelfde werk te betekenen;
+      -- de index hieronder laat er maar één tegelijk lopen.
+      sleutel TEXT,
+      invoer JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'wachtend',
+      voortgang REAL NOT NULL DEFAULT 0,
+      resultaat JSONB,
+      fout TEXT,
+      pogingen SMALLINT NOT NULL DEFAULT 0,
+      gebruiker_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+      trip_id BIGINT REFERENCES trips(id) ON DELETE CASCADE,
+      aangemaakt TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      begonnen TIMESTAMPTZ,
+      geeindigd TIMESTAMPTZ,
+      -- Een werker die halverwege omvalt laat een taak op 'bezig' staan. De
+      -- hartslag laat zien dat er nog iemand mee bezig is; blijft die te lang
+      -- stilstaan, dan mag een ander hem overnemen.
+      hartslag TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS taken_wachtrij_idx ON taken(status, id) WHERE status IN ('wachtend', 'bezig');
+    CREATE UNIQUE INDEX IF NOT EXISTS taken_een_per_sleutel ON taken(soort, sleutel)
+      WHERE sleutel IS NOT NULL AND status IN ('wachtend', 'bezig');
+    CREATE INDEX IF NOT EXISTS taken_opruimen_idx ON taken(geeindigd) WHERE geeindigd IS NOT NULL;
+
     CREATE OR REPLACE FUNCTION meld_fotoobjecten_aan() RETURNS TRIGGER AS $$
     BEGIN
       IF OLD.storage_key IS NOT NULL THEN

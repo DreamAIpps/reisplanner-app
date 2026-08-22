@@ -133,3 +133,22 @@ test("vensters gaan naar document.body en liggen boven elke andere laag", () => 
   assert.deepEqual(teHoog, [],
     `deze lagen komen boven of gelijk met een venster (${vensterLaag}) en zouden het bedekken:\n  ${teHoog.join("\n  ")}`);
 });
+
+test("de service worker laat downloads met rust", () => {
+  // Een klaargezet bestand (een fotoboek-PDF is al gauw honderden megabytes)
+  // hoort niet in de cache voor reisgegevens te belanden, en al helemaal niet
+  // door de fetch-handler te lopen: dan komt het niet als download aan maar als
+  // een gewoon antwoord, en dan gebeurt er bij de gebruiker niets.
+  const sw = readFileSync(path.join(APP_DIR, "..", "public", "sw.js"), "utf8");
+  const regel = sw.split("\n").find((l) => l.includes('startsWith("/api/")'));
+  assert.ok(regel, "de regel die bepaalt wat er gecachet wordt is niet gevonden");
+  const patroon = /!\/\\\/\(([^)]+)\)\$\//.exec(regel);
+  assert.ok(patroon, `kon de uitzonderingen niet uit de regel halen: ${regel.trim()}`);
+
+  const uitzondering = new RegExp(`/(${patroon[1]})$`);
+  for (const pad of ["/api/photos/12/raw", "/api/photos/12/thumb", "/api/taken/12/bestand"]) {
+    assert.ok(uitzondering.test(pad), `${pad} hoort de cache niet in te gaan`);
+  }
+  // En gewone reisgegevens juist wél, anders werkt de app niet meer offline.
+  assert.equal(uitzondering.test("/api/trips/12/days"), false);
+});
