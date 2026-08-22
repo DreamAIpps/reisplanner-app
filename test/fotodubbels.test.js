@@ -93,7 +93,7 @@ test("samenvoegen laat fotoboekpagina's en stemmen niet omvallen", opties, async
   assert.equal(r.data.opgeruimd, 1);
 
   // De dubbele is weg, de andere staat er nog.
-  const { rows: over } = await S.pool.query("SELECT id FROM photos WHERE id = ANY($1::int[])", [[houd, weg]]);
+  const { rows: over } = await S.pool.query("SELECT id FROM photos WHERE id = ANY($1::bigint[])", [[houd, weg]]);
   assert.deepEqual(over.map((x) => x.id), [houd]);
 
   // En alles wat ernaar verwees is meeverhuisd in plaats van meegewist.
@@ -143,6 +143,6 @@ test("alleen een beheerder komt erbij, en niet met foto's uit twee reizen", opti
     gebruiker: beheerder, body: { groepen: [{ houd: a, weg: [b] }] },
   });
   assert.equal(kruis.status, 400, "foto's uit twee reizen werden samengevoegd");
-  const { rows } = await S.pool.query("SELECT COUNT(*)::int n FROM photos WHERE id = ANY($1::int[])", [[a, b]]);
+  const { rows } = await S.pool.query("SELECT COUNT(*)::int n FROM photos WHERE id = ANY($1::bigint[])", [[a, b]]);
   assert.equal(rows[0].n, 2, "er is toch iets weggegooid");
 });
