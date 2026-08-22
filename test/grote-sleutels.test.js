@@ -143,7 +143,7 @@ test("de app werkt door met foto's, dagboek en fotoboek voorbij de grens", optie
   assert.ok(notitie.status === 200 || notitie.status === 201, `dagboek gaf ${notitie.status}`);
 
   // En de PDF, die alle id's nog eens langsloopt.
-  const pdf = await fetch(`${S.basis}/api/photobooks/${boek.id}/pdf`, { headers: { Cookie: `session=${u.token}` } });
-  assert.equal(pdf.status, 200);
-  assert.ok((await pdf.arrayBuffer()).byteLength > 1000);
+  const { status, pdf } = await S.maakPdf(u, boek.id);
+  assert.equal(status, 200);
+  assert.ok(pdf.length > 1000);
 });

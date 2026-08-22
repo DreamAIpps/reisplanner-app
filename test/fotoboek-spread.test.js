@@ -82,9 +82,9 @@ test("een achtergrond over beide bladzijden komt op beide pagina's terug", optie
 
 test("in de PDF schuift de rechterbladzijde precies één pagina op", opties, async () => {
   const { u, boek } = await maakBoekMetSpread();
-  const r = await fetch(`${S.basis}/api/photobooks/${boek.id}/pdf`, { headers: { Cookie: `session=${u.token}` } });
-  assert.equal(r.status, 200);
-  const plekken = afbeeldingsplekken(Buffer.from(await r.arrayBuffer()));
+  const { status, pdf } = await S.maakPdf(u, boek.id);
+  assert.equal(status, 200);
+  const plekken = afbeeldingsplekken(pdf);
 
   assert.equal(plekken.length, 2, "beide binnenpagina's horen de achtergrond te tekenen");
   const [links, rechts] = plekken;

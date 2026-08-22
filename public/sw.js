@@ -100,12 +100,18 @@ self.addEventListener("fetch", (event) => {
   // dagindeling er ook zonder bereik. Foto-bytes slaan we hier bewust niet op —
   // die zouden de opslag laten vollopen en hebben hun eigen browsercache.
   //
+  // Hetzelfde geldt voor een klaargezet bestand van een taak: een fotoboek-PDF
+  // is al gauw honderden megabytes, dat hoort niet in een cache voor
+  // reisgegevens. En zo'n verzoek is bovendien een download — die moet
+  // rechtstreeks naar de browser gaan, niet door deze handler heen, anders komt
+  // het bestand niet als download bij de gebruiker aan.
+  //
   // /auth/me hoort er nadrukkelijk bij: zonder dat antwoord concludeert de app
   // dat je uitgelogd bent en valt hij terug op de gastmodus, waarin je je eigen
   // reizen niet ziet. Offline zag je dan "Nog geen reizen" terwijl alles
   // gewoon in de cache stond. Wordt gewist bij uitloggen (zie handleLogout).
   const isData = url.pathname === "/auth/me" ||
-    (url.pathname.startsWith("/api/") && !/\/(raw|thumb)$/.test(url.pathname));
+    (url.pathname.startsWith("/api/") && !/\/(raw|thumb|bestand)$/.test(url.pathname));
   if (isData) {
     event.respondWith((async () => {
       try {
