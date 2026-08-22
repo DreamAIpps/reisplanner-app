@@ -136,7 +136,7 @@ test("een foto weggooien ruimt ook de bucket op — ook als de reis in zijn gehe
   const los = await upload(u, reis, dag.id, "#d35400");
   const metDeReis = await upload(u, reis, dag.id, "#27ae60");
   const sleutels = (await S.pool.query(
-    "SELECT storage_key, thumb_key FROM photos WHERE id = ANY($1::int[])", [[los.id, metDeReis.id]]
+    "SELECT storage_key, thumb_key FROM photos WHERE id = ANY($1::bigint[])", [[los.id, metDeReis.id]]
   )).rows.flatMap((r) => [r.storage_key, r.thumb_key]);
   assert.ok(sleutels.every((s) => nep.objecten.has(s)));
 
@@ -193,7 +193,7 @@ test("bestaande foto's uit de database verhuizen in batches", opties, async () =
   assert.equal(ronde2.data.nogTeGaan, false);
 
   const { rows } = await S.pool.query(
-    "SELECT id, data, storage_key, byte_size FROM photos WHERE id = ANY($1::int[]) ORDER BY id", [ids]
+    "SELECT id, data, storage_key, byte_size FROM photos WHERE id = ANY($1::bigint[]) ORDER BY id", [ids]
   );
   for (const r of rows) {
     assert.equal(r.data, null, `foto ${r.id} staat nog in de database`);

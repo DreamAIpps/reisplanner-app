@@ -9,6 +9,27 @@ const { Pool, types } = require("pg");
 // the plain "YYYY-MM-DD" string the whole app already treats it as.
 types.setTypeParser(types.builtins.DATE, (v) => v);
 
+// Een BIGINT komt bij node-postgres standaard als tékst terug, niet als getal:
+// een int8 past niet gegarandeerd in een JavaScript-getal, dus geeft de driver
+// hem liever ongeschonden door. Dat is netjes bedacht en hier precies verkeerd.
+//
+// Alle sleutels in deze database zijn bigint (zie de migratie onderaan db.js).
+// Zonder deze regel zou photo.id ineens "42" zijn in plaats van 42, en dan
+// klapt elke vergelijking met === om naar false, komt er {"id":"42"} uit de API
+// en gaat de client dingen niet meer terugvinden. Dat soort fouten valt niet op
+// in een foutmelding maar in een scherm dat leeg blijft.
+//
+// Getallen dus. De grens die daarmee ontstaat ligt op 2^53 — ruim vier miljoen
+// keer verder dan de 2^31 waar we juist vanaf willen — en een sleutel die daar
+// overheen gaat is geen scenario meer maar een storing; vandaar de melding.
+types.setTypeParser(types.builtins.INT8, (waarde) => {
+  const getal = Number(waarde);
+  if (!Number.isSafeInteger(getal)) {
+    console.error(`Getal uit de database past niet meer in een JavaScript-getal: ${waarde}`);
+  }
+  return getal;
+});
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("railway")
@@ -985,6 +1006,89 @@ async function voerMigratiesUit() {
   await mergeDuplicateDays();
   await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS days_trip_date_unique ON days(trip_id, date);
+  `);
+
+  await verbreedSleutels();
+}
+
+// Alle sleutelkolommen naar BIGINT.
+//
+// SERIAL is een integer, en die houdt op bij 2.147.483.647. Dat klinkt als veel
+// tot je uitrekent wat er per handeling een rij bijkrijgt: elke foto, elke
+// notificatie (één per kijker per gebeurtenis), elke keer dat iemand een reis
+// opent. Bij honderdduizenden actieve gebruikers is dat geen theoretische grens
+// meer maar een datum in de agenda, en op die datum stopt de app met werken —
+// nextval geeft dan een fout en er kan niets meer bij.
+//
+// De reparatie is een tabelherschrijving. Nu kost dat op deze database iets
+// meer dan een seconde; bij een paar honderd miljoen rijen is het een
+// onderhoudsvenster van uren. Vandaar nu.
+//
+// Niet met een lijst tabellen in de hand maar uit de catalogus: elke kolom die
+// een reeks als standaardwaarde heeft (dus een sleutel is) en elke kolom die
+// naar zo'n sleutel verwijst. Zo kan ik er geen vergeten, en gaat een tabel die
+// later bijkomt vanzelf mee. Wat al bigint is valt buiten de selectie, dus dit
+// mag elke keer draaien en doet daarna niets meer.
+async function verbreedSleutels() {
+  await query(`
+    DO $$
+    DECLARE
+      r RECORD;
+      omgezet INT := 0;
+      overgeslagen INT := 0;
+    BEGIN
+      -- Een herschrijving pakt een AccessExclusiveLock op de tabel. Krijgt hij
+      -- die niet snel, dan niet blijven wachten: alles wat daarna binnenkomt
+      -- gaat achter dat wachtende slot in de rij staan, en dan ligt de app plat
+      -- op iets wat geen enkele haast heeft. Loopt het mis, dan blijft de kolom
+      -- gewoon integer en probeert de volgende uitrol het opnieuw.
+      SET LOCAL lock_timeout = '5s';
+
+      FOR r IN
+        SELECT tabel, kolom FROM (
+          SELECT c.relname AS tabel, a.attname AS kolom
+            FROM pg_class c
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+            JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+           WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+             AND a.atttypid = 'int4'::regtype
+             AND pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval%'
+          UNION
+          SELECT c.relname, a.attname
+            FROM pg_constraint co
+            JOIN pg_class c ON c.oid = co.conrelid
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(co.conkey) AND NOT a.attisdropped
+           WHERE co.contype = 'f' AND c.relnamespace = 'public'::regnamespace
+             AND a.atttypid = 'int4'::regtype
+        ) x ORDER BY tabel, kolom
+      LOOP
+        BEGIN
+          EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE BIGINT', r.tabel, r.kolom);
+          omgezet := omgezet + 1;
+        EXCEPTION WHEN lock_not_available THEN
+          overgeslagen := overgeslagen + 1;
+        END;
+      END LOOP;
+
+      -- En de reeksen zelf. SERIAL maakt er een aan met "AS integer", en die
+      -- houdt op bij dezelfde 2^31 — ook als de kolom allang bigint is. Dat is
+      -- het addertje: de kolom repareren zonder de reeks lost niets op, en je
+      -- merkt het pas als de teller er is. Dit is een catalogusregel, geen
+      -- herschrijving, dus het kost niets.
+      FOR r IN
+        SELECT s.relname AS naam
+          FROM pg_class s
+          JOIN pg_sequence ps ON ps.seqrelid = s.oid
+         WHERE s.relnamespace = 'public'::regnamespace
+           AND ps.seqtypid = 'int4'::regtype
+      LOOP
+        EXECUTE format('ALTER SEQUENCE %I AS BIGINT', r.naam);
+      END LOOP;
+
+      IF omgezet > 0 OR overgeslagen > 0 THEN
+        RAISE WARNING 'Sleutels naar bigint: % omgezet, % overgeslagen omdat de tabel bezet was', omgezet, overgeslagen;
+      END IF;
+    END $$;
   `);
 }
 

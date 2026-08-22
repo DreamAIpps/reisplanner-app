@@ -8,6 +8,12 @@ import { createHash, randomBytes } from "node:crypto";
 import net from "node:net";
 import pg from "pg";
 
+// Dezelfde behandeling van bigint als in db.js: node-postgres geeft een int8
+// standaard als tékst terug, de app zet dat om naar een getal. Zonder deze
+// regel geeft de pool hier "42" waar de server 42 teruggeeft, en dan faalt een
+// vergelijking tussen die twee op een verschil dat in de app niet bestaat.
+pg.types.setTypeParser(pg.types.builtins.INT8, (waarde) => Number(waarde));
+
 export const DATABASE_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "";
 
 // Zonder database kunnen deze tests niets bewijzen. Ze overslaan is beter dan

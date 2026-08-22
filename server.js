@@ -1610,7 +1610,7 @@ route("POST", "/api/admin/fotodubbels/opruimen", async (req, res, params, body) 
     // Alles moet bij dezelfde reis horen; anders zou een verkeerd meegestuurde
     // groep foto's uit twee reizen door elkaar husselen.
     const { rows: check } = await query(
-      "SELECT id, trip_id FROM photos WHERE id = ANY($1::int[])", [[houd, ...weg]]);
+      "SELECT id, trip_id FROM photos WHERE id = ANY($1::bigint[])", [[houd, ...weg]]);
     if (check.length !== weg.length + 1) return sendError(res, 400, "Een van de foto's bestaat niet meer");
     if (new Set(check.map((r) => r.trip_id)).size !== 1) return sendError(res, 400, "Foto's uit verschillende reizen");
 
@@ -4954,7 +4954,7 @@ route("GET", "/api/photobooks/:id", async (req, res, params) => {
   const achtergrondIds = [...new Set(pages.filter((p) => p.background_photo_id).map((p) => p.background_photo_id))];
   const achtergrondMaten = new Map();
   if (achtergrondIds.length) {
-    const { rows } = await query("SELECT id, width, height FROM photos WHERE id = ANY($1::int[])", [achtergrondIds]);
+    const { rows } = await query("SELECT id, width, height FROM photos WHERE id = ANY($1::bigint[])", [achtergrondIds]);
     rows.forEach((r) => achtergrondMaten.set(r.id, { width: r.width, height: r.height }));
   }
   const { rows: pagePhotos } = await query(
@@ -5048,7 +5048,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
   // database.
   if (allPhotoIds.size) {
     const { rows: eigen } = await query(
-      "SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::int[])",
+      "SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::bigint[])",
       [tripId, [...allPhotoIds]]
     );
     if (eigen.length !== allPhotoIds.size) {
@@ -5111,7 +5111,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
          (photobook_id, position, title, background_type, background_color, background_photo_id,
           background_overlay, background_spread, title_align, title_x, title_y, title_width, title_height, role)
        SELECT * FROM unnest(
-         $1::int[], $2::int[], $3::text[], $4::text[], $5::text[], $6::int[],
+         $1::bigint[], $2::int[], $3::text[], $4::text[], $5::text[], $6::bigint[],
          $7::real[], $8::boolean[], $9::text[], $10::real[], $11::real[], $12::real[], $13::real[], $14::text[])
        RETURNING id`,
       pk
@@ -5139,7 +5139,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
         `INSERT INTO photobook_page_photos
            (page_id, photo_id, position, x, y, width, height, opacity, corner_radius, crop_x, crop_y, crop_zoom)
          SELECT * FROM unnest(
-           $1::int[], $2::int[], $3::int[], $4::real[], $5::real[], $6::real[], $7::real[],
+           $1::bigint[], $2::bigint[], $3::int[], $4::real[], $5::real[], $6::real[], $7::real[],
            $8::real[], $9::real[], $10::real[], $11::real[], $12::real[])`,
         kolommen(fotoRijen, 12)
       );
@@ -5149,7 +5149,7 @@ route("PUT", "/api/photobooks/:id/pages", async (req, res, params, body) => {
         `INSERT INTO photobook_page_textboxes
            (page_id, position, html, x, y, width, height, align, background_color)
          SELECT * FROM unnest(
-           $1::int[], $2::int[], $3::text[], $4::real[], $5::real[], $6::real[], $7::real[], $8::text[], $9::text[])`,
+           $1::bigint[], $2::int[], $3::text[], $4::real[], $5::real[], $6::real[], $7::real[], $8::text[], $9::text[])`,
         kolommen(tekstRijen, 9)
       );
     }
@@ -5774,7 +5774,7 @@ route("PUT", "/api/trips/:id/evaluatie/fotos", async (req, res, params, body) =>
   const fotoIds = [...new Set(ruweTop.map((id) => Number(id)).filter((n) => Number.isInteger(n) && n > 0))];
   let geldigeIds = [];
   if (fotoIds.length) {
-    const { rows } = await query("SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::int[])", [params.id, fotoIds]);
+    const { rows } = await query("SELECT id FROM photos WHERE trip_id = $1 AND id = ANY($2::bigint[])", [params.id, fotoIds]);
     const bestaat = new Set(rows.map((r) => r.id));
     geldigeIds = fotoIds.filter((id) => bestaat.has(id));
     if (geldigeIds.length !== fotoIds.length) return sendError(res, 400, "Eén of meer foto's horen niet bij deze reis");
